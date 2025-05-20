@@ -1,0 +1,57 @@
+site_name: Pode
+
+theme:
+  name: material
+  logo: images/icon-transparent.png
+  favicon: images/favicon.ico
+  custom_dir: mkdocs-overrides
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+  font:
+    text: Fira Sans
+    code: Fira Code
+  palette:
+    - scheme: default
+      primary: cyan
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Light Mode
+    - scheme: slate
+      primary: cyan
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Dark Mode
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.details
+  - admonition
+  - meta
+
+repo_name: badgerati/pode
+repo_url: https://github.com/Badgerati/Pode
+edit_uri: edit/master/docs
+
+extra:
+  social:
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/fRqeGcbF6h
+    - icon: fontawesome/brands/github
+      link: https://github.com/badgerati/pode
+    - icon: fontawesome/brands/x-twitter
+      link: https://twitter.com/badgerati
+    - icon: fontawesome/brands/bluesky
+      link: https://bsky.app/profile/badgerati.bsky.social
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/badgerati/pode
