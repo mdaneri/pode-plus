@@ -9,6 +9,7 @@ docs/[Ff]unctions/
 examples/state.json
 examples/issue-*
 examples/issues/
+examples/State/
 pkg/
 deliverable/
 .vs/
@@ -273,3 +274,4 @@ examples/HelloService/svc_settings
 
 # Dump Folder
 Dump
+
