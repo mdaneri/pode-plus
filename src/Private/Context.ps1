@@ -355,7 +355,7 @@ function New-PodeContext {
     $ctx.Server.InbuiltDrives = @{}
 
     # shared state between runspaces
-    $ctx.Server.State = @{}
+    $ctx.Server.State = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
     # setup caching
     $ctx.Server.Cache = @{
