@@ -663,51 +663,70 @@ function Test-PodeServerIsEnabled {
     return !(Test-PodeLimitRateRule -Name $PodeContext.Server.AllowedActions.DisableSettings.LimitRuleName)
 }
 
+<#
+.SYNOPSIS
+    Closes and cleans up all resources associated with the internal Pode server context.
 
+.DESCRIPTION
+    This function performs a full cleanup of the internal Pode server state. It cancels running tokens, stops background monitoring processes,
+    closes active runspaces, disposes of mutexes and semaphores, and removes internal PowerShell drives. This function is meant for internal use
+    within the Pode server lifecycle and should be called when the server is shutting down or restarting.
+
+.PARAMETER None
+    This internal function does not take any parameters.
+
+.OUTPUTS
+    None
+
+.EXAMPLE
+    Close-PodeServerInternal
+
+.NOTES
+    This is an internal Pode function and is subject to change.
+#>
 function Close-PodeServerInternal {
-    param(
-        [switch]
-        $ShowDoneMessage
-    )
-
-    # ensure the token is cancelled
-    if ($null -ne $PodeContext.Tokens.Cancellation) {
-        Write-Verbose 'Cancelling main cancellation token'
-        $PodeContext.Tokens.Cancellation.Cancel()
-    }
-
-    # stop the watchdog if it's running
-    Write-Verbose 'Stopping watchdog'
-    Stop-PodeWatchdog
-
-    # stop all current runspaces
-    Write-Verbose 'Closing runspaces'
-    Close-PodeRunspace -ClosePool
-
-    # stop the file monitor if it's running
-    Write-Verbose 'Stopping file monitor'
-    Stop-PodeFileMonitor
-
+    # PodeContext doesn't exist return
+    if ($null -eq $PodeContext) { return }
     try {
-        # remove all the cancellation tokens
-        Write-Verbose 'Disposing cancellation tokens'
-        Close-PodeDisposable -Disposable $PodeContext.Tokens.Cancellation
-        Close-PodeDisposable -Disposable $PodeContext.Tokens.Restart
+        # ensure the token is cancelled
+        Write-Verbose 'Cancelling main cancellation token'
+        Close-PodeCancellationTokenRequest -Type Cancellation, Terminate
 
-        # dispose mutex/semaphores
-        Write-Verbose 'Diposing mutex and semaphores'
-        Clear-PodeMutexes
-        Clear-PodeSemaphores
+        # stop the watchdog if it's running
+        Write-Verbose 'Stopping watchdog'
+        Stop-PodeWatchdog
+
+        # stop all current runspaces
+        Write-Verbose 'Closing runspaces'
+        Close-PodeRunspace -ClosePool
+
+        # stop the file monitor if it's running
+        Write-Verbose 'Stopping file monitor'
+        Stop-PodeFileMonitor
+
+        try {
+            # remove all the cancellation tokens
+            Write-Verbose 'Disposing cancellation tokens'
+            Close-PodeCancellationToken #-Type Cancellation, Terminate, Restart, Suspend, Resume, Start
+
+            # dispose mutex/semaphores
+            Write-Verbose 'Diposing mutex and semaphores'
+            Clear-PodeMutexes
+            Clear-PodeSemaphores
+        }
+        catch {
+            $_ | Out-Default
+        }
+
+        # remove all of the pode temp drives
+        Write-Verbose 'Removing internal PSDrives'
+        Remove-PodePSDrive
     }
-    catch {
-        $_ | Out-Default
+    finally {
+        if ($null -ne $PodeContext) {
+            # Remove any tokens
+            $PodeContext.Tokens = $null
+        }
     }
 
-    # remove all of the pode temp drives
-    Write-Verbose 'Removing internal PSDrives'
-    Remove-PodePSDrive
-
-    if ($ShowDoneMessage -and ($PodeContext.Server.Types.Length -gt 0) -and !$PodeContext.Server.IsServerless) {
-        Write-PodeHost $PodeLocale.doneMessage -ForegroundColor Green
-    }
 }

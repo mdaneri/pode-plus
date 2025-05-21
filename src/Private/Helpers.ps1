@@ -617,49 +617,7 @@ function Get-PodeSubnetRange {
         IP      = ($ip_parts -join '.')
     }
 }
-
-function Close-PodeServerInternal {
-    # PodeContext doesn't exist return
-    if ($null -eq $PodeContext) { return }
-    try {
-        # ensure the token is cancelled
-        Write-Verbose 'Cancelling main cancellation token'
-        Close-PodeCancellationTokenRequest -Type Cancellation, Terminate
-
-        # stop all current runspaces
-        Write-Verbose 'Closing runspaces'
-        Close-PodeRunspace -ClosePool
-
-        # stop the file monitor if it's running
-        Write-Verbose 'Stopping file monitor'
-        Stop-PodeFileMonitor
-
-        try {
-            # remove all the cancellation tokens
-            Write-Verbose 'Disposing cancellation tokens'
-            Close-PodeCancellationToken #-Type Cancellation, Terminate, Restart, Suspend, Resume, Start
-
-            # dispose mutex/semaphores
-            Write-Verbose 'Diposing mutex and semaphores'
-            Clear-PodeMutexes
-            Clear-PodeSemaphores
-        }
-        catch {
-            $_ | Out-Default
-        }
-
-        # remove all of the pode temp drives
-        Write-Verbose 'Removing internal PSDrives'
-        Remove-PodePSDrive
-    }
-    finally {
-        if ($null -ne $PodeContext) {
-            # Remove any tokens
-            $PodeContext.Tokens = $null
-        }
-    }
-
-}
+ 
 
 function New-PodePSDrive {
     param(
