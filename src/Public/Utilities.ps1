@@ -1353,7 +1353,6 @@ function New-PodeCron {
 }
 
 
-
 <#
 .SYNOPSIS
 Gets the version of the Pode module.
@@ -1621,6 +1620,3 @@ function Start-PodeSleep {
         Start-Sleep -Milliseconds $sleepInterval
     }
 }
-
-
-
