@@ -85,6 +85,9 @@
 .PARAMETER Daemon
     Configures the server to run as a daemon with minimal console interaction and output.
 
+.PARAMETER ApplicationName
+    Specifies the name of the Pode application. If not provided, the default is the script's file name (excluding the extension).
+
 .EXAMPLE
     Start-PodeServer { /* server logic */ }
     Starts a Pode server using the supplied script block.
@@ -208,7 +211,10 @@ function Start-PodeServer {
         [Parameter(Mandatory = $true, ParameterSetName = 'FileDaemon')]
         [Parameter(Mandatory = $true, ParameterSetName = 'ScriptDaemon')]
         [switch]
-        $Daemon
+        $Daemon,
+
+        [string]
+        $ApplicationName
     )
 
     begin {
@@ -222,14 +228,48 @@ function Start-PodeServer {
     end {
         if ($pipelineItemCount -gt 1) {
             throw ($PodeLocale.fnDoesNotAcceptArrayAsPipelineInputExceptionMessage -f $($MyInvocation.MyCommand.Name))
-        }    # Store the name of the current runspace
+        }
+
+        # Store the name of the current runspace
         $previousRunspaceName = Get-PodeCurrentRunspaceName
+
+        if ([string]::IsNullOrEmpty($ApplicationName)) {
+            $ApplicationName = (Get-PodeApplicationName)
+        }
+
         # Sets the name of the current runspace
-        Set-PodeCurrentRunspaceName -Name 'PodeServer'
+        Set-PodeCurrentRunspaceName -Name $ApplicationName
 
         # ensure the session is clean
         $Script:PodeContext = $null
         $ShowDoneMessage = $true
+
+        # check if podeWatchdog is configured
+        if ($PodeService) {
+            if ($null -ne $PodeService.DisableTermination -or
+                $null -ne $PodeService.Quiet -or
+                $null -ne $PodeService.PipeName -or
+                $null -ne $PodeService.DisableConsoleInput
+            ) {
+                $DisableTermination = [switch]$PodeService.DisableTermination
+                $Quiet = [switch]$PodeService.Quiet
+                $DisableConsoleInput = [switch]$PodeService.DisableConsoleInput
+                $IgnoreServerConfig = [switch]$PodeService.IgnoreServerConfig
+
+                if (!([string]::IsNullOrEmpty($PodeService.ConfigFile)) -and !$PodeService.IgnoreServerConfig) {
+                    $ConfigFile = $PodeService.ConfigFile
+                }
+
+                $monitorService = @{
+                    DisableTermination  = $PodeService.DisableTermination
+                    Quiet               = $PodeService.Quiet
+                    PipeName            = $PodeService.PipeName
+                    DisableConsoleInput = $PodeService.DisableConsoleInput
+                    ConfigFile          = $PodeService.ConfigFile
+                    IgnoreServerConfig  = $PodeService.IgnoreServerConfig
+                }
+                Write-PodeHost $PodeService -Explode -Force            }
+        }
 
         try {
             # if we have a filepath, resolve it - and extract a root path from it
@@ -268,13 +308,15 @@ function Start-PodeServer {
                 EnableBreakpoints    = $EnableBreakpoints
                 IgnoreServerConfig   = $IgnoreServerConfig
                 ConfigFile           = $ConfigFile
+                ApplicationName      = $ApplicationName
+                Service              = $monitorService
                 Daemon               = $Daemon
             }
 
 
             # Create main context object
             $PodeContext = New-PodeContext @ContextParams
-            
+
             # Define parameter values with comments explaining each one
             $ConfigParameters = @{
                 DisableTermination  = $DisableTermination   # Disable termination of the Pode server from the console
