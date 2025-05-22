@@ -446,6 +446,34 @@ function Get-PodeLoggingInbuiltType {
                 return [Pode.PodeFormat]::GeneralLog($item, $options)
             }
         }
+        'service' {
+            $script = {
+                param($item, $options)
+
+                # do nothing if the error level isn't present
+                if (@($options.Levels) -inotcontains $item.Level) {
+                    return
+                }
+
+                # just return the item if Raw is set
+                if ($options.Raw) {
+                    return $item
+                }
+
+                # build the exception details
+                $row = @(
+                    "Date: $($item.Date.ToString('yyyy-MM-dd HH:mm:ss'))",
+                    "Level: $($item.Level)",
+                    "ThreadId: $($item.ThreadId)",
+                    "Server: $($item.Server)",
+                    "Category: $($item.Category)",
+                    "Message: $($item.Message)"
+                )
+
+                # join the details and return
+                return "$($row -join "`n")`n"
+            }
+        }
     }
 
     return $script
@@ -480,7 +508,7 @@ function Get-PodeLogger {
     }
     return $PodeContext.Server.Logging.Type[$Name]
 }
- 
+
 
 <#
 .SYNOPSIS
@@ -544,7 +572,7 @@ function Write-PodeRequestLog {
             Query = (Protect-PodeValue -Value $Request.Url.Query -Default '-').TrimStart('?')
             Protocol = "HTTP/$($Request.ProtocolVersion)"
             Referrer = $Request.UrlReferrer
-            Agent    = $Request.UserAgent 
+            Agent    = $Request.UserAgent
         }
         Response        = @{
             StatusCode        = $Response.StatusCode

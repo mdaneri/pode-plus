@@ -176,27 +176,6 @@ function Get-PodePSVersionTable {
     return $PSVersionTable
 }
 
-function Test-PodeIsAdminUser {
-    # check the current platform, if it's unix then return true
-    if (Test-PodeIsUnix) {
-        return $true
-    }
-
-    try {
-        $principal = [System.Security.Principal.WindowsPrincipal]::new([System.Security.Principal.WindowsIdentity]::GetCurrent())
-        if ($null -eq $principal) {
-            return $false
-        }
-
-        return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
-    }
-    catch [exception] {
-        Write-PodeHost 'Error checking user administrator priviledges' -ForegroundColor Red
-        Write-PodeHost $_.Exception.Message -ForegroundColor Red
-        return $false
-    }
-}
-
 function Get-PodeHostIPRegex {
     param(
         [Parameter(Mandatory = $true)]
@@ -1550,11 +1529,15 @@ function ConvertFrom-PodeRequestContent {
                 $Content = $Request.Body
             }
         }
-
+        # Add raw body content
+        $Result.RawData = $Content
         # if there is no content then do nothing
         if ([string]::IsNullOrWhiteSpace($Content)) {
             return $Result
         }
+
+        # Add raw body content
+        $Result.RawData = $Content
 
         # check if there is a defined custom body parser
         if ($PodeContext.Server.BodyParsers.ContainsKey($ContentType)) {
@@ -1564,7 +1547,6 @@ function ConvertFrom-PodeRequestContent {
             return $Result
         }
     }
-
     # run action for the content type
     switch ($ContentType) {
         { $_ -ilike '*/json' } {
@@ -1978,31 +1960,146 @@ function Convert-PodePathPatternsToRegex {
 
 <#
 .SYNOPSIS
-    Gets the default SSL protocol(s) based on the operating system.
+	Determines the default allowed SSL/TLS protocols based on the operating system.
 
 .DESCRIPTION
-    This function determines the appropriate default SSL protocol(s) based on the operating system. On macOS, it returns TLS 1.2. On other platforms, it combines SSL 3.0 and TLS 1.2.
+	This function detects the operating system and determines the allowed SSL/TLS protocols
+	based on the system’s native support. The function returns an array of
+	[System.Security.Authentication.SslProtocols] enum values representing the supported protocols.
 
 .OUTPUTS
-    A [System.Security.Authentication.SslProtocols] enum value representing the default SSL protocol(s).
+	A [System.Security.Authentication.SslProtocols] enum array containing the allowed SSL/TLS protocols.
 
 .EXAMPLE
-    Get-PodeDefaultSslProtocol
-    # Returns [System.Security.Authentication.SslProtocols]::Ssl3, [System.Security.Authentication.SslProtocols]::Tls12 (on non-macOS systems)
-    # Returns [System.Security.Authentication.SslProtocols]::Tls12 (on macOS)
+	Get-PodeDefaultSslProtocol
+	[System.Security.Authentication.SslProtocols]::Tls12, [System.Security.Authentication.SslProtocols]::Tls13
 
 .NOTES
-    This is an internal function and may change in future releases of Pode.
+	This is an internal function and may change in future releases of Pode.
+	Overriding the default allowed protocols in configuration does not guarantee their availability.
+	If a protocol is not natively supported by the OS, additional OS-level configuration may be required.
 #>
 function Get-PodeDefaultSslProtocol {
     [CmdletBinding()]
     [OutputType([System.Security.Authentication.SslProtocols])]
     param()
-    if (Test-PodeIsMacOS) {
-        return (ConvertTo-PodeSslProtocol -Protocol Tls12)
+    # Cross-platform detection in PowerShell 7.x
+    $AllowedProtocols = @()
+
+    if (Test-PodeIsWindows) {
+        # Retrieve Windows OS info
+        $osInfo = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' `
+        | Select-Object CurrentBuild, CurrentMajorVersionNumber, CurrentMinorVersionNumber
+
+        $osVersion = [version]"$($osInfo.CurrentMajorVersionNumber).$($osInfo.CurrentMinorVersionNumber).$($osInfo.CurrentBuild)"
+
+        Write-Verbose "Detected OS Version: $osVersion"
+
+        # Determine allowed protocols based on Windows version
+        if ($osVersion.Major -eq 6 -and $osVersion.Minor -eq 0) {
+            # Windows Vista / Server 2008
+            $AllowedProtocols = @('Ssl2', 'Ssl3')
+        }
+        elseif ($osVersion.Major -eq 6 -and $osVersion.Minor -eq 1) {
+            # Windows 7 / Server 2008 R2
+            $AllowedProtocols = @('Ssl2', 'Ssl3')
+        }
+        elseif ($osVersion.Major -eq 6 -and $osVersion.Minor -eq 2) {
+            # Windows 8 / Server 2012
+            $AllowedProtocols = @('Ssl3', 'Tls', 'Tls11', 'Tls12')
+        }
+        elseif ($osVersion.Major -eq 6 -and $osVersion.Minor -eq 3) {
+            # Windows 8.1 / Server 2012 R2
+            $AllowedProtocols = @('Ssl3', 'Tls', 'Tls11', 'Tls12')
+        }
+        elseif ($osVersion.Major -eq 10 -and $osVersion.Build -lt 20170) {
+            # Windows 10 (Older builds)
+            $AllowedProtocols = @('Tls', 'Tls11', 'Tls12')
+        }
+        elseif ($osVersion.Major -eq 10 -and $osVersion.Build -ge 20170) {
+            # Windows 10 (Newer builds with potential TLS 1.3 support)
+            $AllowedProtocols = @('Tls', 'Tls11', 'Tls12', 'Tls13')
+        }
+        elseif ($osVersion.Major -ge 10 -and $osVersion.Build -ge 22000) {
+            # Windows 11 / Server 2022 (Modern protocol set)
+            $AllowedProtocols = @('Tls12', 'Tls13')
+        }
+        else {
+            Write-Warning 'Unknown Windows version. Defaulting to modern protocols.'
+            $AllowedProtocols = @('Tls', 'Tls11', 'Tls12')
+        }
+    }
+    elseif ($IsMacOS) {
+        # Use sw_vers to get macOS version info
+        $osName = $(sw_vers -productName)
+        $productVersion = $(sw_vers -productVersion).Trim()
+        Write-Verbose "Detected OS: $osName, Version: $productVersion"
+        $versionObj = [version]$productVersion
+
+        # Determine allowed protocols for macOS
+        if ($versionObj -lt [version]'10.11') {
+            # macOS 10.8 - 10.10: SSL3 allowed, TLS 1.0/1.1/1.2 allowed, TLS1.3 not supported
+            $AllowedProtocols = @('Ssl3', 'Tls', 'Tls11', 'Tls12')
+        }
+        elseif ($versionObj -ge [version]'10.11' -and $versionObj -lt [version]'10.13') {
+            # macOS 10.11 (and likely 10.12): SSL3 disabled, TLS 1.0/1.1/1.2 allowed
+            $AllowedProtocols = @('Tls', 'Tls11', 'Tls12')
+        }
+        else {
+            # macOS 10.13 and later: TLS 1.3 is supported in addition to TLS 1.0, 1.1, 1.2
+            $AllowedProtocols = @('Tls', 'Tls11', 'Tls12', 'Tls13')
+        }
+    }
+    elseif ($IsLinux) {
+        # Read /etc/os-release for OS info if available
+        if (Test-Path '/etc/os-release') {
+            $osRelease = Get-Content '/etc/os-release' | ConvertFrom-StringData
+            $osName = $osRelease.NAME
+            $osVersion = $osRelease.VERSION_ID
+            Write-Verbose "Detected OS: $osName, Version: $osVersion"
+        }
+        else {
+            $osName = 'Linux'
+            Write-Verbose "Detected OS: $osName"
+        }
+
+        # Determine allowed protocols based on the installed OpenSSL version.
+        try {
+            $opensslOutput = openssl version 2>&1
+            if ($opensslOutput -match 'OpenSSL\s+([\d\.]+)') {
+                $opensslVersion = [version]$matches[1]
+                Write-Verbose "Detected OpenSSL version: $opensslVersion"
+                if ($opensslVersion -ge [version]'1.1.1') {
+                    # OpenSSL 1.1.1 and later support TLS 1.3
+                    $AllowedProtocols = @('Tls', 'Tls11', 'Tls12', 'Tls13')
+                }
+                elseif ($opensslVersion -ge [version]'1.0.1g') {
+                    # OpenSSL 1.0.1g up to before 1.1.1 disable SSL3
+                    $AllowedProtocols = @('Tls', 'Tls11', 'Tls12')
+                }
+                else {
+                    # OpenSSL 1.0.1 to 1.0.1f: SSL3 is allowed along with TLS 1.0/1.1/1.2
+                    $AllowedProtocols = @('Ssl3', 'Tls', 'Tls11', 'Tls12')
+                }
+            }
+            else {
+                Write-Warning 'Could not parse OpenSSL version. Defaulting to TLS 1.2.'
+                $AllowedProtocols = @('Tls', 'Tls11', 'Tls12')
+            }
+        }
+        catch {
+            Write-Warning 'OpenSSL version check failed. Defaulting to TLS 1.2.'
+            $AllowedProtocols = @('Tls', 'Tls11', 'Tls12')
+        }
+    }
+    else {
+        Write-Warning 'Unknown platform. No allowed protocols determined.'
+        $AllowedProtocols = @('Ssl3', 'Tls12')
     }
 
-    return (ConvertTo-PodeSslProtocol -Protocol Ssl3, Tls12)
+    Write-Verbose "Allowed protocols: $($AllowedProtocols -join ', ')"
+
+    return (ConvertTo-PodeSslProtocol -Protocol $AllowedProtocols)
 }
 
 <#
@@ -3808,10 +3905,10 @@ function Resolve-PodeObjectArray {
     # Changes to $clonedObject will not affect $originalObject and vice versa.
 
 .NOTES
-    This function uses the System.Management.Automation.PSSerializer class, which is available in
-    PowerShell 5.1 and later versions. The default depth parameter is set to 10 to handle nested
-    objects appropriately, but it can be customized via the -Deep parameter.
-    This is an internal function and may change in future releases of Pode.
+    - This function uses the System.Management.Automation.PSSerializer class, which is available in
+        PowerShell 5.1 and later versions. The default depth parameter is set to 10 to handle nested
+        objects appropriately, but it can be customized via the -Deep parameter.
+    - This is an internal function and may change in future releases of Pode.
 #>
 function Copy-PodeObjectDeepClone {
     param (
@@ -4010,6 +4107,678 @@ function ConvertTo-PodeSleep {
 #>
 function Test-PodeIsISEHost {
     return ((Test-PodeIsWindows) -and ('Windows PowerShell ISE Host' -eq $Host.Name))
+}
+
+
+<#
+.SYNOPSIS
+    Tests if the current user has administrative privileges on Windows or root/sudo privileges on Linux/macOS.
+
+.DESCRIPTION
+    This function checks the current user's privileges. On Windows, it checks if the user is an Administrator.
+    If the session is not elevated, you can optionally check if the user has the potential to elevate using the -Elevate switch.
+    On Linux and macOS, it checks if the user is either root or has sudo (Linux) or admin (macOS) privileges.
+    You can also check if the user has the potential to elevate by belonging to the sudo or admin group using the -Elevate switch.
+
+.PARAMETER Elevate
+    The -Elevate switch allows you to check if the current user has the potential to elevate to administrator/root privileges,
+    even if the session is not currently elevated.
+
+.PARAMETER Console
+    The -Console switch will output errors to the console if an exception occurs.
+    Otherwise, the errors will be written to the Pode error log.
+
+.EXAMPLE
+    Test-PodeAdminPrivilege
+
+    If the user has administrative privileges, it returns $true. If not, it returns $false.
+
+.EXAMPLE
+    Test-PodeAdminPrivilege -Elevate
+
+    This will check if the user has administrative/root/sudo privileges or the potential to elevate,
+    even if the session is not currently elevated.
+
+.EXAMPLE
+    Test-PodeAdminPrivilege -Elevate -Console
+
+    This will check for admin privileges or potential to elevate and will output errors to the console if any occur.
+
+.OUTPUTS
+    [bool]
+    Returns $true if the user has administrative/root/sudo/admin privileges or the potential to elevate,
+    otherwise returns $false.
+
+.NOTES
+    - This function works across multiple platforms: Windows, Linux, and macOS.
+        On Linux/macOS, it checks for root, sudo, or admin group memberships, and optionally checks for elevation potential
+        if the -Elevate switch is used.
+    - This is an internal function and may change in future releases of Pode.
+#>
+function Test-PodeAdminPrivilege {
+    param(
+        [switch]
+        $Elevate,
+        [switch]
+        $Console
+    )
+    try {
+        # Check if the operating system is Windows
+        if (Test-PodeIsWindows) {
+
+            # Retrieve the current Windows identity and token
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+
+            if ($null -eq $principal) {
+                return $false
+            }
+
+            $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            if ($isAdmin) {
+                return $true
+            }
+
+            # Check if the token is elevated
+            if ($identity.IsSystem -or $identity.IsAuthenticated -and $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                return $true
+            }
+
+            if ($Elevate.IsPresent) {
+                # Use 'whoami /groups' to check if the user has the potential to elevate
+                $groups = whoami /groups
+                if ($groups -match 'S-1-5-32-544') {
+                    return $true
+                }
+            }
+            return $false
+        }
+        else {
+            # Check if the operating system is Linux or macOS (both are Unix-like)
+
+            # Check if the user is root (UID 0)
+            $isRoot = [int](id -u)
+            if ($isRoot -eq 0) {
+                return $true
+            }
+
+            if ($Elevate.IsPresent) {
+                # Check if the user has sudo privileges by checking sudo group membership
+                $user = whoami
+                $groups = (groups $user)
+                Write-Verbose "User:$user Groups: $( $groups -join ',')"
+                # macOS typically uses 'admin' group for sudo privileges
+                return ($groups -match '\bwheel\b' -or $groups -match '\badmin\b' -or $groups -match '\bsudo\b' -or $groups -match '\badm\b')
+            }
+            return $false
+        }
+    }
+    catch [exception] {
+        if ($Console.IsPresent) {
+            Write-PodeHost 'Error checking user privileges' -ForegroundColor Red
+            Write-PodeHost $_.Exception.Message -ForegroundColor Red
+        }
+        else {
+            $_ | Write-PodeErrorLog
+        }
+        return $false
+    }
+}
+
+<#
+.SYNOPSIS
+    Starts a command with elevated privileges if the current session is not already elevated.
+
+.DESCRIPTION
+    This function checks if the current PowerShell session is running with administrator privileges.
+    If not, it re-launches the command as an elevated process. If the session is already elevated,
+    it will execute the command directly and return the result of the command.
+
+.PARAMETER Command
+    The PowerShell command to be executed. This can be any valid PowerShell command, script, or executable.
+
+.PARAMETER Arguments
+    The arguments to be passed to the command. This can be any valid argument list for the command or script.
+
+.EXAMPLE
+    Invoke-PodeWinElevatedCommand -Command "Get-Service" -Arguments "-Name 'W32Time'"
+
+    This will run the `Get-Service` command with elevated privileges, pass the `-Name 'W32Time'` argument, and return the result.
+
+.EXAMPLE
+    Invoke-PodeWinElevatedCommand -Command "C:\Scripts\MyScript.ps1" -Arguments "-Param1 'Value1' -Param2 'Value2'"
+
+    This will run the script `MyScript.ps1` with elevated privileges, pass the parameters `-Param1` and `-Param2`, and return the result.
+
+.NOTES
+    This is an internal function and may change in future releases of Pode.
+#>
+function Invoke-PodeWinElevatedCommand {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '')]
+    param (
+        [string]
+        $Command,
+        [string]
+        $Arguments,
+        [PSCredential] $Credential
+    )
+
+
+    # Check if the current session is elevated
+    $isElevated = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+
+    if (-not $isElevated) {
+
+        # Escape the arguments by replacing " with `" (escaping quotes)
+        $escapedArguments = $Arguments -replace '"', '"""'
+        $psCredential = ''
+
+        # Combine command and arguments into a string to pass for elevated execution
+        #   $escapedCommand = "`"$Command`" $Arguments"
+        if ($Credential) {
+            $password = Convertfrom-SecureString $Credential.Password
+            $psCredential = "-Credential ([pscredential]::new('$($Credential.UserName)', `$('$password'|ConvertTo-SecureString)))"
+        }
+
+        # Combine command and arguments into a string for elevated execution
+        $escapedCommand = "$Command $psCredential $escapedArguments"
+        # Start elevated process with properly escaped command and arguments
+        $result = Start-Process -FilePath ((Get-Process -Id $PID).Path) `
+            -ArgumentList '-NoProfile', '-ExecutionPolicy Bypass', "-Command & {$escapedCommand}" `
+            -Verb RunAs -Wait -PassThru
+
+        return $result
+    }
+
+    # Run the command directly with arguments if elevated and capture the output
+    return Invoke-Expression "$Command $Arguments"
+}
+
+<#
+.SYNOPSIS
+    Determines the OS architecture for the current system.
+
+.DESCRIPTION
+    This function detects the operating system's architecture and maps it to a format compatible with
+    PowerShell installation requirements. It works on both Windows and Unix-based systems, translating
+    various architecture identifiers (e.g., 'amd64', 'x86_64') into standardized PowerShell-supported names
+    like 'x64', 'x86', 'arm64', and 'arm32'. On Linux, the function also checks for musl libc to provide
+    an architecture-specific identifier.
+
+.OUTPUTS
+    [string] - The architecture string, such as 'x64', 'x86', 'arm64', 'arm32', or 'musl-x64'.
+
+.EXAMPLE
+    $arch = Get-PodeOSPwshArchitecture
+    Write-Host "Current architecture: $arch"
+
+.NOTES
+    - For Windows, architecture is derived from the `PROCESSOR_ARCHITECTURE` environment variable.
+    - For Unix-based systems, architecture is determined using the `uname -m` command.
+    - The function adds support for identifying musl libc on Linux, returning 'musl-x64' if detected.
+    - If the architecture is not supported, the function returns an empty string.
+#>
+function Get-PodeOSPwshArchitecture {
+    # Initialize an empty variable for storing the detected architecture
+    $arch = [string]::Empty
+
+    # Detect architecture on Unix-based systems (Linux/macOS)
+    if ($IsLinux -or $IsMacOS) {
+        # Use the 'uname -m' command to determine the system architecture
+        $arch = uname -m
+    }
+    else {
+        # For Windows, use the environment variable 'PROCESSOR_ARCHITECTURE'
+        $arch = $env:PROCESSOR_ARCHITECTURE
+    }
+
+    # Map the detected architecture to PowerShell-compatible formats
+    switch ($arch.ToLowerInvariant()) {
+        'amd64' { $arch = 'x64' }          # 64-bit AMD architecture
+        'x86' { $arch = 'x86' }            # 32-bit Intel architecture
+        'x86_64' { $arch = 'x64' }         # 64-bit Intel architecture
+        'armv7*' { $arch = 'arm32' }       # 32-bit ARM architecture (v7 series)
+        'aarch64*' { $arch = 'arm64' }     # 64-bit ARM architecture (aarch64 series)
+        'arm64' { $arch = 'arm64' }        # Explicit ARM64
+        'arm64*' { $arch = 'arm64' }       # Pattern matching for ARM64
+        'armv8*' { $arch = 'arm64' }       # ARM v8 series
+        default { return '' }              # Unsupported architectures, return empty string
+    }
+
+    # Additional check for musl libc on Linux systems
+    if ($IsLinux) {
+        if ($arch -eq 'x64') {
+            # Check if musl libc is present
+            if (Get-Command ldd -ErrorAction SilentlyContinue) {
+                $lddOutput = ldd --version 2>&1
+                if ($lddOutput -match 'musl') {
+                    # Append 'musl-' prefix to architecture
+                    $arch = 'musl-x64'
+                }
+            }
+        }
+    }
+
+    # Return the final architecture string
+    return $arch
+}
+
+<#
+.SYNOPSIS
+    Tests whether the current session can bind to one or more privileged ports.
+
+.DESCRIPTION
+    Attempts to bind to each port in the specified list using the provided IP address.
+
+    Behavior:
+      - Returns $true if any port can be successfully bound.
+      - Returns $false if a privilege error (AccessDenied) occurs and $CheckAdmin is enabled.
+      - Returns $false if all test ports are in use but no privilege error occurs.
+      - If -ThrowError is used:
+        • Throws a localized exception if a privilege error is detected and -CheckAdmin is also set.
+        • Throws a custom SocketException with a descriptive message when the port is already in use.
+        • Throws the raw exception for all other socket or unexpected errors.
+
+.PARAMETER IP
+    The IP address to bind to. Defaults to the loopback address (127.0.0.1).
+
+.PARAMETER Port
+    A single port number or an array of ports to test. Defaults to a set of typically unused privileged ports.
+
+.PARAMETER ThrowError
+    If specified, exceptions will be thrown instead of returning values for error conditions.
+
+.PARAMETER CheckAdmin
+    If specified, only privilege-related binding failures will result in a return value of $false;
+    otherwise, AccessDenied will return $true (to allow non-admin flows to continue).
+
+.OUTPUTS
+    [bool] $true  — Binding was successful on at least one port.
+    [bool] $false — Privilege error occurred (with CheckAdmin), or a single port is in use.
+    [bool] $false — All ports were in use, but no privilege issue was detected.
+
+.EXAMPLE
+    Test-PodeBindToPrivilegedPort
+
+.EXAMPLE
+    Test-PodeBindToPrivilegedPort -IP '0.0.0.0' -Port 80
+
+.EXAMPLE
+    Test-PodeBindToPrivilegedPort -ThrowError -CheckAdmin
+#>
+
+function Test-PodeBindToPrivilegedPort {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]$IP = '127.0.0.1',
+
+        [Parameter()]
+        [int[]]$Port = @(1, 7, 9, 13, 19, 37, 79, 100),
+
+        [switch]
+        $ThrowError,
+
+        [switch]
+        $CheckAdmin
+    )
+
+    foreach ($p in $Port) {
+        try {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse($IP), $p)
+            $listener.Start()
+            $listener.Stop()
+            Write-Verbose "Successfully bound to $($IP):$p"
+            return $true
+        }
+        catch [System.Net.Sockets.SocketException] {
+            switch ($_.Exception.SocketErrorCode) {
+                'AccessDenied' {
+                    Write-Debug "Access denied on $($IP):$p"
+                    if ($ThrowError) {
+                        if (!$CheckAdmin) { return }
+                        throw ($PodeLocale.mustBeRunningWithAdminPrivilegesExceptionMessage)
+                    }
+                    if ($CheckAdmin) {
+                        return $false
+                    }
+                    return $true
+
+                }
+                'AddressAlreadyInUse' {
+                    Write-Debug "Port $p is already in use on $IP"
+
+                    if ($Port.Count -gt 1) {
+                        continue
+                    }
+                    if ($ThrowError) {
+                        throw  ($PodeLocale.cannotBindPortInUseExceptionMessage -f $IP, $p)
+                    }
+                    return $false
+                }
+                default {
+                    #    Write-Debug "Unhandled socket error on $($IP):$p — $($_.Exception.SocketErrorCode)"
+                    if ($ThrowError) {
+                        throw  $_
+                    }
+                    return $false
+                }
+            }
+        }
+        catch {
+            #Write-Debug "Unexpected error on $($IP):$p — $($_.Exception.Message)"
+            if ($ThrowError) {
+                throw  $_
+            }
+            return $false
+        }
+    }
+
+    Write-Debug "All test ports on $IP were in use, but no privilege error detected"
+    return $false
+}
+
+<#
+    .SYNOPSIS
+      Displays a deprecation warning message for a function.
+
+    .DESCRIPTION
+      The Write-PodeDeprecationWarning function generates a warning message indicating that
+      a specified function is deprecated and suggests the new replacement function.
+
+    .PARAMETER OldFunction
+      The name of the deprecated function that is being replaced.
+
+    .PARAMETER NewFunction
+      The name of the new function that should be used instead.
+
+    .OUTPUTS
+      None.
+
+    .EXAMPLE
+      Write-PodeDeprecationWarning -OldFunction "New-PodeLoggingMethod" -NewFunction "New-PodeLogger"
+
+      This will display:
+      WARNING: Function `New-PodeLoggingMethod` is deprecated. Please use 'New-PodeLogger' function instead.
+
+    .NOTES
+      Internal function for Pode.
+      Subject to change in future releases.
+#>
+function Write-PodeDeprecationWarning {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $OldFunction,
+
+        [Parameter(Mandatory = $true)]
+        [string]
+        $NewFunction
+    )
+    # WARNING: Function `New-PodeLoggingMethod` is deprecated. Please use '{0}' function instead.
+    Write-PodeHost ($PodeLocale.deprecatedFunctionWarningMessage -f $OldFunction, $NewFunction) -ForegroundColor Yellow
+}
+
+<#
+.SYNOPSIS
+    Converts a SecureString to its plain text equivalent.
+
+.DESCRIPTION
+    Converts a [securestring] object into a plain text [string]. This is useful for logging, debugging,
+    or passing credentials in plain text form when needed. If the input is $null, the function returns $null.
+
+    The function supports pipeline input for seamless composition with other commands.
+
+.PARAMETER SecureString
+    The SecureString instance to convert to plain text. If null, the function returns null.
+
+.INPUTS
+    [securestring] Accepts a SecureString object from the pipeline.
+
+.OUTPUTS
+    [string] The plain text representation of the SecureString, or $null if the input was null.
+
+.NOTES
+    Internal Pode function - subject to change without notice.
+#>
+function Convert-PodeSecureStringToPlainText {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(ValueFromPipeline = $true)]
+        [securestring]
+        $SecureString
+    )
+
+    process {
+        if ($null -eq $SecureString) {
+            return $null
+        }
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+        try {
+            [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        }
+        finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+    Converts a SecureString to a UTF8 byte array.
+
+.DESCRIPTION
+    This function takes a SecureString input and converts it into a UTF8 encoded byte array.
+    Supports pipeline input for seamless integration with other cmdlets.
+
+.PARAMETER SecureString
+    The SecureString that needs to be converted.
+
+.OUTPUTS
+    [byte[]] A UTF8 encoded byte array representation of the SecureString.
+
+.NOTES
+    Internal Pode function - subject to change.
+#>
+function Convert-PodeSecureStringToByteArray {
+    [CmdletBinding()]
+    [OutputType([byte[]])]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline)]
+        [securestring]
+        $SecureString
+    )
+
+    process {
+        if ($null -ne $SecureString) {
+            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+            try {
+                [System.Text.Encoding]::UTF8.GetBytes([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr))
+            }
+            finally {
+                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            }
+        }
+        else {
+            return [byte[]]::new(0)  # Return empty byte array instead of $null
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+    Retrieves the name of the main Pode application script.
+
+.DESCRIPTION
+    The `Get-PodeApplicationName` function determines the name of the primary script (`.ps1`)
+    that started execution. It does this by examining the PowerShell call stack and
+    extracting the first script file that appears.
+
+    If no script file is found in the call stack, the function returns `"NoName"`.
+
+.OUTPUTS
+    [string]
+    Returns the filename of the main application script, or `"NoName"` if no script is found.
+
+.EXAMPLE
+    Get-PodeApplicationName
+
+    This retrieves the name of the main script that launched the Pode application.
+
+.EXAMPLE
+    $AppName = Get-PodeApplicationName
+    Write-Host "Application Name: $AppName"
+
+    This stores the retrieved application name in a variable and prints it.
+
+.NOTES
+    - This function relies on `Get-PSCallStack`, meaning it must be run within a script execution context.
+    - If called interactively or if no `.ps1` script is in the call stack, it will return `"NoName"`.
+    - This is an internal function and may change in future releases of Pode.
+#>
+function Get-PodeApplicationName {
+    $scriptFrame = (Get-PSCallStack | Where-Object { $_.Command -match '\.ps1$' } | Select-Object -First 1)
+    if ($scriptFrame) {
+        return    [System.IO.Path]::GetFileName($scriptFrame.Command)
+    }
+    else {
+        return 'NoName'
+    }
+}
+
+
+<#
+.SYNOPSIS
+    Returns the current date and time in UTC format.
+
+.DESCRIPTION
+    This function retrieves the current date and time in Coordinated Universal Time (UTC), ensuring consistency across different time zones.
+
+.OUTPUTS
+    [DateTime] - The current UTC date and time.
+
+.EXAMPLE
+    Get-PodeUtcNow
+
+    Returns the current UTC datetime.
+
+.NOTES
+    - This function is required to allow Pester test to mock it
+    - This function is for internal Pode usage and may be subject to change.
+#>
+function Get-PodeUtcNow {
+    [CmdletBinding()]
+    [OutputType([System.DateTime])]
+    param ()
+
+    process {
+        return [System.DateTime]::UtcNow
+    }
+}
+
+<#
+.SYNOPSIS
+	Evaluates if a given state version is valid against the current Pode version.
+
+.DESCRIPTION
+	This internal function compares two Pode version strings to determine if the state version is acceptable for use with the current version.
+	It accounts for semantic versioning rules and special handling for pre-release identifiers (e.g., alpha, beta).
+	If the current version is set to '[dev]', it always returns true to permit development overrides.
+
+.PARAMETER CurrentVersion
+	The currently executing Pode version string. This may include pre-release identifiers or be '[dev]'.
+
+.PARAMETER StateVersion
+	The version string from state data that should be validated against the current Pode version.
+
+.OUTPUTS
+	System.Boolean
+
+.EXAMPLE
+	Compare-PodeVersion -CurrentVersion '2.5.0' -StateVersion '2.4.3'
+	# Returns $true since the state version is less than the current version.
+
+.EXAMPLE
+	Compare-PodeVersion -CurrentVersion '2.5.0-beta.2' -StateVersion '2.5.0-beta.1'
+	# Returns $true since the state version is a lower pre-release of the same channel.
+
+.EXAMPLE
+	Compare-PodeVersion -CurrentVersion '2.5.0' -StateVersion '2.5.0-beta.1'
+	# Returns $false since a production version cannot accept a pre-release state.
+
+.NOTES
+	This is an internal Pode function and is subject to change.
+#>
+function Compare-PodeVersion {
+    param (
+        [string]$CurrentVersion,
+        [string]$StateVersion
+    )
+
+    # [dev] always passes.
+    if ($CurrentVersion -eq '[dev]') {
+        return $true
+    }
+
+    # Determine if versions have pre-release parts.
+    $currentHasPre = $CurrentVersion -match '-'
+    $stateHasPre = $StateVersion -match '-'
+
+    # Rule: Production (no pre-release) should never accept a pre-release state.
+    if (-not $currentHasPre -and $stateHasPre) {
+        return $false
+    }
+
+    # Split each version into base and pre-release components.
+    $currentSplit = $CurrentVersion -split '-', 2
+    $stateSplit = $StateVersion -split '-', 2
+
+    $currentBase = [System.Version]::Parse($currentSplit[0])
+    $stateBase = [System.Version]::Parse($stateSplit[0])
+
+
+    # Compare base versions.
+    if ($stateBase -lt $currentBase) {
+        return $true
+    }
+    elseif ($stateBase -gt $currentBase) {
+        return $false
+    }
+
+    # Base versions are equal.
+    $currentPre = if ($currentSplit.Length -gt 1) { $currentSplit[1] } else { $null }
+    $statePre = if ($stateSplit.Length -gt 1) { $stateSplit[1] } else { $null }
+
+    # If current is production (no pre-release) and state is not, allow it.
+    if ($null -eq $currentPre -and $null -eq $statePre) {
+        return $true
+    }
+    # If current has a pre-release but state is production, that's not allowed.
+    if ($null -ne $currentPre -and $null -eq $statePre) {
+        return $false
+    }
+
+    # Both have pre-release parts: split on the period.
+    $currentParts = $currentPre -split '\.'
+    $stateParts = $statePre -split '\.'
+
+    # Compare pre-release channels (e.g. alpha vs beta)
+    $currentTag = $currentParts[0]
+    $stateTag = $stateParts[0]
+
+    if ($currentTag -ne $stateTag) {
+        # Different channels are not allowed.
+        return $false
+    }
+
+    # Compare numeric identifiers if available.
+    $currentNum = if ($currentParts.Length -gt 1) { [int]$currentParts[1] } else { 0 }
+    $stateNum = if ($stateParts.Length -gt 1) { [int]$stateParts[1] } else { 0 }
+
+    # Allow state only if its numeric part is less than or equal to current.
+    return ($stateNum -le $currentNum)
 }
 
 

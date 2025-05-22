@@ -795,32 +795,32 @@ function Out-PodeHost {
 
 <#
 .SYNOPSIS
-Writes an object to the Host.
+    Writes an object to the Host.
 
 .DESCRIPTION
-Writes an object to the Host.
-It's advised to use this function, so that any output respects the -Quiet flag of the server.
+    Writes an object to the Host.
+    It's advised to use this function, so that any output respects the -Quiet flag of the server.
 
 .PARAMETER Object
-The object to write.
+    The object to write.
 
 .PARAMETER ForegroundColor
-An optional foreground colour.
+    An optional foreground colour.
 
 .PARAMETER NoNewLine
-Whether or not to write a new line.
+    Whether or not to write a new line.
 
 .PARAMETER Explode
-Show the object content
+    Show the object content
 
 .PARAMETER ShowType
-Show the Object Type
+    Show the Object Type
 
 .PARAMETER Label
-Show a label for the object
+    Show a label for the object
 
 .PARAMETER Force
-Overrides the -Quiet flag of the server.
+    Overrides the -Quiet flag of the server.
 
 .EXAMPLE
 'Some output' | Write-PodeHost -ForegroundColor Cyan
@@ -830,6 +830,7 @@ function Write-PodeHost {
     [CmdletBinding(DefaultParameterSetName = 'inbuilt')]
     param(
         [Parameter(Position = 0, ValueFromPipeline = $true)]
+        [Alias('Message')]
         [object]
         $Object,
 
@@ -1275,7 +1276,6 @@ function New-PodeCron {
 }
 
 
-
 <#
 .SYNOPSIS
 Gets the version of the Pode module.
@@ -1283,8 +1283,8 @@ Gets the version of the Pode module.
 .DESCRIPTION
 The Get-PodeVersion function checks the version of the Pode module specified in the module manifest. If the module version is not a placeholder value ('$version$'), it returns the actual version prefixed with 'v.'. If the module version is the placeholder value, indicating the development branch, it returns '[develop branch]'.
 
-.PARAMETER None
-This function does not accept any parameters.
+.PARAMETER Raw
+If this switch is set, the function will return the raw version number as a [version] object instead of a string.
 
 .OUTPUTS
 System.String
@@ -1307,9 +1307,22 @@ This function assumes that $moduleManifest is a hashtable representing the loade
 
 #>
 function Get-PodeVersion {
+    param(
+        [switch]
+        $Raw
+    )
     $moduleManifest = Get-PodeModuleManifest
     if ($moduleManifest.ModuleVersion -ne '$version$') {
-        return "v$($moduleManifest.ModuleVersion)"
+        $version = if ( $Raw) {
+            $moduleManifest.ModuleVersion
+        }
+        else {
+            "v$($moduleManifest.ModuleVersion)"
+        }
+        if ($moduleManifest.PrivateData.PSData.Prerelease) {
+            return "$version-$($moduleManifest.PrivateData.PSData.Prerelease)"
+        }
+        return $version
     }
     else {
         return '[dev]'
@@ -1530,6 +1543,3 @@ function Start-PodeSleep {
         Start-Sleep -Milliseconds $sleepInterval
     }
 }
-
-
-

@@ -9,6 +9,7 @@ docs/[Ff]unctions/
 examples/state.json
 examples/issue-*
 examples/issues/
+examples/State/
 pkg/
 deliverable/
 .vs/
@@ -268,6 +269,13 @@ examples/PetStore/data/PetData.json
 packers/choco/pode.nuspec
 packers/choco/tools/ChocolateyInstall.ps1
 docs/Getting-Started/Samples.md
+examples/HelloService/*_svcsettings.json
+examples/HelloService/svc_settings
 
 # Dump Folder
 Dump
+examples/certs/*-public.pem
+examples/certs/*-private.pem
+tests/certs/*
+/examples/certs
+examples/Authentication/certs/*
