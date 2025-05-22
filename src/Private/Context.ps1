@@ -55,6 +55,9 @@ function New-PodeContext {
         [string]
         $ConfigFile,
 
+        [string]
+        $ApplicationName,
+
         [hashtable]
         $Service,
 
@@ -103,7 +106,14 @@ function New-PodeContext {
     $ctx.Server.PodeModule = (Get-PodeModuleInfo)
     $ctx.Server.Console = $Console
     $ctx.Server.ComputerName = [System.Net.DNS]::GetHostName()
-    $ctx.Server.ApplicationName = (Get-PodeApplicationName)
+    
+    try {
+        $ctx.Server.Fqdn = [System.Net.Dns]::GetHostEntry($ctx.Server.ComputerName).HostName
+    }
+    catch {
+        $ctx.Server.Fqdn = $ctx.Server.ComputerName
+    }
+    $ctx.Server.ApplicationName = $ApplicationName
 
 
     if ($null -ne $Service) {
@@ -723,8 +733,8 @@ function New-PodeRunspacePool {
     if (Test-PodeServiceEnabled ) {
         $PodeContext.Threads['Service'] = 1
         $PodeContext.RunspacePools.Service = @{
-            Pool  = [runspacefactory]::CreateRunspacePool(1, 1, $PodeContext.RunspaceState, $Host)
-            State = 'Waiting'
+            Pool   = [runspacefactory]::CreateRunspacePool(1, 1, $PodeContext.RunspaceState, $Host)
+            State  = 'Waiting'
             LastId = 0
         }
     }
