@@ -272,4 +272,9 @@ docs/Getting-Started/Samples.md
 
 # Dump Folder
 Dump
-
+examples/certs/*-public.pem
+examples/certs/*-private.pem
+tests/certs/*
+/examples/certs
+examples/Authentication/certs/*
+pode-plus.sln
