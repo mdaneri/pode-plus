@@ -70,6 +70,10 @@
     - Remove-Module: Removes the Pode module from the local registry.
     - SetupPowerShell: Sets up the PowerShell environment for the build.
     - ReleaseNotes: Generates release notes based on merged pull requests.
+    - Sort-LanguageFiles: Sort Language resource files
+    - AutoMerge-LanguageFiles: Automerge Language Resource files.
+    - Format-FunctionHeaders: Formats function headers in the file to follow Pode's standard style.
+    - Refresh-HeaderFooter: Adds or refreshes the file-level header and footer using Pode's standard formatting.
 
 .EXAMPLE
     Invoke-Build -Task Default
@@ -121,6 +125,9 @@ param(
     [string]
     $UICulture = 'en-US',
 
+    [switch]
+    $DisableLifecycleServiceOperations,
+
     [string[]]
     [ValidateSet('netstandard2.0', 'net8.0', 'net9.0', 'net10.0')]
     $TargetFrameworks = @('netstandard2.0', 'net8.0', 'net9.0'),
@@ -146,28 +153,51 @@ $Versions = @{
 
 <#
 .SYNOPSIS
-    Checks if the current environment is running on Windows.
+    Installs a specified package using the appropriate package manager for the OS.
 
 .DESCRIPTION
-    This function determines if the current PowerShell session is running on Windows.
-    It inspects `$PSVersionTable.Platform` and `$PSVersionTable.PSEdition` to verify the OS,
-    returning `$true` for Windows and `$false` for other platforms.
+    This function installs a specified package at a given version using platform-specific
+    package managers. For Windows, it uses Chocolatey (`choco`). On Unix-based systems,
+    it checks for `brew`, `apt-get`, and `yum` to handle installations. The function sets
+    the security protocol to TLS 1.2 to ensure secure connections during the installation.
+
+.PARAMETER name
+    The name of the package to install (e.g., 'git').
+
+.PARAMETER version
+    The version of the package to install, required only for Chocolatey on Windows.
 
 .OUTPUTS
-    [bool] - Returns `$true` if the current environment is Windows, otherwise `$false`.
+    None.
 
 .EXAMPLE
-    if (Test-PodeBuildIsWindows) {
-        Write-Host "This script is running on Windows."
-    }
+    Invoke-PodeBuildInstall -Name 'git' -Version '2.30.0'
+    # Installs version 2.30.0 of Git on Windows if Chocolatey is available.
 
 .NOTES
-    - Useful for cross-platform scripts to conditionally execute Windows-specific commands.
-    - The `$PSVersionTable.Platform` variable may be `$null` in certain cases, so `$PSEdition` is used as an additional check.
+    - Requires administrator or sudo privileges on Unix-based systems.
+    - This function supports package installation on both Windows and Unix-based systems.
+    - If `choco` is available, it will use `choco` for Windows, and `brew`, `apt-get`, or `yum` for Unix-based systems.
 #>
-function Test-PodeBuildIsWindows {
-    $v = $PSVersionTable
-    return ($v.Platform -ilike '*win*' -or ($null -eq $v.Platform -and $v.PSEdition -ieq 'desktop'))
+function Invoke-PodeBuildInstall($name, $version) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    if (Test-PodeBuildIsWindows) {
+        if (Test-PodeBuildCommand 'choco') {
+            choco install $name --version $version -y --no-progress
+        }
+    }
+    else {
+        if (Test-PodeBuildCommand 'brew') {
+            brew install $name
+        }
+        elseif (Test-PodeBuildCommand 'apt-get') {
+            sudo apt-get install $name -y
+        }
+        elseif (Test-PodeBuildCommand 'yum') {
+            sudo yum install $name -y
+        }
+    }
 }
 
 <#
@@ -284,6 +314,33 @@ function Test-PodeBuildCommand($cmd) {
 
 <#
 .SYNOPSIS
+    Checks if the current environment is running on Windows.
+
+.DESCRIPTION
+    This function determines if the current PowerShell session is running on Windows.
+    It inspects `$PSVersionTable.Platform` and `$PSVersionTable.PSEdition` to verify the OS,
+    returning `$true` for Windows and `$false` for other platforms.
+
+.OUTPUTS
+    [bool] - Returns `$true` if the current environment is Windows, otherwise `$false`.
+
+.EXAMPLE
+    if (Test-PodeBuildIsWindows) {
+        Write-Host "This script is running on Windows."
+    }
+
+.NOTES
+    - Useful for cross-platform scripts to conditionally execute Windows-specific commands.
+    - The `$PSVersionTable.Platform` variable may be `$null` in certain cases, so `$PSEdition` is used as an additional check.
+#>
+function Test-PodeBuildIsWindows {
+    $v = $PSVersionTable
+    return ($v.Platform -ilike '*win*' -or ($null -eq $v.Platform -and $v.PSEdition -ieq 'desktop'))
+}
+
+
+<#
+.SYNOPSIS
     Retrieves the branch name from the GitHub Actions environment variable.
 
 .DESCRIPTION
@@ -305,55 +362,6 @@ function Test-PodeBuildCommand($cmd) {
 #>
 function Get-PodeBuildBranch {
     return ($env:GITHUB_REF -ireplace 'refs\/heads\/', '')
-}
-
-<#
-.SYNOPSIS
-    Installs a specified package using the appropriate package manager for the OS.
-
-.DESCRIPTION
-    This function installs a specified package at a given version using platform-specific
-    package managers. For Windows, it uses Chocolatey (`choco`). On Unix-based systems,
-    it checks for `brew`, `apt-get`, and `yum` to handle installations. The function sets
-    the security protocol to TLS 1.2 to ensure secure connections during the installation.
-
-.PARAMETER name
-    The name of the package to install (e.g., 'git').
-
-.PARAMETER version
-    The version of the package to install, required only for Chocolatey on Windows.
-
-.OUTPUTS
-    None.
-
-.EXAMPLE
-    Invoke-PodeBuildInstall -Name 'git' -Version '2.30.0'
-    # Installs version 2.30.0 of Git on Windows if Chocolatey is available.
-
-.NOTES
-    - Requires administrator or sudo privileges on Unix-based systems.
-    - This function supports package installation on both Windows and Unix-based systems.
-    - If `choco` is available, it will use `choco` for Windows, and `brew`, `apt-get`, or `yum` for Unix-based systems.
-#>
-function Invoke-PodeBuildInstall($name, $version) {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-    if (Test-PodeBuildIsWindows) {
-        if (Test-PodeBuildCommand 'choco') {
-            choco install $name --version $version -y --no-progress
-        }
-    }
-    else {
-        if (Test-PodeBuildCommand 'brew') {
-            brew install $name
-        }
-        elseif (Test-PodeBuildCommand 'apt-get') {
-            sudo apt-get install $name -y
-        }
-        elseif (Test-PodeBuildCommand 'yum') {
-            sudo yum install $name -y
-        }
-    }
 }
 
 <#
@@ -527,8 +535,101 @@ function Invoke-PodeBuildDotnetBuild {
     # Use dotnet publish for .NET Core and .NET 5+
     dotnet publish --configuration Release --self-contained --framework $target $AssemblyVersion $AssemblyPrerelease --output ../Libs/$target
 
+    # Throw an error if the build fails
     if (!$?) {
         throw "Build failed for target framework '$target'."
+    }
+}
+
+<#
+.SYNOPSIS
+    Builds the Pode Monitor Service for multiple target platforms using .NET SDK.
+
+.DESCRIPTION
+    This function automates the build process for the Pode Monitor Service. It:
+    - Determines the highest installed .NET SDK version.
+    - Verifies compatibility with the required SDK version.
+    - Optionally sets an assembly version during the build.
+    - Builds the service for specified runtime targets across platforms (Windows, Linux, macOS).
+    - Allows defining custom constants for conditional compilation.
+
+.PARAMETER Version
+    Specifies the assembly version to use for the build. If not provided, no version is set.
+
+.PARAMETER DisableLifecycleServiceOperations
+    If specified, excludes lifecycle service operations during the build by omitting related compilation constants.
+
+.INPUTS
+    None. The function does not accept pipeline input.
+
+.OUTPUTS
+    None. The function produces build artifacts in the output directory.
+
+.NOTES
+    This function is designed to work with .NET SDK and assumes it is installed and configured properly.
+    It throws an error if the build process fails for any target.
+
+.EXAMPLE
+    Invoke-PodeBuildDotnetMonitorSrvBuild -Version "1.0.0"
+
+    Builds the Pode Monitor Service with an assembly version of 1.0.0.
+
+.EXAMPLE
+    Invoke-PodeBuildDotnetMonitorSrvBuild -DisableLifecycleServiceOperations
+
+    Builds the Pode Monitor Service without lifecycle service operations.
+
+.EXAMPLE
+    Invoke-PodeBuildDotnetMonitorSrvBuild
+
+    Builds the Pode Monitor Service for all target runtimes without a specific assembly version.
+#>
+function Invoke-PodeBuildDotnetMonitorSrvBuild() {
+    # Retrieve the highest installed SDK version
+    $majorVersion = ([version](dotnet --version)).Major
+
+    # Determine if the target framework is compatible
+    $isCompatible = $majorVersions -ge $requiredSdkVersion
+
+    # Skip build if not compatible
+    if ($isCompatible) {
+        Write-Output "SDK for target framework '$target' is compatible with the '$AvailableSdkVersion' framework."
+    }
+    else {
+        Write-Warning "SDK for target framework '$target' is not compatible with the '$AvailableSdkVersion' framework. Skipping build."
+        return
+    }
+
+    # Optionally set assembly version
+    if ($Version) {
+        Write-Host "Assembly Version $Version"
+        $AssemblyVersion = "-p:Version=$Version"
+    }
+    else {
+        $AssemblyVersion = ''
+    }
+
+    foreach ($target in @('win-x64', 'win-arm64' , 'linux-x64', 'linux-arm64', 'osx-x64', 'osx-arm64','linux-arm','win-x86','linux-musl-x64')) {
+        $DefineConstants = @()
+        $ParamConstants = ''
+
+        # Add compilation constants if lifecycle operations are enabled
+        if (!$DisableLifecycleServiceOperations) {
+            $DefineConstants += 'ENABLE_LIFECYCLE_OPERATIONS'
+        }
+
+        # Prepare constants for the build parameters
+        if ($DefineConstants.Count -gt 0) {
+            $ParamConstants = "-p:DefineConstants=`"$( $DefineConstants -join ';')`""
+        }
+
+        # Perform the build for the target runtime
+        dotnet publish --runtime $target --output ../Bin/$target --configuration Release $AssemblyVersion $ParamConstants
+
+        # Throw an error if the build fails
+        if (!$?) {
+            throw "dotnet publish failed for $($target)"
+        }
     }
 }
 
@@ -580,7 +681,7 @@ function Get-PodeBuildPwshEOL {
 
 .DESCRIPTION
     This function detects whether the current operating system is Windows by checking
-    the `$IsWindows` automatic variable, the presence of the `$env:ProgramFiles` variable,
+    the `Test-PodeBuildIsWindows` automatic variable, the presence of the `$env:ProgramFiles` variable,
     and the PowerShell Edition in `$PSVersionTable`. This function returns `$true` if
     any of these indicate Windows.
 
@@ -909,6 +1010,129 @@ function Split-PodeBuildPwshPath {
     }
 }
 
+
+<#
+.SYNOPSIS
+  Processes language resource files and standardizes their formatting.
+
+.DESCRIPTION
+  This function scans for `Pode.psd1` language resource files within the specified `Locales` directory.
+  It normalizes key-value pairs, removes duplicate keys while preserving the last occurrence, and
+  organizes messages into Exception Messages and General Messages. The cleaned and formatted content
+  is then written back to the respective files.
+
+.PARAMETER None
+  This function does not accept parameters. It operates on files found within `./src/Locales`.
+
+.OUTPUTS
+  None. The function modifies `Pode.psd1` files directly by updating their content.
+
+.EXAMPLE
+  Group-LanguageResource
+  Processes all `Pode.psd1` files in `./src/Locales`, normalizes their format, and removes duplicates.
+
+.NOTES
+  - This function ensures that all messages are consistently formatted and sorted.
+  - Duplicate keys are detected, with only the first occurrence being retained.
+  - Exception messages are grouped separately from general messages.
+  - The function enforces single-quoted values while escaping any existing single quotes.
+#>
+function Group-LanguageResource {
+    $localePath = './src/Locales'
+    $files = Get-ChildItem -Path $localePath -Filter 'Pode.psd1' -Recurse
+
+    foreach ($file in $files) {
+        Write-Host "Processing file: $($file.FullName)"
+
+        # Read raw content
+        $content = Get-Content $file.FullName -Raw
+
+        $normalized = [regex]::Replace(
+            $content,
+            '(?m)^(?<key>\s*[^=\s]+)\s*=\s*(")(?<value>.*?)(")\s*$',
+            {
+                param($match)
+                # Get the value and double any single quotes within it
+                $value = $match.Groups['value'].Value -replace "'", "''"
+                # Build the new line using single quotes
+                return "$($match.Groups['key'].Value) = '$value'"
+            }
+        )
+
+
+        # Extract keys and values using improved regex to support accented characters
+        $matches = [regex]::Matches($normalized, "(?m)^\s*([^=\s]+)\s*=\s*'(.*?)'\s*$")
+
+
+        # Use a hashtable to track unique keys and remove duplicates
+        $uniqueMessages = [ordered]@{}
+        foreach ($match in $matches) {
+            $key = $match.Groups[1].Value
+            $value = $match.Groups[2].Value
+
+            if (  $uniqueMessages.Contains($key)) {
+                Write-Warning "Duplicate key '$key' found in $($file.Name). Keeping only the second occurrence."
+            }
+            $uniqueMessages[$key] = $value
+        }
+
+        # Sort keys
+        $sortedKeys = $uniqueMessages.Keys | Sort-Object
+
+        # Split into Exception and General Messages
+        $exceptionMessages = [ordered]@{}
+        $generalMessages = [ordered]@{}
+
+        foreach ($key in $sortedKeys) {
+            if ($key -match 'ExceptionMessage$') {
+                $exceptionMessages[$key] = $uniqueMessages[$key]
+            }
+            else {
+                $generalMessages[$key] = $uniqueMessages[$key]
+            }
+        }
+
+        $maxLength = ($sortedKeys | Measure-Object -Property Length -Maximum).Maximum + 1
+
+        # Build the file content
+        $lines = @()
+        $lines += '@{'
+        $lines += '    # -------------------------------'
+        $lines += '    # Exception Messages'
+        $lines += '    # -------------------------------'
+
+        foreach ($key in $exceptionMessages.Keys) {
+            $padding = ' ' * ($maxLength - $key.Length)
+            # Replace single quotes only if they're not already escaped
+            $escapedValue = [regex]::Replace($exceptionMessages[$key], "(?<!')'(?!')", "''")
+            $lines += "    $key$padding= '$escapedValue'"
+        }
+
+        $lines += ''
+        $lines += '    # -------------------------------'
+        $lines += '    # General Messages'
+        $lines += '    # -------------------------------'
+
+        foreach ($key in $generalMessages.Keys) {
+            $padding = ' ' * ($maxLength - $key.Length)
+            # Replace single quotes only if they're not already escaped
+            $escapedValue = [regex]::Replace($generalMessages[$key], "(?<!')'(?!')", "''")
+            $lines += "    $key$padding= '$escapedValue'"
+        }
+
+        $lines += '}'
+
+        # Write the updated content back to the file
+        [System.IO.File]::WriteAllText(
+            $file.FullName,
+            ($lines -join "`r`n") + "`r`n",
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        Write-Host "Updated file: $($file.FullName)"
+    }
+}
+
 # Check if the script is running under Invoke-Build
 if (($null -eq $PSCmdlet.MyInvocation) -or ($PSCmdlet.MyInvocation.BoundParameters.ContainsKey('BuildRoot') -and ($null -eq $BuildRoot))) {
     Write-Host 'This script is intended to be run with Invoke-Build. Please use Invoke-Build to execute the tasks defined in this script.' -ForegroundColor Yellow
@@ -1006,6 +1230,10 @@ Add-BuildTask Default {
     Write-Host '- CleanDocs: Cleans up generated documentation files.'
     Write-Host '- SetupPowerShell: Sets up the PowerShell environment for the build.'
     Write-Host '- ReleaseNotes: Generates release notes based on merged pull requests.'
+    Write-Host '- Sort-LanguageFiles: Sort Language resource files.'
+    Write-Host '- AutoMerge-LanguageFiles: Automerge Language Resource files.'
+    Write-Host "- Format-FunctionHeaders: Formats function headers in the file to follow Pode's standard style."
+    Write-Host "- Refresh-HeaderFooter: Adds or refreshes the file-level header and footer using Pode's standard formatting."
 }
 
 <#
@@ -1181,6 +1409,18 @@ Add-BuildTask Build BuildDeps, Yarn, {
     finally {
         Pop-Location
     }
+
+    if (Test-Path ./src/Bin) {
+        Remove-Item -Path ./src/Bin -Recurse -Force | Out-Null
+    }
+
+    try {
+        Push-Location ./src/PodeMonitor
+        Invoke-PodeBuildDotnetMonitorSrvBuild
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 # synopsis: Download the npm packages to pode_modules folder
@@ -1253,7 +1493,16 @@ Add-BuildTask MoveLibs {
         # If Comment exists, prepend it properly depending on file type
         if ($Item.Comment) {
             $fileContent = Get-Content -Raw -Path $Item.From
-            ($Item.Comment + "`n`n" + $fileContent).Trim() | Out-File -FilePath $Item.To -Encoding utf8 -Force -NoNewline
+            $newContent = ($Item.Comment + "`n`n" + $fileContent).Trim()
+            if (Test-Path -Path $Item.To) {
+                $fileOriginalContent = Get-Content -Raw -Path $Item.To
+                if ( $newContent -ne ($fileOriginalContent -replace "`r`n", "`n") ) {
+                    $newContent | Out-File -FilePath $Item.To -Encoding utf8 -Force -NoNewline
+                }
+            }
+            else {
+                $newContent | Out-File -FilePath $Item.To -Encoding utf8 -Force -NoNewline
+            }
         }
         else {
             New-Item -ItemType Directory -Force -Path $Item.To | Out-Null
@@ -1342,7 +1591,7 @@ Add-BuildTask PackageFolder Build, {
     New-Item -Path $path -ItemType Directory -Force | Out-Null
 
     # which source folders do we need? create them and copy their contents
-    $folders = @('Private', 'Public', 'Misc', 'Libs', 'Locales')
+    $folders = @('Private', 'Public', 'Misc', 'Libs', 'Locales', 'Bin')
     $folders | ForEach-Object {
         New-Item -ItemType Directory -Path (Join-Path $path $_) -Force | Out-Null
         Copy-Item -Path "./src/$($_)/*" -Destination (Join-Path $path $_) -Force -Recurse | Out-Null
@@ -1374,11 +1623,62 @@ Add-BuildTask TestNoBuild TestDeps, {
         Remove-Module Pester -Force -ErrorAction Ignore
         Import-Module Pester -Force -RequiredVersion $Versions.Pester
     }
-
+    Write-Output ''
     # for windows, output current netsh excluded ports
     if (Test-PodeBuildIsWindows) {
         netsh int ipv4 show excludedportrange protocol=tcp | Out-Default
+
+        # Retrieve the current Windows identity and token
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+
+        # Gather user information
+        $user = $identity.Name
+        $isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        $adminStatus = if ($isElevated) { 'Administrator' } else { 'Standard User' }
+        $groups = $identity.Groups | ForEach-Object {
+            try {
+                $_.Translate([Security.Principal.NTAccount]).Value
+            }
+            catch {
+                $_.Value # Fallback to SID if translation fails
+            }
+        }
+
+        # Generate output
+        Write-Output 'Pester Execution Context (Windows):'
+        Write-Output "  - User:                $user"
+        Write-Output "  - Role:                $adminStatus"
+        Write-Output "  - Elevated Privileges: $isElevated"
+        Write-Output "  - Group Memberships:   $( $groups -join ', ')"
     }
+
+
+    if ($IsLinux) {
+        $user = whoami
+        $groupsRaw = (groups $user | Out-String).Trim()
+        $groups = $groupsRaw -split '\s+' | Where-Object { $_ -ne ':' } | Sort-Object -Unique
+
+        # Check for sudo privileges based on group membership
+        $isSudoUser = $groups -match '\bwheel\b' -or $groups -match '\badmin\b' -or $groups -match '\bsudo\b' -or $groups -match '\badm\b'
+
+        Write-Output 'Pester Execution Context (Linux):'
+        Write-Output "  - User:    $user"
+        Write-Output "  - Groups:  $( $groups -join ', ')"
+        Write-Output "  - Sudo:    $($isSudoUser -eq $true)"
+    }
+
+    if ($IsMacOS) {
+        $user = whoami
+        $groups = (id -Gn $user).Split(' ') # Use `id -Gn` for consistent group names on macOS
+        $formattedGroups = $groups -join ', '
+        Write-Output 'Pester Execution Context (macOS):'
+        Write-Output "  - User:    $user"
+        Write-Output "  - Groups:  $formattedGroups"
+    }
+
+    Write-Output ''
+
     if ($UICulture -ne ([System.Threading.Thread]::CurrentThread.CurrentUICulture) ) {
         $originalUICulture = [System.Threading.Thread]::CurrentThread.CurrentUICulture
         Write-Output "Original UICulture is $originalUICulture"
@@ -1394,8 +1694,20 @@ Add-BuildTask TestNoBuild TestDeps, {
     $configuration.run.PassThru = $true
     $configuration.Output.Verbosity = $PesterVerbosity
     $configuration.TestResult.OutputPath = $Script:TestResultFile
-    $configuration.TestResult.OutputFormat = 'NUnitXml'
-    $configuration.TestResult.Enabled = $true
+    $excludeTag = @()
+    if ( $PSEdition -ne 'Core') {
+        $excludeTag += 'Exclude_DesktopEdition'
+    }
+    if ($IsLinux) {
+        $excludeTag += 'Exclude_Linux'
+    }
+    if ($IsMacOS) {
+        $excludeTag += 'Exclude_MacOs'
+    }
+    if ($IsWindows) {
+        $excludeTag += 'Exclude_Windows'
+    }
+    $configuration.Filter.ExcludeTag = $excludeTag
 
     # if run code coverage if enabled
     if (Test-PodeBuildCanCodeCoverage) {
@@ -1540,6 +1852,12 @@ Add-BuildTask CleanPkg {
 # Synopsis: Clean the libs folder
 Add-BuildTask CleanLibs {
     $path = './src/Libs'
+    if (Test-Path -Path $path -PathType Container) {
+        Write-Host "Removing $path  contents"
+        Remove-Item -Path $path -Recurse -Force | Out-Null
+    }
+
+    $path = './src/Bin'
     if (Test-Path -Path $path -PathType Container) {
         Write-Host "Removing $path  contents"
         Remove-Item -Path $path -Recurse -Force | Out-Null
@@ -1901,3 +2219,261 @@ Add-BuildTask ReleaseNotes {
     }
 }
 
+
+# Sort the language file contents and remove any duplicate entries.
+Add-BuildTask Sort-LanguageFiles {
+    Group-LanguageResource
+}
+
+# Adds a build task to automatically merge conflicting language files.
+# This task identifies unresolved merge conflicts in the 'src/Locales/' directory and attempts to resolve them by:
+# 1. Detecting files with merge conflicts using `git diff --name-only --diff-filter=U`.
+# 2. Removing Git conflict markers (`<<<<<<< HEAD`, `=======`, and `>>>>>>> pr-<number>`),
+#    dynamically detecting the PR number from the conflict markers.
+# 3. Running `Group-LanguageResource` to ensure language resources are correctly formatted.
+# 4. Staging the resolved files (`git add ./src/Locales/*`).
+# 5. Printing status messages for visibility during execution.
+Add-BuildTask AutoMerge-LanguageFiles {
+    Write-Output 'Attempting auto-merge for language files...'
+
+    # Identify files with unresolved merge conflicts in 'src/Locales/'.
+    git diff --name-only --diff-filter=U ./src/Locales/ | ForEach-Object {
+        $content = Get-Content $_ -Raw
+        if ($content -match '>>>>>>> pr-(\d+)') {
+            # Remove Git conflict markers, dynamically resolving PR numbers
+            $content -replace '<<<<<<< HEAD', '' -replace '=======', '' -replace ">>>>>>> pr-$($matches[1])", '' | Set-Content $_
+        }
+    }
+
+    # Ensure language resources are formatted and grouped correctly.
+    Group-LanguageResource
+
+    # Stage the resolved files.
+    git add ./src/Locales/*
+
+    Write-Output 'Language files auto-merged.'
+}
+
+
+
+# Adds or refreshes the file-level header and footer using Pode's standard formatting.
+Add-BuildTask Refresh-HeaderFooter {
+    $baseDirs = '.\src\Public', '.\src\Private'
+
+    foreach ($dir in $baseDirs) {
+        $isPrivate = $dir -like '*\Private'
+
+        foreach ($file in Get-ChildItem -Path $dir -Recurse -Filter *.ps1) {
+            $path = $file.FullName
+            $original = Get-Content -Raw -Path $path
+
+            #
+            #  ———  CLEAN UP ANY PREVIOUSLY‑INJECTED HEADER & FOOTER ———
+            #
+
+            # Remove an existing Pode file header block (from start-of-file through its closing #>)
+            $cleaned = $original -replace '(?ms)^<#\r?\n\s*File:[\s\S]*?#>\s*(?:\r?\n)*', ''
+            # Strip old footer (use $cleaned, not $original!)
+            $cleaned = $cleaned -replace '(?ms)#[-]{42}\r?\n# End of [\s\S]*$', ''
+
+            # Now split on lines and work off $cleaned
+            $lines = $cleaned -split "`n"
+            $new = ''
+
+            #—— 1) Gather function names ——
+            $functions = @()
+            foreach ($ln in $lines) {
+                if ($ln -match '^\s*function\s+([a-zA-Z0-9\-_]+)\s*{') {
+                    $functions += $Matches[1]
+                }
+            }
+
+            # — Determine repo root & relative path
+            $repoRoot = (& git rev-parse --show-toplevel).Trim()
+            $relativePath = $path.Substring($repoRoot.Length + 1).Replace('\', '/')
+
+            # — Query Git for creation & last‐modified info
+            #   (uses ISO short dates; adjust --date= if you need time-of-day)
+            $gitCreated = (& git log --reverse --format="%ad" --date=short -- $relativePath |
+                    Select-Object -First 1)
+            if (-not $gitCreated) { $gitCreated = '(untracked)' }
+
+            $gitModified = (& git log -1 --format="%ad" --date=short -- $relativePath) `
+                -replace '^$', '(untracked)'
+            $lastAuthor = (& git log -1 --format="%an" -- $relativePath) `
+                -replace '^$', '—'
+            $lastSha = (& git log -1 --format="%h"  -- $relativePath) `
+                -replace '^$', '—'
+
+
+            #—— 2) Build top-of-file header ——
+            $headerLines = @(
+                '<#'
+                "    File:      $relativePath"
+                ''
+                "    Created:   $gitCreated"
+                "    Modified:  $gitModified by $lastAuthor (commit $lastSha)"
+            )
+
+
+            if ($functions.Count) {
+                $headerLines += @(
+                    ''
+                    '    Functions:'
+                )
+                foreach ($fn in $functions) {
+                    $headerLines += "        $fn"
+                }
+            }
+            # Standard Notes section (applies to all)
+            $headerLines += @(
+                ''
+                '    Notes:'
+                '        This file is part of the Pode server framework.'
+                '        https://github.com/Badgerati/Pode'
+                ''
+                '    License:'
+                '        MIT License - See LICENSE file in the project root for full license information.'
+            )
+            if ($isPrivate) {
+                $headerLines += @(
+                    ''
+                    '    WARNING: This file may contain internal implementation details.'
+                    '    Use at your own risk.'
+                )
+            }
+            $headerLines += @(
+                '#>'    # single blank line before code starts
+                ''      # first blank line
+                ''      # second blank line
+            )
+            $new += ($headerLines -join "`n")
+
+            $new += $cleaned.TrimEnd()
+            #  ——— APPEND A SINGLE FOOTER BLOCK ———
+            $new += "`n`n#------------------------------------------`n"
+            $new += "# End of $relativePath`n"
+            $new += '#------------------------------------------'
+
+
+            #—— 6) Write if changed ——
+            if ($new -and $new -ne $original) {
+                Set-Content -Path $path -Value $new
+            }
+        }
+    }
+}
+
+
+# Automatically formats the headers of all functions to match Pode's formatting conventions.
+Add-BuildTask Format-FunctionHeaders {
+    $baseDirs = '.\src\Public', '.\src\Private'
+
+    foreach ($dir in $baseDirs) {
+        $isPrivate = $dir -like '*\Private'
+
+        foreach ($file in Get-ChildItem -Path $dir -Recurse -Filter *.ps1) {
+            $path = $file.FullName
+            $original = Get-Content -Raw -Path $path
+
+            # ——— Extract and preserve the file header (up through the closing #> plus the two blank lines) ———
+            $headerPattern = '(?ms)^(<#\r?\n\s*File:[\s\S]*?#>\s*\r?\n\r?\n)'
+            $m = [regex]::Match($original, $headerPattern)
+            if ($m.Success) {
+                $fileHeader = $m.Value
+                $body = $original.Substring($m.Length)
+            }
+            else {
+                $fileHeader = ''
+                $body = $original
+            }
+
+            # Now split on lines and work off $cleaned
+            $lines = $body -split "`n"
+            # start your new content with the preserved header
+            $new = $fileHeader
+
+            #—— 3) Re‑format any existing help blocks ——
+            $insideHelp = $false
+            $sections = @()
+            foreach ($line in $lines) {
+                switch -Regex ($line) {
+                    '^\s*<#\s*$' {
+                        $insideHelp = $true
+                        $sections = @()
+                        continue
+                    }
+                    '^\s*#>\s*$' {
+                        # inject default .NOTES on private
+                        if ($isPrivate -and -not ($sections.Where({ $_.Header -match '^\.(NOTES)\b' }).Count)) {
+                            $sections += [pscustomobject]@{
+                                Header = '.NOTES'
+                                Lines  = @('This is an internal function and may change in future releases of Pode.')
+                            }
+                        }
+                        # rebuild help block
+                        $new += '<#' + "`n"
+                        foreach ($sec in $sections) {
+                            $new += "$($sec.Header)`n"
+                            foreach ($content in $sec.Lines) {
+                                if ($content.Trim() -eq '') {
+                                    $new += "`n"
+                                }
+                                else {
+                                    if ($sec.Header -match '^\.EXAMPLE\b') {
+                                        if ($content -match '^[ ]{4}') {
+                                            $new += "$content`n"
+                                        }
+                                        else {
+                                            $new += "    $content`n"
+                                        }
+                                    }
+                                    else {
+                                        $new += "    $($content.Trim())`n"
+                                    }
+                                }
+                            }
+                        }
+                        $new += '#>' + "`n"
+                        $insideHelp = $false
+                        continue
+                    }
+                    default {
+                        if ($insideHelp) {
+                            if ($line -match '^\s*(\.(SYNOPSIS|DESCRIPTION|PARAMETER|EXAMPLE|OUTPUTS|NOTES)\b.*)') {
+                                $sections += [pscustomobject]@{
+                                    Header = $Matches[1].Trim()
+                                    Lines  = @()
+                                }
+                            }
+                            elseif ($sections) {
+                                $sections[-1].Lines += $line
+                            }
+                            continue
+                        }
+                        $new += $line + "`n"
+                    }
+                }
+            }
+
+            #  BEFORE APPENDING FOOTER: trim any trailing blank lines/spaces
+            $new = $new.TrimEnd("`r", "`n", ' ')
+
+
+            #—— 5) Normalize blank lines ——
+            # a) After '#>' collapse any run of blank lines down to exactly one real newline
+            $new = $new -replace '(?m)(#>\r?\n)(?:[ \t]*\r?\n)+(?=\s*function\b)', '$1'
+            # b) Between a closing '}' and the next '<#', enforce exactly two real newlines
+            $new = $new -replace '(?m)(\})\r?\n(?:[ \t]*\r?\n)+<#', "`$1`n`n`n<#"
+
+            #—— 6) Write if changed ——
+            if ($new -and $new -ne $original) {
+                Set-Content -Path $path -Value $new
+            }
+        }
+    }
+}
+
+#------------------------------------------
+# End of pode.build.ps1
+#------------------------------------------

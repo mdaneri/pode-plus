@@ -263,9 +263,6 @@
         'Add-PodeAuthMiddleware',
         'Add-PodeAuthIIS',
         'Add-PodeAuthUserFile',
-        'ConvertTo-PodeJwt',
-        'ConvertFrom-PodeJwt',
-        'Test-PodeJwt'
         'Use-PodeAuth',
         'ConvertFrom-PodeOIDCDiscovery',
         'Test-PodeAuthUser',
@@ -275,6 +272,22 @@
         'Get-PodeAuthUser',
         'Add-PodeAuthSession',
         'New-PodeAuthKeyTab',
+        'New-PodeAuthBearerScheme',
+        'New-PodeAuthDigestScheme',
+
+        #JWT
+        'ConvertTo-PodeJwt',
+        'ConvertFrom-PodeJwt',
+        'Test-PodeJwt',
+        'Update-PodeJwt',
+
+        #Certificate
+        'Export-PodeCertificate',
+        'Get-PodeCertificatePurpose',
+        'Import-PodeCertificate',
+        'New-PodeCertificateRequest',
+        'New-PodeSelfSignedCertificate',
+        'Test-PodeCertificate',
 
         # access
         'New-PodeAccessScheme',
@@ -541,6 +554,17 @@
         'New-PodeLimitEndpointComponent',
         'New-PodeLimitMethodComponent',
         'New-PodeLimitHeaderComponent'
+        'Use-PodeScopedVariables',
+
+        # service
+        'Register-PodeService',
+        'Unregister-PodeService',
+        'Start-PodeService',
+        'Stop-PodeService',
+        'Get-PodeService',
+        'Suspend-PodeService',
+        'Resume-PodeService',
+        'Restart-PodeService'
     )
 
     # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.

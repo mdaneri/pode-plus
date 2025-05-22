@@ -55,6 +55,12 @@ function New-PodeContext {
         [string]
         $ConfigFile,
 
+        [string]
+        $ApplicationName,
+
+        [hashtable]
+        $Service,
+
         [switch]
         $Daemon
     )
@@ -100,8 +106,19 @@ function New-PodeContext {
     $ctx.Server.PodeModule = (Get-PodeModuleInfo)
     $ctx.Server.Console = $Console
     $ctx.Server.ComputerName = [System.Net.DNS]::GetHostName()
-    $ctx.Server.ApplicationName = (Get-PodeApplicationName)
+    
+    try {
+        $ctx.Server.Fqdn = [System.Net.Dns]::GetHostEntry($ctx.Server.ComputerName).HostName
+    }
+    catch {
+        $ctx.Server.Fqdn = $ctx.Server.ComputerName
+    }
+    $ctx.Server.ApplicationName = $ApplicationName
 
+
+    if ($null -ne $Service) {
+        $ctx.Server.Service = $Service
+    }
     # list of created listeners/receivers
     $ctx.Listeners = @()
     $ctx.Receivers = @()
@@ -150,6 +167,7 @@ function New-PodeContext {
         Tasks      = 2
         WebSockets = 2
         Timers     = 1
+        Service    = 0
     }
 
     # set socket details for pode server
@@ -218,9 +236,11 @@ function New-PodeContext {
 
     # Load the server configuration based on the provided parameters.
     # If $IgnoreServerConfig is set, an empty configuration (@{}) is assigned; otherwise, the configuration is loaded using Open-PodeConfiguration.
-    $ctx.Server.Configuration = if ($IgnoreServerConfig) { @{} }
+    if ($IgnoreServerConfig) {
+        $ctx.Server.Configuration = @{}
+    }
     else {
-        Open-PodeConfiguration -ServerRoot $ServerRoot -Context $ctx -ConfigFile $ConfigFile
+        $ctx.Server.Configuration = Open-PodeConfiguration -ServerRoot $ServerRoot -Context $ctx -ConfigFile $ConfigFile
     }
 
     # Set the 'Enabled' property of the server configuration.
@@ -502,6 +522,7 @@ function New-PodeContext {
         Tasks     = $null
         Files     = $null
         Timers    = $null
+        Service   = $null
     }
 
     # threading locks, etc.
@@ -707,6 +728,15 @@ function New-PodeRunspacePool {
         }
 
         $PodeContext.RunspacePools.Gui.Pool.ApartmentState = 'STA'
+    }
+
+    if (Test-PodeServiceEnabled ) {
+        $PodeContext.Threads['Service'] = 1
+        $PodeContext.RunspacePools.Service = @{
+            Pool   = [runspacefactory]::CreateRunspacePool(1, 1, $PodeContext.RunspaceState, $Host)
+            State  = 'Waiting'
+            LastId = 0
+        }
     }
 }
 
