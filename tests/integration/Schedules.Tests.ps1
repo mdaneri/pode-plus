@@ -5,6 +5,9 @@ param()
 Describe 'Schedules' {
 
     BeforeAll {
+        $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+        . "$helperPath/TestHelper.ps1"
+
         $Port = 8080
         $Endpoint = "http://127.0.0.1:$($Port)"
 
@@ -74,7 +77,7 @@ Describe 'Schedules' {
             }
         }
 
-        Start-Sleep -Seconds 10
+         Wait-ForWebServer -Port $Port
     }
 
     AfterAll {

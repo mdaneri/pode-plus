@@ -279,3 +279,4 @@ examples/certs/*-private.pem
 tests/certs/*
 /examples/certs
 examples/Authentication/certs/*
+pode-plus.sln
