@@ -649,19 +649,81 @@ function Test-PodeUserServiceCreationPrivilege {
 #>
 
 function Confirm-PodeAdminPrivilege {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
     # Check for administrative privileges
     if (! (Test-PodeAdminPrivilege -Elevate)) {
-        if (Test-PodeIsWindows -and (Test-PodeUserServiceCreationPrivilege)) {
-            Write-PodeHost "Insufficient privileges. This script requires Administrator access or the 'SERVICE_CHANGE_CONFIG' (SeCreateServicePrivilege) permission to continue." -ForegroundColor Red
-            exit
+        if ((Test-PodeIsWindows) -and (Test-PodeUserServiceCreationPrivilege)) {
+            Write-Error "Insufficient privileges. This script requires Administrator access or the 'SERVICE_CHANGE_CONFIG' (SeCreateServicePrivilege) permission to continue."
+            return $false
         }
 
         # Message for non-Windows (Linux/macOS)
-        Write-PodeHost "Insufficient privileges. This script must be run as root or with 'sudo' permissions to continue." -ForegroundColor Red
-        exit
+        Write-Error "Insufficient privileges. This script must be run as root or with 'sudo' permissions to continue."
+        return $false
     }
+    return $true
 }
 
+<#
+.SYNOPSIS
+    Verifies that the current Linux system is using systemd.
+
+.DESCRIPTION
+    Checks whether the process with PID 1 is 'systemd'.
+    On non-Linux systems, or if PID 1 is not systemd, it writes an error and returns $false.
+    Otherwise returns $true.
+
+.PARAMETER (none)
+    This function does not take any parameters.
+
+.OUTPUTS
+    System.Boolean
+    Returns $true if running under systemd on Linux; otherwise $false.
+
+.EXAMPLE
+    # On a Linux host:
+    PS> Test-PodeSystemd
+    True
+
+.EXAMPLE
+    # On a non-systemd system:
+    PS> Test-PodeSystemd
+    Test-PodeSystemd : Systemd was not detected on this Linux system. Service management commands require systemd and cannot be executed.
+    False
+
+.NOTES
+    - Requires that the automatic variable $IsLinux be correctly set.
+    - Relies on Get-Process to inspect PID 1.
+#>
+function Test-PodeSystemd {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    if ($IsLinux) {
+        if ((Get-Process -Id 1).ProcessName -ne 'systemd') {
+            Write-Error -Message 'Systemd was not detected on this Linux system. Service management commands require systemd and cannot be executed.' -Category InvalidOperation
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-PodeSystemd {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    if (!$IsLinux) {
+        if ((Get-Process -Id 1).ProcessName -ne 'systemd') {
+            Write-Error -Message 'Systemd was not detected on this Linux system. Service management commands require systemd and cannot be executed.' -Category InvalidOperation
+            return $false
+        }
+    }
+    return $true
+}
 <#
 .SYNOPSIS
     Tests if a Linux service is registered.

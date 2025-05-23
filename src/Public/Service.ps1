@@ -82,6 +82,8 @@
     - Dynamically obtains the PowerShell executable path for compatibility across platforms.
 #>
 function Register-PodeService {
+    [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
         [string]
@@ -171,7 +173,18 @@ function Register-PodeService {
 
     # Ensure the script is running with the necessary administrative/root privileges.
     # Exits the script if the current user lacks the required privileges.
-    Confirm-PodeAdminPrivilege
+    $errorCommon = @{}
+
+    if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+        $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+    }
+    if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+        $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+    }
+    # Ensure administrative/root privileges
+    if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+        return $false
+    }
 
     try {
         # Obtain the script path and directory
@@ -382,8 +395,18 @@ function Start-PodeService {
         $Agent
     )
     try {
+        $errorCommon = @{}
+
+        if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+            $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+        }
+        if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+            $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+        }
         # Ensure administrative/root privileges
-        Confirm-PodeAdminPrivilege
+        if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+            return $false
+        }
 
         # Get the service status
         $service = Get-PodeServiceStatus -Name $Name -Agent:$Agent
@@ -517,7 +540,18 @@ function Stop-PodeService {
     )
     try {
         # Ensure administrative/root privileges
-        Confirm-PodeAdminPrivilege
+        $errorCommon = @{}
+
+        if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+            $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+        }
+        if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+            $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+        }
+        # Ensure administrative/root privileges
+        if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+            return $false
+        }
 
         # Get the service status
         $service = Get-PodeServiceStatus -Name $Name -Agent:$Agent
@@ -634,7 +668,18 @@ function Suspend-PodeService {
     )
     try {
         # Ensure administrative/root privileges
-        Confirm-PodeAdminPrivilege
+        $errorCommon = @{}
+
+        if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+            $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+        }
+        if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+            $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+        }
+        # Ensure administrative/root privileges
+        if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+            return $false
+        }
 
         # Get the service status
         $service = Get-PodeServiceStatus -Name $Name -Agent:$Agent
@@ -756,7 +801,18 @@ function Resume-PodeService {
     )
     try {
         # Ensure administrative/root privileges
-        Confirm-PodeAdminPrivilege
+        $errorCommon = @{}
+
+        if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+            $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+        }
+        if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+            $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+        }
+        # Ensure administrative/root privileges
+        if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+            return $false
+        }
 
         # Get the service status
         $service = Get-PodeServiceStatus -Name $Name -Agent:$Agent
@@ -859,6 +915,8 @@ function Resume-PodeService {
     - On macOS, it uses `launchctl` to stop and unload the service.
 #>
 function Unregister-PodeService {
+    [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
         [string]
@@ -873,7 +931,18 @@ function Unregister-PodeService {
     )
 
     # Ensure administrative/root privileges
-    Confirm-PodeAdminPrivilege
+    $errorCommon = @{}
+
+    if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+        $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+    }
+    if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+        $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+    }
+    # Ensure administrative/root privileges
+    if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+        return $false
+    }
 
     # Get the service status
     $service = Get-PodeServiceStatus -Name $Name -Agent:$Agent
@@ -1046,7 +1115,19 @@ function Get-PodeService {
     )
     # Ensure the script is running with the necessary administrative/root privileges.
     # Exits the script if the current user lacks the required privileges.
-    Confirm-PodeAdminPrivilege
+    $errorCommon = @{}
+
+    if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+        $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+    }
+    if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+        $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+    }
+    # Ensure administrative/root privileges
+    if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+        return $null
+    }
+
     return Get-PodeServiceStatus -Name $Name -Agent:$Agent
 }
 
@@ -1114,7 +1195,18 @@ function Restart-PodeService {
 
     # Ensure the script is running with the necessary administrative/root privileges.
     # Exits the script if the current user lacks the required privileges.
-    Confirm-PodeAdminPrivilege
+    $errorCommon = @{}
+
+    if ($PSBoundParameters.ContainsKey('ErrorAction')) {
+        $errorCommon.ErrorAction = $PSBoundParameters.ErrorAction
+    }
+    if ($PSBoundParameters.ContainsKey('ErrorVariable')) {
+        $errorCommon.ErrorVariable = $PSBoundParameters.ErrorVariable
+    }
+    # Ensure administrative/root privileges
+    if (!(Confirm-PodeAdminPrivilege @errorCommon) -or !(Test-PodeSystemd @errorCommon)) {
+        return $false
+    }
 
     try {
 
