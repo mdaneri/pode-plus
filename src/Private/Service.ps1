@@ -710,20 +710,7 @@ function Test-PodeSystemd {
     }
     return $true
 }
-
-function Test-PodeSystemd {
-    [CmdletBinding()]
-    [OutputType([bool])]
-    param()
-
-    if (!$IsLinux) {
-        if ((Get-Process -Id 1).ProcessName -ne 'systemd') {
-            Write-Error -Message 'Systemd was not detected on this Linux system. Service management commands require systemd and cannot be executed.' -Category InvalidOperation
-            return $false
-        }
-    }
-    return $true
-}
+ 
 <#
 .SYNOPSIS
     Tests if a Linux service is registered.
