@@ -22,7 +22,7 @@ Describe 'Service Lifecycle' {
         Start-Sleep -Seconds $SleepTime
         $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
         if ($IsMacOS) {
-            Start-Sleep -Seconds $10
+            Start-Sleep -Seconds 10
             $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
             $status.Status | Should -Be 'Running'
             $status.Pid | Should -BeGreaterThan 0
