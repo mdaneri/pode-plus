@@ -5,6 +5,9 @@
     "ghcr.io/devcontainers/features/powershell:1": {},
     "ghcr.io/devcontainers/features/dotnet:1": {
       "version": "9.0"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
     }
   },
   "customizations": {
@@ -15,5 +18,5 @@
       ]
     }
   },
-  "postCreateCommand": "pwsh -Command 'Install-Module -Name InvokeBuild,Pester -Force -SkipPublisherCheck; sleep 5; Invoke-Build Build   '"
+  "postCreateCommand": "npm install -g yarn ; pwsh -Command 'Install-Module -Name InvokeBuild,Pester -Force -SkipPublisherCheck; sleep 5; Invoke-Build Build'"
 }
