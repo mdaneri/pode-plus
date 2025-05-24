@@ -138,7 +138,7 @@ try {
 
         # append Pode.dll and mount
         Add-Type -LiteralPath "$($netFolder)/Pode.dll" -ErrorAction Stop
-        $null = Test-PodeAssembly
+        $null = Test-PodeAssembly -PodeManifest $PodeManifest
     }
 
     # load private functions
