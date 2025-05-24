@@ -10,7 +10,8 @@ BeforeAll {
 
 Describe 'Register-PodeService' {
     BeforeAll {
-        Mock -CommandName Confirm-PodeAdminPrivilege
+        Mock -CommandName Confirm-PodeAdminPrivilege { return  $true }
+        Mock -CommandName Test-PodeSystemd { return  $true }
         Mock -CommandName Register-PodeMonitorWindowsService { return  $true }
         Mock -CommandName Register-PodeLinuxService { return  $true }
         Mock -CommandName Register-PodeMacService { return  $true }
@@ -104,7 +105,8 @@ Describe 'Register-PodeService' {
 Describe 'Start-PodeService' {
     BeforeAll {
         # Mock the required commands
-        Mock -CommandName Confirm-PodeAdminPrivilege
+        Mock -CommandName Confirm-PodeAdminPrivilege { return  $true }
+        Mock -CommandName Confirm-PodeAdminPrivilege { return  $true }
         Mock -CommandName Invoke-PodeWinElevatedCommand
         Mock -CommandName Test-PodeLinuxServiceIsRegistered
         Mock -CommandName Test-PodeLinuxServiceIsActive
