@@ -1,8 +1,7 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseUsingScopeModifierInNewRunspaces', '')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
 param()
-
-
 
 Describe 'Service Lifecycle' {
 
@@ -13,11 +12,14 @@ Describe 'Service Lifecycle' {
         }
 
         $Uri = 'http://localhost:8080'
-        $SleepTime = 4
+        $SleepTime = 5
 
     }
     it 'register' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Register -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
         $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
@@ -39,6 +41,9 @@ Describe 'Service Lifecycle' {
 
     it 'start' -Skip:( $IsMacOS) {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Start -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         $webRequest = Invoke-WebRequest -Uri $Uri -ErrorAction SilentlyContinue
         $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
@@ -50,6 +55,9 @@ Describe 'Service Lifecycle' {
 
     it  'pause' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Suspend -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
 
@@ -62,6 +70,9 @@ Describe 'Service Lifecycle' {
 
     it  'resume' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -resume -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
         $webRequest = Invoke-WebRequest -Uri $Uri -ErrorAction SilentlyContinue
@@ -73,6 +84,9 @@ Describe 'Service Lifecycle' {
     }
     it 'stop' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Stop -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
         $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
@@ -85,6 +99,9 @@ Describe 'Service Lifecycle' {
 
     it 're-start' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Start -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
         $webRequest = Invoke-WebRequest -Uri $Uri -ErrorAction SilentlyContinue
@@ -105,6 +122,9 @@ Describe 'Service Lifecycle' {
             $status.Type | Should -Be 'Agent'
         }
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Unregister -Force -Agent:$isAgent
+        if (-not $success) {
+            Write-Host "Error stopping service: $(Get-Error)"
+        }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
         $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
