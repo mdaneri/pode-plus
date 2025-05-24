@@ -258,9 +258,6 @@
         'Add-PodeAuthMiddleware',
         'Add-PodeAuthIIS',
         'Add-PodeAuthUserFile',
-        'ConvertTo-PodeJwt',
-        'ConvertFrom-PodeJwt',
-        'Test-PodeJwt'
         'Use-PodeAuth',
         'ConvertFrom-PodeOIDCDiscovery',
         'Test-PodeAuthUser',
@@ -270,6 +267,22 @@
         'Get-PodeAuthUser',
         'Add-PodeAuthSession',
         'New-PodeAuthKeyTab',
+        'New-PodeAuthBearerScheme',
+        'New-PodeAuthDigestScheme',
+
+        #JWT
+        'ConvertTo-PodeJwt',
+        'ConvertFrom-PodeJwt',
+        'Test-PodeJwt',
+        'Update-PodeJwt',
+
+        #Certificate
+        'Export-PodeCertificate',
+        'Get-PodeCertificatePurpose',
+        'Import-PodeCertificate',
+        'New-PodeCertificateRequest',
+        'New-PodeSelfSignedCertificate',
+        'Test-PodeCertificate',
 
         # access
         'New-PodeAccessScheme',
@@ -538,6 +551,17 @@
         'New-PodeLimitHeaderComponent'
         'Use-PodeScopedVariables',
 
+        # service
+        'Register-PodeService',
+        'Unregister-PodeService',
+        'Start-PodeService',
+        'Stop-PodeService',
+        'Get-PodeService',
+        'Suspend-PodeService',
+        'Resume-PodeService',
+        'Restart-PodeService'
+        'Use-PodeScopedVariables',
+
         # watchdog
         'Enable-PodeWatchdog',
         'Test-PodeWatchdog',
@@ -562,7 +586,7 @@
         PSData       = @{
 
             #$Prerelease-Here$
-            
+
             # Tags applied to this module. These help with module discovery in online galleries.
             Tags         = @(
                 'powershell', 'web', 'server', 'http', 'https', 'listener', 'rest', 'api', 'tcp',

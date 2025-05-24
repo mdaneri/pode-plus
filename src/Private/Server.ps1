@@ -206,6 +206,8 @@ function Start-PodeInternalServer {
         Set-PodeWatchdogHearthbeatStatus -Status 'Running'
 
 
+        # Start Service Monitor
+        Start-PodeServiceHeartbeat
     }
     catch {
         throw
