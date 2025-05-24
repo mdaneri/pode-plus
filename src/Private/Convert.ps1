@@ -407,7 +407,7 @@ function ConvertTo-PodeCustomDictionaryJson {
   - The `Ordered` switch allows for property order preservation in the resulting hashtable.
   - This function is for internal Pode usage and may be subject to change.
 #>
-function ConvertTo-PodeHashtable {
+function Convert-PsCustomObjectToOrderedHashtable {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
