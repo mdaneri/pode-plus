@@ -12,7 +12,7 @@ name: PSScriptAnalyzer
 on:
   push:
     branches:
-    - 'develop'
+    - 'main'
     paths:
     - 'src/**.ps1'
     - 'src/*.psm1'
