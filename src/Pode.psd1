@@ -560,6 +560,17 @@
         'Suspend-PodeService',
         'Resume-PodeService',
         'Restart-PodeService'
+        'Use-PodeScopedVariables',
+
+        # watchdog
+        'Enable-PodeWatchdog',
+        'Test-PodeWatchdog',
+        'Get-PodeWatchdogProcessMetric',
+        'Set-PodeWatchdogProcessState',
+        'Enable-PodeWatchdogAutoRestart',
+        'Disable-PodeWatchdogAutoRestart',
+        'Add-PodeWatchdogOASchema'
+
     )
 
     # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
@@ -575,7 +586,7 @@
         PSData       = @{
 
             #$Prerelease-Here$
-            
+
             # Tags applied to this module. These help with module discovery in online galleries.
             Tags         = @(
                 'powershell', 'web', 'server', 'http', 'https', 'listener', 'rest', 'api', 'tcp',
