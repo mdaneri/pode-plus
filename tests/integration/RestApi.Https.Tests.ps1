@@ -4,6 +4,9 @@ param()
 
 Describe 'REST API Requests' {
     BeforeAll {
+        $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+        . "$helperPath/TestHelper.ps1"
+
         $splatter = @{}
         $version = $PSVersionTable.PSVersion
         $useCurl = $false
@@ -31,7 +34,7 @@ Describe 'REST API Requests' {
             $splatter.SkipCertificateCheck = $true
         }
 
-        $Port = 8080
+        $Port = 8043
         $Endpoint = "https://127.0.0.1:$($Port)"
 
         Start-Job -Name 'Pode' -ErrorAction Stop -ScriptBlock {
@@ -117,7 +120,7 @@ Describe 'REST API Requests' {
             }
         }
 
-        Start-Sleep -Seconds 10
+        Wait-ForWebServer -Protocol https -Port $Port
     }
 
     AfterAll {

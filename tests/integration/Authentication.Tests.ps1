@@ -5,6 +5,8 @@ BeforeAll {
     $path = $PSCommandPath
     $src = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]integration', '/src/'
     Get-ChildItem "$($src)/*.ps1" -Recurse | Resolve-Path | ForEach-Object { . $_ }
+    $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+    . "$helperPath/TestHelper.ps1"
 }
 Describe 'Authentication Requests' {
 
@@ -111,7 +113,7 @@ Describe 'Authentication Requests' {
             }
         }
 
-        Start-Sleep -Seconds 10
+        Wait-ForWebServer -Port $Port
     }
 
     AfterAll {

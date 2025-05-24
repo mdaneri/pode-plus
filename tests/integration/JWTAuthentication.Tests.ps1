@@ -6,6 +6,8 @@ BeforeAll {
     $src = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]integration', '/src/'
     $CertsPath = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]integration', '/tests/certs/'
     Get-ChildItem "$($src)/*.ps1" -Recurse | Resolve-Path | ForEach-Object { . $_ }
+    $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+    . "$helperPath/TestHelper.ps1"
 }
 
 Describe 'JWT Bearer Authentication Requests' {
@@ -247,7 +249,7 @@ Describe 'JWT Bearer Authentication Requests' {
                         Write-PodeJsonResponse -StatusCode 200 -Value @{
                             'success' = $true
                             'user'    = $user
-                            'token'     = $jwt
+                            'token'   = $jwt
                         }
 
                     }
@@ -264,7 +266,7 @@ Describe 'JWT Bearer Authentication Requests' {
 
                         Write-PodeJsonResponse -StatusCode 200 -Value @{
                             'success' = $true
-                            'token'     = $jwt
+                            'token'   = $jwt
                         }
                     }
                     catch {
@@ -286,7 +288,7 @@ Describe 'JWT Bearer Authentication Requests' {
             }
         }
 
-        Start-Sleep -Seconds 20
+        Wait-ForWebServer -Port $Port
     }
 
     AfterAll {
@@ -555,7 +557,7 @@ Describe 'JWT Bearer Authentication Requests' {
                 -Headers @{
                 'accept'        = 'application/json'
                 'Authorization' = "Bearer $($script:JwtToken)"
-            } 
+            }
 
             # Validate response structure
             $Response | Should -Not -BeNullOrEmpty

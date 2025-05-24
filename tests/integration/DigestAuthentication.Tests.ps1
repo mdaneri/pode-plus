@@ -3,10 +3,11 @@
 param()
 BeforeAll {
     $path = $PSCommandPath
-    $src = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]integration', '/src/'
-    $CertsPath = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]integration', '/tests/certs/'
-    Get-ChildItem "$($src)/*.ps1" -Recurse | Resolve-Path | ForEach-Object { . $_ }
-    
+    # $src = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]integration', '/src/'
+    # Get-ChildItem "$($src)/*.ps1" -Recurse | Resolve-Path | ForEach-Object { . $_ }
+    $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+    . "$helperPath/TestHelper.ps1"
+
     # load assemblies
     Add-Type -AssemblyName System.Web -ErrorAction Stop
     Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
@@ -311,7 +312,7 @@ Describe 'Digest Authentication Requests' {
                 }
             }
         }
-        Start-Sleep -Seconds 10
+        Wait-ForWebServer -Port $Port
 
     }
 
