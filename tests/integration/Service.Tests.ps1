@@ -51,7 +51,8 @@ Describe 'Service Lifecycle' {
         $status.Name | Should -Be 'Hello Service'
         $status.Pid | Should -BeGreaterThan 0
         $webRequest.Content | Should -Be 'Hello, Service!'
-    }
+    start-sleep 20
+}
 
     it  'pause' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Suspend -Agent:$isAgent
@@ -69,6 +70,7 @@ Describe 'Service Lifecycle' {
     }
 
     it  'resume' {
+    start-sleep 20
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -resume -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
@@ -83,6 +85,7 @@ Describe 'Service Lifecycle' {
         $webRequest.Content | Should -Be 'Hello, Service!'
     }
     it 'stop' {
+    start-sleep 20
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Stop -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
@@ -98,6 +101,7 @@ Describe 'Service Lifecycle' {
     }
 
     it 're-start' {
+    start-sleep 20
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Start -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
@@ -115,6 +119,7 @@ Describe 'Service Lifecycle' {
 
 
     it 'unregister' {
+    start-sleep 20
         $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
         $status.Status | Should -Be 'Running'
         $status.Name | Should -Be 'Hello Service'
