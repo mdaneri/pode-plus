@@ -12,7 +12,7 @@ Describe 'Service Lifecycle' {
         }
 
         $Uri = 'http://localhost:8080'
-        $SleepTime = 10
+        $SleepTime = 15
 
     }
     it 'register' {
