@@ -4,6 +4,9 @@ param()
 Describe 'Endpoint Requests' {
 
     BeforeAll {
+        $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+        . "$helperPath/TestHelper.ps1"
+        
         $Port1 = 8080
         $Endpoint1 = "http://127.0.0.1:$($Port1)"
 
@@ -36,7 +39,8 @@ Describe 'Endpoint Requests' {
             }
         }
 
-        Start-Sleep -Seconds 10
+        Wait-ForWebServer -Port $Port1
+        Wait-ForWebServer -Port $Port2
     }
 
     AfterAll {
