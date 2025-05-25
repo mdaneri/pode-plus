@@ -27,9 +27,6 @@ An optional ClientId to use for the SSE connection, this value will be signed if
 .PARAMETER AllowAllOrigins
 If supplied, then Access-Control-Allow-Origin will be set to * on the response.
 
-.PARAMETER AsyncRouteTaskId
-This optional AsyncRouteTaskId is used internally to identify the Asynct Route task that is opening this SSE connection, and then used to send events to these connection.
-
 .PARAMETER Force
 If supplied, the Accept header of the request will be ignored; attempting to configure an SSE connection even if the header isn't "text/event-stream".
 
@@ -72,16 +69,11 @@ function ConvertTo-PodeSseConnection {
         [string]
         $ClientId,
 
-        [Parameter()]
-        [string]
-        $AsyncRouteTaskId,
-
         [switch]
         $AllowAllOrigins,
 
         [switch]
         $Force
-
     )
 
     # check Accept header - unless forcing
@@ -99,7 +91,7 @@ function ConvertTo-PodeSseConnection {
     $ClientId = New-PodeSseClientId -ClientId $ClientId
 
     # set and send SSE headers
-    $ClientId = Wait-PodeTask -Task $WebEvent.Response.SetSseConnection($Scope, $ClientId, $Name, $Group, $RetryDuration, $AllowAllOrigins.IsPresent, $AsyncRouteTaskId)
+    $ClientId = Wait-PodeTask -Task $WebEvent.Response.SetSseConnection($Scope, $ClientId, $Name, $Group, $RetryDuration, $AllowAllOrigins.IsPresent)
 
     # create SSE property on WebEvent
     $WebEvent.Sse = @{
@@ -108,10 +100,6 @@ function ConvertTo-PodeSseConnection {
         ClientId    = $ClientId
         LastEventId = Get-PodeHeader -Name 'Last-Event-ID'
         IsLocal     = ($Scope -ieq 'local')
-    }
-
-    if ($AsyncRouteTaskId) {
-        $WebEvent.Sse['asyncRouteTaskId'] = $AsyncRouteTaskId
     }
 }
 
@@ -239,7 +227,6 @@ function Send-PodeSseEvent {
         $EventType,
 
         [Parameter()]
-        [ValidateRange(0, 100)]
         [int]
         $Depth = 10,
 
@@ -248,8 +235,13 @@ function Send-PodeSseEvent {
         $FromEvent
     )
 
+
     begin {
         $pipelineValue = @()
+        # do nothing if no value
+        if (($null -eq $Data) -or ([string]::IsNullOrEmpty($Data))) {
+            return
+        }
     }
 
     process {
@@ -260,20 +252,13 @@ function Send-PodeSseEvent {
         if ($pipelineValue.Count -gt 1) {
             $Data = $pipelineValue
         }
-
-        # do nothing if no value
-        if (($null -eq $Data) -or ([string]::IsNullOrEmpty($Data))) {
-            return
-        }
-
+        # jsonify the value
         if ($Data -isnot [string]) {
-            $Data = (ConvertTo-Json -InputObject $Data -Depth $Depth -Compress)
-        }
-
-         # if inside an async route wait for ClientId to be syncronized
-         if ($WebEvent.Async -and $FromEvent) {
-            while (!($WebEvent.ContainsKey('Sse') -and $WebEvent.Sse.ContainsKey('ClientId'))) {
-                Start-Sleep -Milliseconds 100
+            if ($Depth -le 0) {
+                $Data = (ConvertTo-Json -InputObject $Data -Compress)
+            }
+            else {
+                $Data = (ConvertTo-Json -InputObject $Data -Depth $Depth -Compress)
             }
         }
 
@@ -306,7 +291,6 @@ function Send-PodeSseEvent {
         $PodeContext.Server.Http.Listener.SendSseEvent($Name, $Group, $ClientId, $EventType, $Data, $Id)
     }
 }
-
 <#
 .SYNOPSIS
 Close one or more SSE connections.

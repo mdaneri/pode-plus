@@ -7,7 +7,7 @@ function Start-PodeTaskHousekeeper {
         return
     }
 
-    Add-PodeTimer -Name '__pode_task_housekeeper__' -Interval $PodeContext.Tasks.HouseKeeping.TimerInterval -ScriptBlock {
+    Add-PodeTimer -Name '__pode_task_housekeeper__' -Interval 20 -ScriptBlock {
         try {
             # return if no task processes
             if ($PodeContext.Tasks.Processes.Count -eq 0) {

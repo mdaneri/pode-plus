@@ -1551,7 +1551,7 @@ function ConvertFrom-PodeRequestContent {
                 $Result.Data = ($Content | ConvertFrom-Json -AsHashtable)
             }
             else {
-                $Result.Data = ConvertTo-PodeHashtable -PSObject ($Content | ConvertFrom-Json)
+                $Result.Data = ($Content | ConvertFrom-Json)
             }
         }
 
@@ -4104,87 +4104,6 @@ function ConvertTo-PodeSleep {
 #>
 function Test-PodeIsISEHost {
     return ((Test-PodeIsWindows) -and ('Windows PowerShell ISE Host' -eq $Host.Name))
-}
-
-
-
-
-<#
-.SYNOPSIS
-    Checks if two arrays have any common elements.
-
-.DESCRIPTION
-    This function takes two arrays as input parameters and checks if they share any common elements.
-    It returns $true if there is at least one common element, and $false otherwise.
-
-.PARAMETER ReferenceArray
-    The first array to compare.
-
-.PARAMETER DifferenceArray
-    The second array to compare.
-
-.EXAMPLE
-    $array1 = @('a', 'b', 'c')
-    $array2 = @('c', 'd', 'e')
-    Test-PodeArraysHaveCommonElement -ReferenceArray $array1 -DifferenceArray $array2
-    # Output: True
-
-.EXAMPLE
-    $array1 = @('a', 'b', 'c')
-    $array2 = @('d', 'e', 'f')
-    Test-PodeArraysHaveCommonElement -ReferenceArray $array1 -DifferenceArray $array2
-    # Output: False
-
-.NOTES
-    This is an internal function and may change in future releases of Pode.
-#>
-function Test-PodeArraysHaveCommonElement {
-    param (
-        [array]$ReferenceArray, # The first array to compare
-        [array]$DifferenceArray    # The second array to compare
-    )
-
-    # Iterate through each item in the DifferenceArray
-    foreach ($item in $DifferenceArray) {
-        # Check if the item exists in the ReferenceArray
-        if ($ReferenceArray -contains $item) {
-            # Return true if a common element is found
-            return $true
-        }
-    }
-    # Return false if no common elements are found
-    return $false
-}
-
-
-<#
-.SYNOPSIS
-    Formats a given DateTime object to the ISO 8601 format used in Pode.
-
-.DESCRIPTION
-    The `Format-PodeDateToIso8601` function takes a DateTime object and returns
-    a string formatted as `yyyy-MM-ddTHH:mm:ss.fffffffZ`, which is the ISO 8601 format
-    with seven fractional seconds, suitable for Pode async route tasks.
-
-.PARAMETER Date
-    The DateTime object to format.
-
-.EXAMPLE
-    $completedTime = Get-Date
-    $formattedDate = Format-PodeDateToIso8601 -Date $completedTime
-    Write-Output $formattedDate
-
-    This example formats the current date and time to the ISO 8601 format.
-
-.NOTES
-    This is an internal function and may change in future releases of Pode.
-#>
-function Format-PodeDateToIso8601 {
-    param (
-        [DateTime]$Date
-    )
-
-    return $Date.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
 }
 
 
