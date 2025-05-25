@@ -116,6 +116,9 @@ namespace PodeMonitor
                 {
                     PodeMonitorLogger.Log(PodeLogLevel.ERROR, ex, "Error stopping PowerShell process: {0}", ex.Message);
                 }
+            }else
+            {
+                PodeMonitorLogger.Log(PodeLogLevel.WARN, "PodeMonitor", Environment.ProcessId, "Shutdown command received but service is not running or suspended. Current state: {0}", _pwshMonitor.State);
             }
         }
 
@@ -138,6 +141,9 @@ namespace PodeMonitor
                 {
                     PodeMonitorLogger.Log(PodeLogLevel.ERROR, ex, "Error during pause: {0}", ex.Message);
                 }
+            }else
+            {
+                PodeMonitorLogger.Log(PodeLogLevel.WARN, "PodeMonitor", Environment.ProcessId, "Restart command received but service is not running or suspended. Current state: {0}", _pwshMonitor.State);
             }
         }
 
@@ -173,6 +179,9 @@ namespace PodeMonitor
                 {
                     PodeMonitorLogger.Log(PodeLogLevel.ERROR, ex, "Error during pause: {0}", ex.Message);
                 }
+            }else
+            {
+                PodeMonitorLogger.Log(PodeLogLevel.WARN, "PodeMonitor", Environment.ProcessId, "Pause command received but service is not running. Current state: {0}", _pwshMonitor.State);
             }
         }
 
@@ -210,6 +219,10 @@ namespace PodeMonitor
                 {
                     PodeMonitorLogger.Log(PodeLogLevel.ERROR, ex, "Error during continue: {0}", ex.Message);
                 }
+            }
+            else
+            {
+                PodeMonitorLogger.Log(PodeLogLevel.WARN, "PodeMonitor", Environment.ProcessId, "Continue command received but service is not suspended. Current state: {0}", _pwshMonitor.State);
             }
         }
 
