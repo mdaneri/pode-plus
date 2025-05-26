@@ -314,7 +314,6 @@ function Get-PodeBodyMiddleware {
                 # set session data
                 $WebEvent.Data = $result.Data
                 $WebEvent.Files = $result.Files
-                $WebEvent.RawData = $result.RawData
 
                 # payload parsed
                 return $true

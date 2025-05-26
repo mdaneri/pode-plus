@@ -1526,15 +1526,12 @@ function ConvertFrom-PodeRequestContent {
                 $Content = $Request.Body
             }
         }
-        # Add raw body content
-        $Result.RawData = $Content
+
         # if there is no content then do nothing
         if ([string]::IsNullOrWhiteSpace($Content)) {
             return $Result
         }
 
-        # Add raw body content
-        $Result.RawData = $Content
 
         # check if there is a defined custom body parser
         if ($PodeContext.Server.BodyParsers.ContainsKey($ContentType)) {
@@ -1564,7 +1561,9 @@ function ConvertFrom-PodeRequestContent {
         }
 
         { $_ -ilike '*/x-www-form-urlencoded' } {
-            $Result.Data = (ConvertFrom-PodeNameValueToHashTable -Collection ([System.Web.HttpUtility]::ParseQueryString($Content)))
+            # parse x-www-form-urlencoded data
+           # $result.Data = ConvertFrom-PodeSerializedString -SerializedInput $Content -Style $Style -Explode:$explode -Delimiter $Delimiter
+              $Result.Data = (ConvertFrom-PodeNameValueToHashTable -Collection ([System.Web.HttpUtility]::ParseQueryString($Content)))
         }
 
         { $_ -ieq 'multipart/form-data' } {
@@ -4205,7 +4204,7 @@ function Test-PodeAdminPrivilege {
                 $groups = (groups $user)
                 Write-Verbose "User:$user Groups: $( $groups -join ',')"
                 # macOS typically uses 'admin' group for sudo privileges
-                return ($groups -match '\bwheel\b' -or $groups -match '\badmin\b' -or $groups -match '\bsudo\b' -or $groups -match '\badm\b'  -or $groups -match '\bvscode\b')
+                return ($groups -match '\bwheel\b' -or $groups -match '\badmin\b' -or $groups -match '\bsudo\b' -or $groups -match '\badm\b' -or $groups -match '\bvscode\b')
             }
             return $false
         }

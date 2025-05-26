@@ -159,6 +159,10 @@ function Test-PodeHeader {
     Specifies whether the deserialization process should explode arrays in the header value. This is useful when
     handling comma-separated values within the header. Applicable only when the `-Deserialize` switch is used.
 
+.PARAMETER Raw
+    If specified, the raw header value will be returned without any processing. This is useful when you want to
+    retrieve the exact string as it was sent in the request.
+
 .EXAMPLE
     Get-PodeHeader -Name 'X-AuthToken'
     Retrieves the value of the 'X-AuthToken' header from the request.
@@ -199,18 +203,34 @@ function Get-PodeHeader {
 
         [Parameter(Mandatory = $true, ParameterSetName = 'Deserialize')]
         [switch]
-        $Deserialize
+        $Deserialize,
+
+        [Parameter(ParameterSetName = 'BuiltIn')]
+        [switch]
+        $Raw
     )
     if ($WebEvent) {
-        # get the value for the header from the request
-        $header = $WebEvent.Request.Headers.$Name
 
         if ($Deserialize.IsPresent) {
-            return ConvertFrom-PodeSerializedString -SerializedString $header -Style 'Simple' -Explode:$Explode
+            # get the value for the header from the request
+            $parsed = ConvertFrom-PodeSerializedString -SerializedString $WebEvent.Raw.Headers[$Name] -Style 'Simple' -Explode:$Explode -ParameterName $Name
+
+            # Filter only if a dictionary and key matches
+            if ($parsed -is [System.Collections.IDictionary] -and $parsed.ContainsKey($Name)) {
+                return $parsed[$Name]
+            }
+
+            return $parsed
         }
+
+        if ($Raw) {
+            # return the raw header value
+            return $WebEvent.Raw.Headers[$Name]
+        }
+
         # if a secret was supplied, attempt to unsign the header's value
         if (![string]::IsNullOrWhiteSpace($Secret)) {
-            $header = (Invoke-PodeValueUnsign -Value $header -Secret $Secret -Strict:$Strict)
+            $header = (Invoke-PodeValueUnsign -Value $WebEvent.Request.Headers[$Name] -Secret $Secret -Strict:$Strict)
         }
 
         return $header
