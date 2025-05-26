@@ -59,6 +59,12 @@ function Test-PodeAssembly {
         $podeDll = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'Pode' }
 
         if ($podeDll) {
+            if($null -eq $PodeManifest) {
+                 throw ($PodeLocale.incompatiblePodeDllExceptionMessage -f "PodeManifest is null",'null' )
+            }
+            if (!$PodeManifest.ContainsKey('ModuleVersion')) {
+                throw ($PodeLocale.incompatiblePodeDllExceptionMessage -f "PodeManifest does not contain ModuleVersion key",'null' )
+            }
             if ( $PodeManifest.ModuleVersion -ne '$version$') {
                 $moduleVersion = ([version]::new($PodeManifest.ModuleVersion + '.0'))
                 if ($null -eq $moduleVersion) {
