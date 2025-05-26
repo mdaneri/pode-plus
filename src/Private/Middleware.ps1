@@ -314,7 +314,10 @@ function Get-PodeBodyMiddleware {
                 # set session data
                 $WebEvent.Data = $result.Data
                 $WebEvent.Files = $result.Files
-
+                # if the body is compressed, replace it with the decompressed body
+                if ($null -ne $Result.decompressedBody) {
+                    $WebEvent.Raw.Body = $result.decompressedBody
+                }
                 # payload parsed
                 return $true
             }

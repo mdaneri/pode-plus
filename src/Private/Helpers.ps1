@@ -1521,6 +1521,7 @@ function ConvertFrom-PodeRequestContent {
             # if the request is compressed, attempt to uncompress it
             if (![string]::IsNullOrWhiteSpace($TransferEncoding)) {
                 $Content = [PodeHelpers]::DecompressBytes($Request.RawBody, $TransferEncoding, $Request.ContentEncoding)
+                $Result.decompressedBody = $content
             }
             else {
                 $Content = $Request.Body
@@ -1531,7 +1532,6 @@ function ConvertFrom-PodeRequestContent {
         if ([string]::IsNullOrWhiteSpace($Content)) {
             return $Result
         }
-
 
         # check if there is a defined custom body parser
         if ($PodeContext.Server.BodyParsers.ContainsKey($ContentType)) {
@@ -1562,8 +1562,7 @@ function ConvertFrom-PodeRequestContent {
 
         { $_ -ilike '*/x-www-form-urlencoded' } {
             # parse x-www-form-urlencoded data
-           # $result.Data = ConvertFrom-PodeSerializedString -SerializedInput $Content -Style $Style -Explode:$explode -Delimiter $Delimiter
-              $Result.Data = (ConvertFrom-PodeNameValueToHashTable -Collection ([System.Web.HttpUtility]::ParseQueryString($Content)))
+            $Result.Data = (ConvertFrom-PodeNameValueToHashTable -Collection ([System.Web.HttpUtility]::ParseQueryString($Content)))
         }
 
         { $_ -ieq 'multipart/form-data' } {

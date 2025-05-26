@@ -171,7 +171,7 @@ function Start-PodeWebServer {
                                     Raw              = @{
                                         Query   = $Request.Url.Query
                                         Headers = $Request.Headers
-                                        Body    = $Request.RawBody
+                                        Body    = $Request.Body
                                     }
                                     Endpoint         = @{
                                         Protocol = $Request.Url.Scheme
@@ -195,6 +195,7 @@ function Start-PodeWebServer {
                                     Sse              = $null
                                     Metadata         = @{}
                                 }
+
                                 # if iis, and we have an app path, alter it
                                 if ($PodeContext.Server.IsIIS -and $PodeContext.Server.IIS.Path.IsNonRoot) {
                                     $WebEvent.Path = ($WebEvent.Path -ireplace $PodeContext.Server.IIS.Path.Pattern, '')

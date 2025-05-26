@@ -230,10 +230,10 @@ function Get-PodeHeader {
 
         # if a secret was supplied, attempt to unsign the header's value
         if (![string]::IsNullOrWhiteSpace($Secret)) {
-            $header = (Invoke-PodeValueUnsign -Value $WebEvent.Request.Headers[$Name] -Secret $Secret -Strict:$Strict)
+            return (Invoke-PodeValueUnsign -Value $WebEvent.Request.Headers[$Name] -Secret $Secret -Strict:$Strict)
         }
 
-        return $header
+        return $WebEvent.Request.Headers[$Name]
     }
 }
 
