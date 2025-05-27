@@ -1524,20 +1524,17 @@ function ConvertFrom-PodeRequestContent {
             # if the request is compressed, attempt to uncompress it
             if (![string]::IsNullOrWhiteSpace($TransferEncoding)) {
                 $Content = [PodeHelpers]::DecompressBytes($Request.RawBody, $TransferEncoding, $Request.ContentEncoding)
+                $Result.decompressedBody = $content
             }
             else {
                 $Content = $Request.Body
             }
         }
-        # Add raw body content
-        $Result.RawData = $Content
+
         # if there is no content then do nothing
         if ([string]::IsNullOrWhiteSpace($Content)) {
             return $Result
         }
-
-        # Add raw body content
-        $Result.RawData = $Content
 
         # check if there is a defined custom body parser
         if ($PodeContext.Server.BodyParsers.ContainsKey($ContentType)) {
@@ -1567,6 +1564,7 @@ function ConvertFrom-PodeRequestContent {
         }
 
         { $_ -ilike '*/x-www-form-urlencoded' } {
+            # parse x-www-form-urlencoded data
             $Result.Data = (ConvertFrom-PodeNameValueToHashTable -Collection ([System.Web.HttpUtility]::ParseQueryString($Content)))
         }
 
@@ -4208,7 +4206,7 @@ function Test-PodeAdminPrivilege {
                 $groups = (groups $user)
                 Write-Verbose "User:$user Groups: $( $groups -join ',')"
                 # macOS typically uses 'admin' group for sudo privileges
-                return ($groups -match '\bwheel\b' -or $groups -match '\badmin\b' -or $groups -match '\bsudo\b' -or $groups -match '\badm\b'  -or $groups -match '\bvscode\b')
+                return ($groups -match '\bwheel\b' -or $groups -match '\badmin\b' -or $groups -match '\bsudo\b' -or $groups -match '\badm\b' -or $groups -match '\bvscode\b')
             }
             return $false
         }
