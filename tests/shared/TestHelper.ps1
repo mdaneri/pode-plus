@@ -1,24 +1,6 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
 param()
 
-if ($PSVersionTable.PSEdition -eq 'desktop') {
-
-  # Disable SSL certificate validation (for the entire session)
-  Add-Type @'
-using System.Net;
-using System.Security.Cryptography.X509Certificates;
-
-public class TrustAllCertsPolicy : ICertificatePolicy {
-    public bool CheckValidationResult(
-        ServicePoint srvPoint, X509Certificate certificate,
-        WebRequest request, int certificateProblem) {
-        return true;
-    }
-}
-'@
-
-  [System.Net.ServicePointManager]::CertificatePolicy = [TrustAllCertsPolicy]::new()
-}
 <#
 .SYNOPSIS
 	Ensures the Pode assembly is loaded into the current session.
@@ -366,7 +348,7 @@ function Wait-ForWebServer {
       }
       else {
         $null = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-      } 
+      }
       Write-Host "Webserver is online at $Uri"
       return $true
     }
