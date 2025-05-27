@@ -125,7 +125,8 @@ param(
     $QualityOfProtection = 'auth,auth-int'
 )
 if ($Client) {
-    Import-Module './Modules/Invoke-Digest.psm1'
+    Import-Module './Modules/Invoke-Digest.psm1' -ErrorAction Stop
+    
     $uri = 'http://localhost:8081/users'
     $username = 'morty'
     $password = 'pickle'
