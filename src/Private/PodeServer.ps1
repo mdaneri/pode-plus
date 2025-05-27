@@ -168,6 +168,11 @@ function Start-PodeWebServer {
                                     Path             = [System.Web.HttpUtility]::UrlDecode($Request.Url.AbsolutePath)
                                     Method           = $Request.HttpMethod.ToLowerInvariant()
                                     Query            = $null
+                                    Raw              = @{
+                                        Query   = $Request.Url.Query
+                                        Headers = $Request.Headers
+                                        Body    = $Request.Body
+                                    }
                                     Endpoint         = @{
                                         Protocol = $Request.Url.Scheme
                                         Address  = $Request.Host

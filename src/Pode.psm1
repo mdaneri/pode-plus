@@ -52,6 +52,7 @@ if ([string]::IsNullOrEmpty($UICulture)) {
 
 function Test-PodeAssembly {
     param(
+        [Parameter(Mandatory = $true)]
         [hashtable]$PodeManifest
     )
 
