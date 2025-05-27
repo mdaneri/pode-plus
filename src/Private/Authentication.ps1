@@ -1042,7 +1042,7 @@ function Get-PodeAuthDigestPostValidator {
         # Compute HA2: Hash of request method and URI
         if ($qop -eq 'auth-int') {
             # If the request body is null, use an empty string (RFC 7616 compliance)
-            $entityBody = if ($null -eq $WebEvent.RawData) { [string]::Empty } else { $WebEvent.RawData }
+            $entityBody = if ($null -eq $WebEvent.Raw.Body ) { [string]::Empty } else { $WebEvent.Raw.Body  }
 
             # Compute H(entity-body): Hash of request body (to ensure message integrity)
             $entityHash = ConvertTo-PodeDigestHash -Value $entityBody -Algorithm $algorithm

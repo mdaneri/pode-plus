@@ -1533,13 +1533,13 @@ function ConvertFrom-PodeXml {
 
 <#
 .SYNOPSIS
-Invokes the garbage collector.
+    Invokes the garbage collector.
 
 .DESCRIPTION
-Invokes the garbage collector.
+    Invokes the garbage collector.
 
 .EXAMPLE
-Invoke-PodeGC
+    Invoke-PodeGC
 #>
 function Invoke-PodeGC {
     [CmdletBinding()]
@@ -1621,3 +1621,5 @@ function Start-PodeSleep {
         Start-Sleep -Milliseconds $sleepInterval
     }
 }
+
+
