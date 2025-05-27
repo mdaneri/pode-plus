@@ -1,4 +1,3 @@
-
 <#
 .SYNOPSIS
     Retrieves a specific parameter value from the current Pode web event.

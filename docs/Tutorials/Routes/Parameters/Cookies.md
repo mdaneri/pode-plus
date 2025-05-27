@@ -1,9 +1,8 @@
-
 # Cookies
 
 The following is an example of using values supplied in a request's cookies. To retrieve values from the cookies, you can use the `Cookies` property from the `$WebEvent` variable.
 
-Alternatively, you can use the `Get-PodeCookie` function to retrieve the cookie data, with additional support for deserialization and secure handling.
+Alternatively, you can use the `Get-PodeCookie` function to retrieve cookie data, with additional support for deserialization, signature validation, and raw access.
 
 This example will get the `SessionId` cookie and use it to authenticate the user, returning a success message:
 
@@ -32,9 +31,15 @@ The following request will invoke the above route:
 Invoke-WebRequest -Uri 'http://localhost:8080/authenticate' -Method Get -Headers @{ Cookie = 'SessionId=abc123' }
 ```
 
-## Using Get-PodeCookie
+---
 
-Alternatively, you can use the `Get-PodeCookie` function to retrieve the cookie data. This function works similarly to the `Cookies` property on `$WebEvent`, but it provides additional options for deserialization and secure cookie handling.
+## Using `Get-PodeCookie`
+
+Alternatively, you can use the `Get-PodeCookie` function to retrieve the cookie data. This function works similarly to accessing `$WebEvent.Cookies`, but provides extended functionality, such as:
+
+* Signature verification with a secret
+* Raw access to the underlying .NET cookie object
+* Deserialization of structured cookie values
 
 Here is the same example using `Get-PodeCookie`:
 
@@ -57,29 +62,59 @@ Start-PodeServer {
 }
 ```
 
-### Deserialization with Get-PodeCookie
+---
 
-The `Get-PodeCookie` function can also deserialize cookie values, allowing for more complex handling of serialized data sent in cookies. This feature is particularly useful when cookies contain encoded or structured content that needs specific parsing.
+### Using Raw Cookie Access
 
-To enable deserialization, use the `-Deserialize` switch along with the following options:
+If you need the raw `.NET` `Cookie` object for direct inspection or manipulation, you can use the `-Raw` switch:
 
-- **`-NoExplode`**: Prevents deserialization from exploding arrays in the cookie value. This is useful when handling comma-separated values where array expansion is not desired.
-- **`-Deserialize`**: Indicates that the retrieved cookie value should be deserialized, interpreting the content based on the provided deserialization style and options.
+```powershell
+$cookie = Get-PodeCookie -Name 'AuthToken' -Raw
+```
 
+This bypasses any parsing or decoding and returns the raw cookie as-is.
 
+---
+
+### Signed Cookies with Secrets
+
+If a cookie has been signed, you can use the `-Secret` parameter to unsign and verify its value:
+
+```powershell
+$views = Get-PodeCookie -Name 'Views' -Secret 'hunter2'
+```
+
+To strengthen the verification using client metadata (like IP and UserAgent), you can also use `-Strict`:
+
+```powershell
+$views = Get-PodeCookie -Name 'Views' -Secret 'hunter2' -Strict
+```
+
+---
+
+### Deserialization with `Get-PodeCookie`
+
+The `Get-PodeCookie` function supports deserialization of structured cookie values. This is especially useful when a cookie contains a serialized object, array, or key-value structure.
+
+To enable deserialization, use the `-Deserialize` switch with these options:
+
+* **`-NoExplode`**: Prevents automatic expansion of comma-separated values into arrays.
+* **`-Deserialize`**: Enables interpretation of the cookie’s value using query-style parsing rules. The style used is `'Form'` by default.
+
+---
 
 #### Supported Deserialization Styles
 
-| Style | Explode | URI Template | Primitive Value (id = 5) | Array (id = [3, 4, 5]) | Object (id = {"role": "admin", "firstName": "Alex"}) |
-|-------|---------|--------------|--------------------------|------------------------|------------------------------------------------------|
-| form* | true*   |              | Cookie: id=5             |                        |                                                      |
-| form  | false   | id={id}      | Cookie: id=5             | Cookie: id=3,4,5       | Cookie: id=role,admin,firstName,Alex                 |
+| Style  | Explode | URI Template | Primitive Value (id = 5) | Array (id = \[3, 4, 5]) | Object (id = {"role": "admin", "firstName": "Alex"}) |
+| ------ | ------- | ------------ | ------------------------ | ----------------------- | ---------------------------------------------------- |
+| form\* | true\*  |              | Cookie: id=5             |                         |                                                      |
+| form   | false   | id={id}      | Cookie: id=5             | Cookie: id=3,4,5        | Cookie: id=role,admin,firstName,Alex                 |
 
 \* Default serialization method
 
-### Example with Deserialization
+---
 
-This example demonstrates deserialization of a cookie value:
+### Example with Deserialization
 
 ```powershell
 Start-PodeServer {
@@ -89,9 +124,6 @@ Start-PodeServer {
         # retrieve and deserialize the 'Session' cookie
         $sessionData = Get-PodeCookie -Name 'Session' -Deserialize -NoExplode
 
-        # process the deserialized cookie data
-        # (example processing logic here)
-
         # return the processed cookie data
         Write-PodeJsonResponse -Value @{
             SessionData = $sessionData
@@ -100,8 +132,10 @@ Start-PodeServer {
 }
 ```
 
-In this example, `Get-PodeCookie` is used to deserialize the `Session` cookie, interpreting it according to the provided deserialization options. The `-NoExplode` switch ensures that any arrays within the cookie value are not expanded during deserialization.
+In this example, `Get-PodeCookie` is used to deserialize the `Session` cookie. The `-NoExplode` flag ensures that any arrays are not split, preserving their original format.
 
-For further information regarding serialization, please refer to the [RFC6570](https://tools.ietf.org/html/rfc6570).
+---
 
-For further information on general usage and retrieving cookies, please refer to the [Headers Documentation](Cookies.md).
+For more details on serialization formats, see [RFC6570](https://tools.ietf.org/html/rfc6570).
+
+For related functionality, see the [Headers documentation](Cookies.md).

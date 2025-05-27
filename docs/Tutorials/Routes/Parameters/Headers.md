@@ -1,8 +1,10 @@
 # Headers
 
-The following is an example of using values supplied in a request's headers. To retrieve values from the headers, you can use the `Headers` property from the `$WebEvent.Request` variable. Alternatively, you can use the `Get-PodeHeader` function to retrieve the header data.
+The following is an example of using values supplied in a request's headers. To retrieve values from the headers, you can use the `Headers` property from the `$WebEvent.Request` variable.
 
-This example will get the Authorization header and validate the token, returning a success message:
+Alternatively, you can use the `Get-PodeHeader` function to retrieve header data, with support for deserialization, raw access, and secure value validation using secrets.
+
+This example will get the `Authorization` header and validate the token, returning a success message:
 
 ```powershell
 Start-PodeServer {
@@ -13,7 +15,7 @@ Start-PodeServer {
         $token = $WebEvent.Request.Headers['Authorization']
 
         # validate the token
-        $isValid = Test-PodeJwt -payload $token
+        $isValid = Test-PodeJwt -Payload $token
 
         # return the result
         Write-PodeJsonResponse -Value @{
@@ -29,9 +31,11 @@ The following request will invoke the above route:
 Invoke-WebRequest -Uri 'http://localhost:8080/validate' -Method Get -Headers @{ Authorization = 'Bearer some_token' }
 ```
 
-## Using Get-PodeHeader
+---
 
-Alternatively, you can use the `Get-PodeHeader` function to retrieve the header data. This function works similarly to the `Headers` property on `$WebEvent.Request`.
+## Using `Get-PodeHeader`
+
+You can use the `Get-PodeHeader` function as an alternative to `$WebEvent.Request.Headers`, with additional capabilities like deserialization, secret validation, and raw value access.
 
 Here is the same example using `Get-PodeHeader`:
 
@@ -44,7 +48,7 @@ Start-PodeServer {
         $token = Get-PodeHeader -Name 'Authorization'
 
         # validate the token
-        $isValid = Test-PodeJwt -payload $token
+        $isValid = Test-PodeJwt -Payload $token
 
         # return the result
         Write-PodeJsonResponse -Value @{
@@ -54,27 +58,59 @@ Start-PodeServer {
 }
 ```
 
-### Deserialization with Get-PodeHeader
+---
 
-The `Get-PodeHeader` function can also deserialize header values, enabling more advanced handling of serialized data sent in headers. This feature is useful when dealing with complex data structures or when headers contain encoded or serialized content.
+### Using Raw Header Value
 
-To enable deserialization, use the `-Deserialize` switch along with the following options:
+To retrieve the exact string as it was received in the request (without any decoding or processing), use the `-Raw` switch:
 
-- **`-Explode`**: Specifies whether the deserialization process should explode arrays in the header value. This is useful when handling comma-separated values within the header.
-- **`-Deserialize`**: Indicates that the retrieved header value should be deserialized, interpreting the content based on the deserialization style and options.
+```powershell
+$rawValue = Get-PodeHeader -Name 'X-Custom' -Raw
+```
+
+This is useful when headers contain encoded or opaque data that shouldn't be altered.
+
+---
+
+### Verifying Signed Headers
+
+If your application uses signed headers to validate their integrity, you can unsign the value with a shared secret:
+
+```powershell
+$token = Get-PodeHeader -Name 'X-Signed' -Secret 'MySecret'
+```
+
+To add extra verification based on the client’s UserAgent and IP address, use the `-Strict` switch:
+
+```powershell
+$token = Get-PodeHeader -Name 'X-Signed' -Secret 'MySecret' -Strict
+```
+
+---
+
+### Deserialization with `Get-PodeHeader`
+
+The `Get-PodeHeader` function can deserialize serialized header values for structured handling. This is useful when headers carry encoded key-value pairs, arrays, or objects.
+
+Use the `-Deserialize` switch along with:
+
+* **`-Explode`**: Expands comma-separated values into arrays. Disable this for raw strings.
+* Deserialization style is fixed to `'Simple'` for headers and uses the header's name as the parameter key.
+
+---
 
 #### Supported Deserialization Styles
 
-| Style   | Explode | URI Template | Primitive Value (X-MyHeader = 5) | Array (X-MyHeader = [3, 4, 5]) | Object (X-MyHeader = {"role": "admin", "firstName": "Alex"}) |
-|---------|---------|--------------|----------------------------------|--------------------------------|--------------------------------------------------------------|
-| simple* | false*  | {id}         | X-MyHeader: 5                    | X-MyHeader: 3,4,5              | X-MyHeader: role,admin,firstName,Alex                        |
-| simple  | true    | {id*}        | X-MyHeader: 5                    | X-MyHeader: 3,4,5              | X-MyHeader: role=admin,firstName=Alex                        |
+| Style    | Explode | URI Template | Primitive Value (X-MyHeader = 5) | Array (X-MyHeader = \[3, 4, 5]) | Object (X-MyHeader = {"role": "admin", "firstName": "Alex"}) |
+| -------- | ------- | ------------ | -------------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| simple\* | false\* | {id}         | X-MyHeader: 5                    | X-MyHeader: 3,4,5               | X-MyHeader: role,admin,firstName,Alex                        |
+| simple   | true    | {id\*}       | X-MyHeader: 5                    | X-MyHeader: 3,4,5               | X-MyHeader: role=admin,firstName=Alex                        |
 
-\* Default serialization method
+\* Default deserialization style for headers
+
+---
 
 ### Example with Deserialization
-
-This example demonstrates deserialization of a header value:
 
 ```powershell
 Start-PodeServer {
@@ -84,10 +120,7 @@ Start-PodeServer {
         # retrieve and deserialize the 'X-SerializedHeader' header
         $headerData = Get-PodeHeader -Name 'X-SerializedHeader' -Deserialize -Explode
 
-        # process the deserialized header data
-        # (example processing logic here)
-
-        # return the processed header data
+        # return the deserialized result
         Write-PodeJsonResponse -Value @{
             HeaderData = $headerData
         }
@@ -95,8 +128,10 @@ Start-PodeServer {
 }
 ```
 
-In this example, `Get-PodeHeader` is used to deserialize the `X-SerializedHeader` header, interpreting it according to the provided deserialization options. The `-Explode` switch ensures that any arrays within the header value are properly expanded during deserialization.
+In this example, `Get-PodeHeader` deserializes the `X-SerializedHeader` header using the `'Simple'` style. The `-Explode` flag ensures array-like values are expanded as needed.
 
-For further information regarding serialization, please refer to the [RFC6570](https://tools.ietf.org/html/rfc6570).
+---
 
-For further information on general usage and retrieving headers, please refer to the [Headers Documentation](Headers.md).
+For more about serialization styles, see [RFC6570](https://tools.ietf.org/html/rfc6570).
+
+For more general details, refer to the [Headers Documentation](Headers.md).

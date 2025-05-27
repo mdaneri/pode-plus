@@ -1,11 +1,10 @@
-
 # Paths
 
 The following is an example of using values supplied on a request's URL using parameters. To retrieve values that match a request's URL parameters, you can use the `Parameters` property from the `$WebEvent` variable.
 
-Alternatively, you can use the `Get-PodePathParameter` function to retrieve the parameter data.
+Alternatively, you can use the `Get-PodePathParameter` function to retrieve the parameter data, with support for deserialization and advanced formatting.
 
-This example will get the `:userId` and "find" user, returning the user's data:
+This example will get the `:userId` parameter and "find" a user, returning the user's data:
 
 ```powershell
 Start-PodeServer {
@@ -30,9 +29,11 @@ The following request will invoke the above route:
 Invoke-WebRequest -Uri 'http://localhost:8080/users/12345' -Method Get
 ```
 
-### Using Get-PodePathParameter
+---
 
-Alternatively, you can use the `Get-PodePathParameter` function to retrieve the parameter data. This function works similarly to the `Parameters` property on `$WebEvent` but provides additional options for deserialization when needed.
+## Using `Get-PodePathParameter`
+
+You can use the `Get-PodePathParameter` function as an alternative to `$WebEvent.Parameters`. This function supports retrieval of URL path parameters and provides extended functionality for deserialization.
 
 Here is the same example using `Get-PodePathParameter`:
 
@@ -56,32 +57,36 @@ Start-PodeServer {
 }
 ```
 
-#### Deserialization with Get-PodePathParameter
+---
 
-The `Get-PodePathParameter` function can handle deserialization of parameters passed in the URL path, query string, or body, using specific styles to interpret the data correctly. This is useful when dealing with more complex data structures or encoded parameter values.
+### Deserialization with `Get-PodePathParameter`
 
-To enable deserialization, use the `-Deserialize` switch along with the following options:
+The `Get-PodePathParameter` function can deserialize parameter values using query-style syntax, which is useful when parameters contain structured or encoded data.
 
-- **`-Explode`**: Specifies whether to explode arrays when deserializing, useful when parameters contain comma-separated values.
-- **`-Style`**: Defines the deserialization style (`'Simple'`, `'Label'`, or `'Matrix'`) to interpret the parameter value correctly. The default style is `'Simple'`.
-- **`-KeyName`**: Specifies the key name to use when deserializing, allowing you to map the parameter data accurately. The default value for `KeyName` is `'id'`.
+Use the `-Deserialize` switch along with:
+
+* **`-Explode`**: Expands comma-separated values into arrays. Disable to treat them as strings.
+* **`-Style`**: Sets the deserialization style. Valid options are `'Simple'`, `'Label'`, and `'Matrix'`. The default is `'Simple'`.
+* **`-ParameterName`**: Specifies the key name to use when extracting a value from a deserialized object. Defaults to the value of `-Name`.
+
+---
 
 #### Supported Deserialization Styles
 
-| Style   | Explode | URI Template  | Primitive Value (id = 5) | Array (id = [3, 4, 5]) | Object (id = {"role": "admin", "firstName": "Alex"}) |
-|---------|---------|---------------|--------------------------|------------------------|------------------------------------------------------|
-| simple* | false*  | /users/{id}   | /users/5                 | /users/3,4,5           | /users/role,admin,firstName,Alex                     |
-| simple  | true    | /users/{id*}  | /users/5                 | /users/3,4,5           | /users/role=admin,firstName=Alex                     |
-| label   | false   | /users/{.id}  | /users/.5                | /users/.3,4,5          | /users/.role,admin,firstName,Alex                    |
-| label   | true    | /users/{.id*} | /users/.5                | /users/.3.4.5          | /users/.role=admin.firstName=Alex                    |
-| matrix  | false   | /users/{;id}  | /users/;id=5             | /users/;id=3,4,5       | /users/;id=role,admin,firstName,Alex                 |
-| matrix  | true    | /users/{;id*} | /users/;id=5             | /users/;id=3;id=4;id=5 | /users/;role=admin;firstName=Alex                    |
+| Style    | Explode | URI Template   | Primitive Value (id = 5) | Array (id = \[3, 4, 5]) | Object (id = {"role": "admin", "firstName": "Alex"}) |
+| -------- | ------- | -------------- | ------------------------ | ----------------------- | ---------------------------------------------------- |
+| simple\* | false\* | /users/{id}    | /users/5                 | /users/3,4,5            | /users/role,admin,firstName,Alex                     |
+| simple   | true    | /users/{id\*}  | /users/5                 | /users/3,4,5            | /users/role=admin,firstName=Alex                     |
+| label    | false   | /users/{.id}   | /users/.5                | /users/.3,4,5           | /users/.role,admin,firstName,Alex                    |
+| label    | true    | /users/{.id\*} | /users/.5                | /users/.3.4.5           | /users/.role=admin.firstName=Alex                    |
+| matrix   | false   | /users/{;id}   | /users/;id=5             | /users/;id=3,4,5        | /users/;id=role,admin,firstName,Alex                 |
+| matrix   | true    | /users/{;id\*} | /users/;id=5             | /users/;id=3;id=4;id=5  | /users/;role=admin;firstName=Alex                    |
 
 \* Default serialization method
 
-#### Example with Deserialization
+---
 
-This example demonstrates deserialization of a parameter that is styled and exploded as part of the request:
+### Example with Deserialization
 
 ```powershell
 Start-PodeServer {
@@ -103,6 +108,8 @@ Start-PodeServer {
 }
 ```
 
-In this example, the `Get-PodePathParameter` function is used to deserialize the `itemId` parameter, interpreting it according to the specified style (`Label`) and handling arrays if present (`-Explode`). The default `KeyName` is `'id'`, but it can be customized as needed. This approach allows for dynamic and precise handling of incoming request data, making your Pode routes more versatile and resilient.
+In this example, the `itemId` is interpreted using the `'Label'` style with exploding enabled, allowing arrays and objects to be parsed correctly from the URL.
+
+---
 
 For further information regarding serialization, please refer to the [RFC6570](https://tools.ietf.org/html/rfc6570).

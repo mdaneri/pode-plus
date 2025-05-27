@@ -2,7 +2,7 @@
 
 The following is an example of using data from a request's payload—i.e., the data in the body of a POST request. To retrieve values from the payload, you can use the `.Data` property on the `$WebEvent` variable in a route's logic.
 
-Alternatively, you can use the `Get-PodeBodyData` function to retrieve the body data, with additional support for deserialization.
+Alternatively, you can use the `Get-PodeBodyData` function to retrieve the body data, with additional support for deserialization and raw content access.
 
 Depending on the Content-Type supplied, Pode has built-in body-parsing logic for JSON, XML, CSV, and Form data.
 
@@ -32,14 +32,16 @@ Invoke-WebRequest -Uri 'http://localhost:8080/users' -Method Post -Body '{ "user
 ```
 
 !!! important
-    The `ContentType` is required as it informs Pode on how to parse the request's payload. For example, if the content type is `application/json`, Pode will attempt to parse the body of the request as JSON—converting it to a hashtable.
+The `ContentType` is required as it informs Pode on how to parse the request's payload. For example, if the content type is `application/json`, Pode will attempt to parse the body of the request as JSON—converting it to a hashtable.
 
 !!! important
-    On PowerShell 5, referencing JSON data on `$WebEvent.Data` must be done as `$WebEvent.Data.userId`. This also works in PowerShell 6+, but you can also use `$WebEvent.Data['userId']` on PowerShell 6+.
+On PowerShell 5, referencing JSON data on `$WebEvent.Data` must be done as `$WebEvent.Data.userId`. This also works in PowerShell 6+, but you can also use `$WebEvent.Data['userId']` on PowerShell 6+.
+
+---
 
 ### Using Get-PodeBodyData
 
-Alternatively, you can use the `Get-PodeBodyData` function to retrieve the body data. This function works similarly to the `.Data` property on `$WebEvent` and supports the same content types.
+Alternatively, you can use the `Get-PodeBodyData` function to retrieve the body data. This function works similarly to the `.Data` property on `$WebEvent`, but offers additional options for raw access and deserialization.
 
 Here is the same example using `Get-PodeBodyData`:
 
@@ -63,15 +65,31 @@ Start-PodeServer {
 }
 ```
 
+---
+
+### Using Raw Body Content
+
+If you need the raw, unprocessed body data exactly as it was received (such as when working with a non-standard payload), you can use the `-Raw` switch:
+
+```powershell
+$rawBody = Get-PodeBodyData -Raw
+```
+
+This returns the raw string payload from the request, without any deserialization or parsing.
+
+---
+
 ### Deserialization with Get-PodeBodyData
 
-Typically the request body is encoded in Json,Xml or Yaml but if it's required the `Get-PodeBodyData` function can also deserialize body data from requests, allowing for more complex data handling scenarios where the only allowed ContentTypes are `application/x-www-form-urlencoded` or `multipart/form-data`. This feature can be especially useful when dealing with serialized data structures that require specific interpretation styles.
+Typically, the request body is encoded in JSON, XML, or YAML, but if needed, the `Get-PodeBodyData` function can deserialize data using styles designed for query-like encodings. This is especially useful for requests using `application/x-www-form-urlencoded` or `multipart/form-data`.
 
 To enable deserialization, use the `-Deserialize` switch along with the following options:
 
-- **`-NoExplode`**: Prevents deserialization from exploding arrays in the body data. This is useful when dealing with comma-separated values where array expansion is not desired.
-- **`-Style`**: Defines the deserialization style (`'Simple'`, `'Label'`, `'Matrix'`, `'Form'`, `'SpaceDelimited'`, `'PipeDelimited'`, `'DeepObject'`) to interpret the body data correctly. The default style is `'Form'`.
-- **`-KeyName`**: Specifies the key name to use when deserializing, allowing accurate mapping of the body data. The default value for `KeyName` is `'id'`.
+* **`-NoExplode`**: Prevents automatic expansion of comma-separated values into arrays. Useful when values should be treated as raw strings.
+* **`-Style`**: Defines the deserialization style (`'Simple'`, `'Label'`, `'Matrix'`, `'Form'`, `'SpaceDelimited'`, `'PipeDelimited'`, `'DeepObject'`). The default style is `'Form'`.
+* **`-ParameterName`**: Specifies the key name to return from the deserialized result. The default is `'id'`.
+
+---
 
 ### Example with Deserialization
 
@@ -97,4 +115,4 @@ Start-PodeServer {
 }
 ```
 
-In this example, `Get-PodeBodyData` is used to deserialize the body data with the `'Matrix'` style and prevent array explosion (`-NoExplode`). This approach provides flexible and precise handling of incoming body data, enhancing the capability of your Pode routes to manage complex payloads.
+In this example, `Get-PodeBodyData` is used to deserialize the body data with the `'Matrix'` style and prevent array expansion (`-NoExplode`). This approach provides flexible and precise handling of incoming body data, enhancing the capability of your Pode routes to manage complex payloads.

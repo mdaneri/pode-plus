@@ -190,19 +190,24 @@ function Get-PodeCookie {
     if ($WebEvent) {
         # get the cookie from the request
         $cookie = $WebEvent.Cookies[$Name]
-        if (!$Raw) {
-            $cookie = (ConvertTo-PodeCookie -Cookie $cookie)
+
+        if ($null -eq $cookie) {
+            return $null
         }
+
+        if ($Raw) {
+            return $cookie
+        }
+
+        # Convert the raw cookie into a standard format
+        $cookie = ConvertTo-PodeCookie -Cookie $cookie
 
         if (($null -eq $cookie) -or [string]::IsNullOrWhiteSpace($cookie.Value)) {
             return $null
         }
 
-        if ($Deserialize.IsPresent) {
-            $cookie.Value = ConvertFrom-PodeSerializedString -SerializedString $cookie.Value -Style 'Form' -Explode:(!$NoExplode)
-        }
-
-        # if a secret was supplied, attempt to unsign the cookie
+        # If Secret is specified, unsign first
+        $value = $cookie.Value
         if (![string]::IsNullOrWhiteSpace($Secret)) {
             $value = (Invoke-PodeValueUnsign -Value $cookie.Value -Secret $Secret -Strict:$Strict)
             if (![string]::IsNullOrWhiteSpace($value)) {
@@ -210,7 +215,20 @@ function Get-PodeCookie {
             }
         }
 
-        return $cookie
+        # Deserialize if requested
+        if ($Deserialize.IsPresent) {
+            $parsed = ConvertFrom-PodeSerializedString -SerializedString $value -Style 'Form' -Explode:(!$NoExplode) -ParameterName $Name
+
+            if ($parsed -is [System.Collections.IDictionary] -and $parsed.ContainsKey($Name)) {
+                $cookie.Value = $parsed[$Name]
+            }
+            else {
+
+                $cookie.Value = $parsed
+            }
+        }
+
+        return  $cookie
     }
 }
 
