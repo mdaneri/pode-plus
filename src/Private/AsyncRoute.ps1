@@ -267,6 +267,7 @@ function Complete-PodeAsyncRouteOperation {
             for ($i = 0; $i -le 3; $i++) {
                 try {
                     $AsyncProcess['CallbackTentative'] = $AsyncProcess['CallbackTentative'] + 1
+                    write-podehost "callbackUrl=$callbackUrl"
                     $null = Invoke-RestMethod -Uri $callbackUrl -Method $method -Headers $headers -Body $cBody -ContentType $contentType -ErrorAction Stop
                     $AsyncProcess['CallbackInfoState'] = 'Completed'
                     break

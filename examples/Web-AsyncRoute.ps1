@@ -9,14 +9,11 @@
 .PARAMETER Port
     The port on which the Pode server will listen. Default is 8080.
 
-.PARAMETER Quiet
-    Suppresses output when the server is running.
-
-.PARAMETER DisableTermination
-    Prevents the server from being terminated.
+.PARAMETER Daemon
+    Configures the server to run as a daemon with minimal console interaction and output.
 
 .EXAMPLE
-    .\Web-AsyncRoute.ps1 -Port 9090 -Quiet -DisableTermination
+    .\Web-AsyncRoute.ps1 -Port 9090 -Daemon
 
 .EXAMPLE
     # Example of using the endpoints with Invoke-RestMethod
@@ -85,10 +82,9 @@ param(
     [Parameter()]
     [int]
     $Port = 8080,
+
     [switch]
-    $Quiet,
-    [switch]
-    $DisableTermination
+    $Daemon
 )
 
 try {
@@ -113,7 +109,7 @@ catch { throw }
 # Demostrates Lockables, Mutexes, and Semaphores
 #>
 
-Start-PodeServer -Threads 1 -Quiet:$Quiet -DisableTermination:$DisableTermination {
+Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
 
     Add-PodeEndpoint -Address localhost -Port $Port -Protocol Http -DualMode
     New-PodeLoggingMethod -name 'async' -File  -Path "$ScriptPath/logs" | Enable-PodeErrorLogging
@@ -379,10 +375,12 @@ Start-PodeServer -Threads 1 -Quiet:$Quiet -DisableTermination:$DisableTerminatio
         ) | Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content  @{ 'application/json' = New-PodeOANumberProperty -Name 'Result' -Format Double -Description 'Result' -Required -Object }
 
 
-    Add-PodeAsyncRouteGet -Path '/task' -ResponseContentType  'application/json', 'application/yaml'  -In Path -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'  -PassThru | Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
+    #Add-PodeAsyncRouteGet -Path '/task' -ResponseContentType  'application/json', 'application/yaml'  -In Path -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'  -PassThru | Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
 
-    Add-PodeAsyncRouteStop -Path '/task' -ResponseContentType 'application/json', 'application/yaml' -In Query -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -OADefinitionTag 'Default', 'v3.1' -PassThru | Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
+     Add-PodeRoute -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru | Set-PodeAsyncRouteOperation -Operation Get -ResponseContentType  'application/json', 'application/yaml'  -In Path -PassThru | Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
 
+       Add-PodeAsyncRouteStop -Path '/task' -ResponseContentType 'application/json', 'application/yaml' -In Query -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -OADefinitionTag 'Default', 'v3.1' -PassThru | Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
+     #Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru | Set-PodeAsyncRouteOperation -Operation Stop -ResponseContentType  'application/json', 'application/yaml' -In Path -PassThru | Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
     Add-PodeAsyncRouteQuery -path '/tasks'  -ResponseContentType 'application/json', 'application/yaml'   -Payload  Body -QueryContentType 'application/json', 'application/yaml'  -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'  -PassThru | Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
 
     Add-PodeRoute -PassThru -Method Post -path '/receive/callback' -ScriptBlock {

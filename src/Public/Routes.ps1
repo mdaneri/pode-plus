@@ -113,10 +113,10 @@ function Add-PodeRoute {
     [CmdletBinding(DefaultParameterSetName = 'Script')]
     [OutputType([System.Object[]])]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [ValidateSet('Connect', 'Delete', 'Get', 'Head', 'Merge', 'Options', 'Patch', 'Post', 'Put', 'Trace', '*')]
         [string[]]
-        $Method,
+        $Method = 'Get',
 
         [Parameter(Mandatory = $true)]
         [string]
@@ -316,7 +316,7 @@ function Add-PodeRoute {
     $ScriptBlock, $usingVars = Convert-PodeScopedVariables -ScriptBlock $ScriptBlock -PSSession $PSCmdlet.SessionState
 
     # convert any middleware into valid hashtables
-    $Middleware = @(ConvertTo-PodeMiddleware -Middleware $Middleware -PSSession $PSCmdlet.SessionState)
+    $realMiddleware = @(ConvertTo-PodeMiddleware -Middleware $Middleware -PSSession $PSCmdlet.SessionState)
 
     # if an access name was supplied, setup access as middleware first to it's after auth middleware
     if (![string]::IsNullOrWhiteSpace($Access)) {
@@ -334,7 +334,7 @@ function Add-PodeRoute {
             Name = $Access
         }
 
-        $Middleware = (@(Get-PodeAccessMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $Middleware)
+        $realMiddleware = (@(Get-PodeAccessMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $realMiddleware)
     }
 
     # if an auth name was supplied, setup the auth as the first middleware
@@ -352,10 +352,10 @@ function Add-PodeRoute {
             Name   = $Authentication
             Login  = $Login
             Logout = $Logout
-            Anon   = $AllowAnon
+            Anon   = $AllowAnon.IsPresent
         }
 
-        $Middleware = (@(Get-PodeAuthMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $Middleware)
+        $realMiddleware = (@(Get-PodeAuthMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $realMiddleware)
     }
 
     # custom access
@@ -413,7 +413,14 @@ function Add-PodeRoute {
                 @{
                     Logic            = $ScriptBlock
                     UsingVariables   = $usingVars
-                    Middleware       = $Middleware
+                    Middleware       = $realMiddleware
+                    MiddlewareMeta   = @{
+                        Name       = $Authentication
+                        Login      = $Login
+                        Logout     = $Logout
+                        Anon       = $AllowAnon.IsPresent
+                        Middleware = $Middleware
+                    }
                     Authentication   = $Authentication
                     Access           = $Access
                     AccessMeta       = @{
@@ -1661,6 +1668,9 @@ Remove a specific Route.
 .DESCRIPTION
 Remove a specific Route.
 
+.PARAMETER Route
+A hashtable array representing the async route(s) to which permissions will be assigned or from which they will be removed. This parameter is mandatory.
+
 .PARAMETER Method
 The method of the Route to remove.
 
@@ -1677,40 +1687,50 @@ Remove-PodeRoute -Method Get -Route '/about'
 Remove-PodeRoute -Method Post -Route '/users/:userId' -EndpointName User
 #>
 function Remove-PodeRoute {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Route')]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Route', ValueFromPipeline = $true)]
+        [hashtable[]]
+        $Route,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
         [ValidateSet('Connect', 'Delete', 'Get', 'Head', 'Merge', 'Options', 'Patch', 'Post', 'Put', 'Trace', '*')]
         [string]
         $Method,
 
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
         [string]
         $Path,
 
-        [Parameter()]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
         [string]
         $EndpointName
     )
 
-    # split route on '?' for query
-    $Path = Split-PodeRouteQuery -Path $Path
+    if ($Null -eq $Route -or $Route.Count -eq 0) {
+        # split route on '?' for query
+        $Path = Split-PodeRouteQuery -Path $Path
 
-    # ensure the route has appropriate slashes and replace parameters
-    $Path = Update-PodeRouteSlash -Path $Path
-    $Path = Resolve-PodePlaceholder -Path $Path
+        # ensure the route has appropriate slashes and replace parameters
+        $Path = Update-PodeRouteSlash -Path $Path
+        $Path = Resolve-PodePlaceholder -Path $Path
 
-    # ensure route does exist
-    if (!$PodeContext.Server.Routes[$Method].Contains($Path)) {
-        return
+        # ensure route does exist
+        if (!$PodeContext.Server.Routes[$Method].Contains($Path)) {
+            return
+        }
+
+        # select the candidate route for deletion
+        $Route = @($PodeContext.Server.Routes[$Method][$Path] | Where-Object {
+                $_.Endpoint.Name -ieq $EndpointName
+            })
+    }else{
+        $Path =$Route.Path
+        $Method=$Route.Method
+        $EndpointName=$Route.Endpoint.Name
     }
 
-    # select the candidate route for deletion
-    $route = @($PodeContext.Server.Routes[$Method][$Path] | Where-Object {
-            $_.Endpoint.Name -ieq $EndpointName
-        })
-
-    foreach ($r in $route) {
+    foreach ($r in $Route) {
         # remove the runspace
         if ($r.IsAsync) {
             $asyncRouteId = $r.Async.AsyncRouteId

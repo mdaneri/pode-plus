@@ -5,6 +5,10 @@ param()
 Describe 'ASYNC REST API Requests' {
 
     BeforeAll {
+
+        $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+        . "$helperPath/TestHelper.ps1"
+
         $mindyCommonHeaders = @{
             'accept'        = 'application/json'
             'X-API-KEY'     = 'test2-api-key'
@@ -19,13 +23,9 @@ Describe 'ASYNC REST API Requests' {
         $Port = 8080
         $Endpoint = "http://127.0.0.1:$($Port)"
         $scriptPath = "$($PSScriptRoot)\..\..\examples\Web-AsyncRoute.ps1"
-        if ($PSVersionTable.PsVersion -gt [version]'6.0') {
-            Start-Process 'pwsh' -ArgumentList "-NoProfile -File `"$scriptPath`" -Quiet -Port $Port -DisableTermination"  -NoNewWindow
-        }
-        else {
-            Start-Process 'powershell' -ArgumentList "-NoProfile -File `"$scriptPath`" -Quiet -Port $Port -DisableTermination"  -NoNewWindow
-        }
-        Start-Sleep -Seconds 5
+
+        Start-Process  (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -File `"$scriptPath`" -Port $Port  -Daemon"  -NoNewWindow
+        Wait-ForWebServer -Port $Port
     }
 
     AfterAll {
@@ -36,7 +36,6 @@ Describe 'ASYNC REST API Requests' {
 
     Describe 'Hello Server' {
         it 'Hello Server' {
-            Start-Sleep -Seconds 10
             $response = Invoke-RestMethod -Uri "http://localhost:$($Port)/hello" -Method Get
             $response.message | Should -Be 'Hello!'
         }
@@ -144,7 +143,7 @@ Describe 'ASYNC REST API Requests' {
 
         It 'Create Async Route Task /auth/asyncUsing with JSON body' {
             $body = @{
-                callbackUrl = "http://localhost:$($Port)/receive/callback"
+                Url = "http://localhost:$($Port)/receive/callback"
             } | ConvertTo-Json
 
             $headersWithContentType = $mortyCommonHeaders.Clone()

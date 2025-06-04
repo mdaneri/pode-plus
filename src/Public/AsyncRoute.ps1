@@ -1,4 +1,177 @@
 
+function Set-PodeAsyncRouteOperation {
+    [CmdletBinding()]
+    [OutputType([hashtable[]])]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [ValidateNotNullOrEmpty()]
+        [hashtable ]
+        $Route,
+
+        [Parameter(Mandatory = $true)]
+        [string]
+        [ValidateSet('Get', 'Stop', 'Query')]
+        $Operation,
+
+        [Parameter()]
+        [string[]]
+        [ValidateSet('application/json' , 'application/xml', 'application/yaml')]
+        $ResponseContentType = 'application/json',
+
+        [Parameter()]
+        [ValidateSet('Cookie', 'Header', 'Path', 'Query')]
+        [string]
+        $In = 'Query',
+
+        [Parameter()]
+        [switch]
+        $PassThru
+    )
+
+
+    if ($null -eq $Route) {
+        # The parameter 'Route' cannot be null
+        throw ($PodeLocale.routeParameterCannotBeNullExceptionMessage)
+    }
+
+
+    # Check if the route is already marked as an Async Route
+    if ( $Route.IsAsync) {
+        # The function cannot be invoked multiple times for the same route
+        throw ($PodeLocale.functionCannotBeInvokedMultipleTimesExceptionMessage -f $MyInvocation.MyCommand.Name, $Route.Path)
+    }
+
+    # Check if a Definition exists
+    $oaName = Get-PodeAsyncRouteOAName -Tag $Route.OpenAPI.DefinitionTag
+
+    Remove-PodeRoute -Route $Route
+
+    switch ($Operation) {
+        'Get' {
+
+            # Append task Id to path if the task Id is in the path
+            if ($In -eq 'Path') {
+                $Path = "$($Route.Path.TrimEnd('/'))/:$($oaName.TaskIdName)"
+            }
+
+            # Define the parameters for the route
+            $param = @{
+                Method           = $Route.Method
+                Path             = $Path
+                ScriptBlock      = Get-PodeAsyncGetScriptBlock
+                ArgumentList     = ($In, $oaName.TaskIdName)
+                ErrorContentType = $ResponseContentType[0]
+                PassThru         = $true 
+            }
+
+        }
+        'Stop' {
+
+            # Append task Id to path if the task Id is in the path
+            if ($In -eq 'Path') {
+                $Path = "$($Route.Path.TrimEnd('/'))/:$($oaName.TaskIdName)"
+            }
+
+            # Define the parameters for the route
+            $param = @{
+                Method           = $Route.Method
+                Path             = $Path
+                ScriptBlock      = Get-PodeAsyncRouteStopScriptBlock
+                ArgumentList     = ($In, $oaName.TaskIdName)
+                ErrorContentType = $ResponseContentType[0]
+                PassThru         = $true
+            }
+        }
+    }
+
+
+    # Add optional parameters to the route
+    if ($Route.Middleware) {
+        $param.Middleware = $Route.Middleware
+    }
+    if ($Route.Endpoint.Name) {
+        $param.EndpointName = $Route.Endpoint.Name
+    }
+    if ($Route.Authentication) {
+        $param.Authentication = $Route.Authentication
+    }
+    if ($Route.Access) {
+        $param.Access = $Route.Access
+    }
+    if ($Route.Access.Role) {
+        $param.Role = $Route.Access.Role
+    }
+    if ($Route.Access.Group) {
+        $param.Group = $Route.Access.Group
+    }
+    if ($Route.Access.Scope) {
+        $param.Scope = $Route.Access.Scope
+    }
+    if ($Route.Access.User) {
+        $param.User = $Route.Access.User
+    }
+
+    if ($Route.MiddlewareMeta.Login) {
+        $param.Login = $Route.MiddlewareMeta.Login
+    }
+    if ($Route.MiddlewareMeta.Logout) {
+        $param.Logout = $Route.MiddlewareMeta.Logout
+    }
+    if ($Route.MiddlewareMeta.Anon) {
+        $param.AllowAnon = [switch]$Route.MiddlewareMeta.Anon
+    }
+    if ($Route.MiddlewareMeta.Middleware) {
+        $param.Middleware = $Route.MiddlewareMeta.Middleware
+    }
+
+    # Add the route to Pode
+    $newRoute = Add-PodeRoute @param
+
+    switch ($Operation) {
+        'Get' {
+            # Add OpenAPI documentation postponed script
+            $newRoute.OpenApi.Postponed = {
+                param($param)
+                $r | Set-PodeOARequest -PassThru -Parameters (
+                    New-PodeOAStringProperty -Name $param.OAName.TaskIdName -Format Uuid -Description 'Task Id' -Required | ConvertTo-PodeOAParameter -In $param.In) |
+                    Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content (New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content $param.OAName.OATypeName) -PassThru |
+                    Add-PodeOAResponse -StatusCode 4XX -Description 'Client error. The request contains bad syntax or cannot be fulfilled.' -Content (
+                        New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content (
+                            New-PodeOAStringProperty -Name 'Id' -Format Uuid -Required | New-PodeOAStringProperty -Name 'Error' -Required | New-PodeOAObjectProperty -XmlName "$($param.OAName.OATypeName)Error"
+                        ))
+            }
+        }
+        'Stop' {
+            # Add OpenAPI documentation postponed script
+            $newRoute.OpenApi.Postponed = {
+                param($param)
+                $r | Set-PodeOARequest -PassThru -Parameters (
+                    New-PodeOAStringProperty -Name $param.OAName.TaskIdName -Format Uuid -Description 'Task Id' -Required | ConvertTo-PodeOAParameter -In $param.In) |
+                    Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content (New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content $param.OAName.OATypeName) -PassThru |
+                    Add-PodeOAResponse -StatusCode 4XX -Description 'Client error. The request contains bad syntax or cannot be fulfilled.' -Content (
+                        New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content (
+                            New-PodeOAStringProperty -Name 'Id' -Format Uuid -Required | New-PodeOAStringProperty -Name 'Error' -Required | New-PodeOAObjectProperty -XmlName "$($param.OAName.OATypeName)Error"
+                        )
+                    )
+            }
+
+        }
+    }
+    $newRoute.OpenApi.PostponedArgumentList = @{
+        OAName              = $oaName
+        In                  = $In
+        ResponseContentType = $ResponseContentType
+    }
+
+
+    # Return the route information if PassThru is specified
+    if ($PassThru) {
+        return $newRoute
+    }
+
+
+}
+
 <#
 .SYNOPSIS
     Adds a route to get the status and details of an asynchronous task in Pode.
