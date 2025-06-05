@@ -173,10 +173,10 @@ function Test-PodeAsyncRouteScriptblockInvalidCommand {
     The `Complete-PodeAsyncRouteOperation` function finalizes an asynchronous script's execution by setting its state to 'Completed' if it is still running and logs the completion time. It also manages callbacks by sending requests to a specified callback URL with appropriate headers and content types. If Server-Sent Events (SSE) are enabled, the function will send events based on the execution state.
 
 .PARAMETER AsyncProcess
-    A [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]] that contains the results and state information of the asynchronous script.
+    A [System.Collections.Concurrent.ConcurrentDictionary[string, object]] that contains the results and state information of the asynchronous script.
 
 .EXAMPLE
-    $asyncProcess = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+    $asyncProcess = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
     $webEvent = @{
         Request = @{
             Url = 'http://example.com/request'
@@ -191,7 +191,7 @@ function Test-PodeAsyncRouteScriptblockInvalidCommand {
 function Complete-PodeAsyncRouteOperation {
     param (
         [Parameter(Mandatory = $true)]
-        [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]
+        [System.Collections.Concurrent.ConcurrentDictionary[string, object]]
         $AsyncProcess
     )
     # Set the completed time if not already set
@@ -234,7 +234,7 @@ function Complete-PodeAsyncRouteOperation {
             }
 
             # Prepare the body for the callback
-            $body = @{
+            $body = [ordered]@{
                 Url       = $AsyncProcess['Url']
                 Method    = $AsyncProcess['Method']
                 EventName = $AsyncProcess['CallbackSettings'].EventName
@@ -256,7 +256,7 @@ function Complete-PodeAsyncRouteOperation {
 
             # Convert the body to the appropriate content type
             switch ($contentType) {
-                'application/json' { $cBody = ($body | ConvertTo-Json -Depth 10) }
+                'application/json' { $cBody = ($body | ConvertTo-Json -Depth 10 -Compress) }
                 'application/xml' { $cBody = ($body | ConvertTo-Xml -NoTypeInformation) }
                 'application/yaml' { $cBody = ($body | ConvertTo-PodeYaml -Depth 10) }
             }
@@ -270,19 +270,24 @@ function Complete-PodeAsyncRouteOperation {
             for ($i = 0; $i -le 3; $i++) {
                 try {
                     $AsyncProcess['CallbackTentative'] = $AsyncProcess['CallbackTentative'] + 1
+                    write-podehost "Invoking callback URL: $callbackUrl with method: $method and content type: $contentType body:$cbody  tentative: $($AsyncProcess['CallbackTentative']  )"
                     $null = Invoke-RestMethod -Uri $callbackUrl -Method $method -Headers $headers -Body $cBody -ContentType $contentType -ErrorAction Stop
+                    Write-PodeHost "Callback URL: $callbackUrl invoked successfully with method: $method and content type: $contentType"
                     $AsyncProcess['CallbackInfoState'] = 'Completed'
                     break
                 }
                 catch {
+                    write-podehost $_
                     $_ | Write-PodeErrorLog
                     $AsyncProcess['CallbackInfoState'] = 'Failed'
                     Start-Sleep -Seconds 2
                 }
             }
+            write-podehost "s"
         }
     }
     catch {
+        Write-Podehost "Error invoking callback URL: $($_.Exception.Message)"
         # Log any errors encountered during the callback process
         $_ | Write-PodeErrorLog
         $AsyncProcess['CallbackInfoState'] = 'Failed'
@@ -800,7 +805,7 @@ function Get-PodeAsyncRouteSetScriptBlock {
             }
 
             # Initialize the result hashtable
-            $asyncOperation = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+            $asyncOperation = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $asyncOperation['Id'] = $Id
             $asyncOperation['AsyncRouteId'] = $asyncRouteTask.AsyncRouteId
             $asyncOperation['Runspace'] = $runspace
@@ -817,7 +822,7 @@ function Get-PodeAsyncRouteSetScriptBlock {
             $asyncOperation['WebEvent'] = $parameters.WebEvent
 
             if ($asyncRouteTask.ContainsKey('Sse')) {
-                $sseObject = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+                $sseObject = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $sseObject['Name'] = $asyncRouteTask['Sse'].Name
                 $sseObject['Group'] = $asyncRouteTask['Sse'].Group
                 $sseObject['Url'] = "$($asyncRouteTask['Sse'].Name)?Id=$Id"
@@ -1082,16 +1087,17 @@ function Get-PodeAsyncRouteStopScriptBlock {
     Exports the detailed information of an asynchronous operation to a hashtable.
 
 .DESCRIPTION
-    The `Export-PodeAsyncRouteInfo` function extracts and formats information from an asynchronous operation encapsulated in a [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]] object. It includes details such as Id, creation time, state, user, permissions, and callback settings, among others. The function returns a hashtable with this information, suitable for logging or further processing.
+    The `Export-PodeAsyncRouteInfo` function extracts and formats information from an asynchronous operation encapsulated in a [System.Collections.Concurrent.ConcurrentDictionary[string, object]] object.
+    It includes details such as Id, creation time, state, user, permissions, and callback settings, among others. The function returns a hashtable with this information, suitable for logging or further processing.
 
 .PARAMETER Async
-    A [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]] containing the asynchronous operation's details. This parameter is mandatory.
+    A [System.Collections.Concurrent.ConcurrentDictionary[string, object]] containing the asynchronous operation's details. This parameter is mandatory.
 
 .PARAMETER Raw
-    If specified, returns the raw [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]] without any formatting.
+    If specified, returns the raw [System.Collections.Concurrent.ConcurrentDictionary[string, object]] without any formatting.
 
 .EXAMPLE
-    $asyncInfo = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+    $asyncInfo = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
     $exportedInfo = Export-PodeAsyncRouteInfo -Async $asyncInfo
 
 .NOTES
@@ -1100,7 +1106,7 @@ function Get-PodeAsyncRouteStopScriptBlock {
 function Export-PodeAsyncRouteInfo {
     param(
         [Parameter(Mandatory = $true )]
-        [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]
+        [System.Collections.Concurrent.ConcurrentDictionary[string, object]]
         $Async,
 
         [switch]
@@ -1436,7 +1442,7 @@ function Get-PodeAsyncRouteOASchemaNameInternal {
 #>
 function Close-PodeAsyncRouteTimer {
     param(
-        [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]
+        [System.Collections.Concurrent.ConcurrentDictionary[string, object]]
         $Operation
     )
     try {

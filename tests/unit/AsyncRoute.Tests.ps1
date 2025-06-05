@@ -187,7 +187,7 @@ Describe 'Export-PodeAsyncRouteInfo' {
     Context 'When Async contains full details' {
         It 'should export all details into a hashtable' {
 
-            $asyncData = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+            $asyncData = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $asyncData['Id'] = 'async-001'
             $asyncData['Cancellable'] = $true
             $asyncData['CreationTime'] = $testDate
@@ -230,19 +230,19 @@ Describe 'Export-PodeAsyncRouteInfo' {
 
     Context 'When Raw switch is used' {
         It 'should return the raw ConcurrentDictionary' {
-            $asyncData = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+            $asyncData = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $asyncData['Id'] = 'async-002'
 
             $result = Export-PodeAsyncRouteInfo -Async $asyncData -Raw
 
-            $result | Should -BeOfType 'System.Collections.Concurrent.ConcurrentDictionary[string, psobject]'
+            $result | Should -BeOfType 'System.Collections.Concurrent.ConcurrentDictionary[string, object]'
             $result['Id'] | Should -Be 'async-002'
         }
     }
 
     Context 'When Async contains minimal details' {
         It 'should handle missing optional keys gracefully' {
-            $asyncData = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+            $asyncData = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $asyncData['Id'] = 'async-003'
             $asyncData['CreationTime'] = $testDate
             $asyncData['ExpireTime'] = $testDate.AddMinutes(10)
@@ -278,7 +278,7 @@ Describe 'Get-PodeAsyncRouteOperation' {
 
         # Add a sample asynchronous route operation to the mock PodeContext
         $operationId1 = '123e4567-e89b-12d3-a456-426614174000'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId1
         $asyncOperationDetails['State'] = 'Running'
         $asyncOperationDetails['Cancellable'] = $true
@@ -289,7 +289,7 @@ Describe 'Get-PodeAsyncRouteOperation' {
 
 
         $operationId2 = '123e4567-e89b-12d3-a456-426614174001'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId2
         $asyncOperationDetails['State'] = 'NotStarted'
         $asyncOperationDetails['Cancellable'] = $false
@@ -299,7 +299,7 @@ Describe 'Get-PodeAsyncRouteOperation' {
         $PodeContext.AsyncRoutes.Processes[$operationId2] = $asyncOperationDetails
 
         $operationId3 = '123e4567-e89b-12d3-a456-426614174002'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId3
         $asyncOperationDetails['State'] = 'Running'
         $asyncOperationDetails['Cancellable'] = $true
@@ -402,7 +402,7 @@ Describe 'Get-PodeAsyncRouteOperationByFilter' {
 
         # Add a sample asynchronous route operation to the mock PodeContext
         $operationId1 = '123e4567-e89b-12d3-a456-426614174000'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId1
         $asyncOperationDetails['State'] = 'Running'
         $asyncOperationDetails['Cancellable'] = $true
@@ -413,7 +413,7 @@ Describe 'Get-PodeAsyncRouteOperationByFilter' {
 
 
         $operationId2 = '123e4567-e89b-12d3-a456-426614174001'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId2
         $asyncOperationDetails['State'] = 'NotStarted'
         $asyncOperationDetails['Cancellable'] = $false
@@ -423,7 +423,7 @@ Describe 'Get-PodeAsyncRouteOperationByFilter' {
         $PodeContext.AsyncRoutes.Processes[$operationId2] = $asyncOperationDetails
 
         $operationId3 = '123e4567-e89b-12d3-a456-426614174002'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId3
         $asyncOperationDetails['State'] = 'Running'
         $asyncOperationDetails['Cancellable'] = $false
@@ -577,7 +577,7 @@ Describe 'Add-PodeAsyncRouteSse' {
         }
         # Add a sample asynchronous route operation to the mock PodeContext
         $operationId1 = '123e4567-e89b-12d3-a456-426614174000'
-        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+        $asyncOperationDetails = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $asyncOperationDetails['Id'] = $operationId1
         $asyncOperationDetails['State'] = 'Completed'
         $asyncOperationDetails['Cancellable'] = $true
@@ -765,7 +765,7 @@ Describe 'Stop-PodeAsyncRouteOperation' {
         }
         BeforeEach {
             # Add a mock operation to PodeContext
-            $mockOperation = [System.Collections.Concurrent.ConcurrentDictionary[string, psobject]]::new()
+            $mockOperation = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $mockOperation['Id'] = '123e4567-e89b-12d3-a456-426614174000'
             $mockOperation['State'] = 'Running'
             $mockOperation['Error'] = $null
@@ -835,12 +835,15 @@ Describe 'Add-PodeAsyncRouteGet' {
         Mock -CommandName Set-PodeOARequest -MockWith { return $args[0] }
         #  Mock -CommandName Add-PodeOAResponse -MockWith { return $args[0] }
         Mock -CommandName New-PodeOAStringProperty -MockWith { return @{} }
-        Mock -CommandName New-PodeOAObjectProperty -MockWith { return @{} }#>
+        Mock -CommandName New-PodeOAObjectProperty -MockWith { return @{} }
+        Mock -CommandName Remove-PodeRoute -MockWith {  }
     }
 
     Context 'When Path and OADefinitionTag are specified' {
         It 'Should create the route and return it when PassThru is specified' {
-            $route = Add-PodeAsyncRouteGet -Path '/status' -PassThru
+            $route = @{
+                Method = 'Get'; Path = '/status'; AsyncRouteId = '__Get/status__'.Replace('/', '_'); IsAsync = $false; Logic = {} ; OpenApi = @{}
+            } | Set-PodeAsyncRouteOperation -Get  -PassThru
 
             # Ensure Add-PodeRoute was called with the expected parameters
             Assert-MockCalled -CommandName Add-PodeRoute -Exactly 1 -Scope It
@@ -852,16 +855,11 @@ Describe 'Add-PodeAsyncRouteGet' {
         }
 
         It 'Should correctly modify the Path when In is Path' {
-            $route = Add-PodeAsyncRouteGet -Path '/status' -In 'Path' -PassThru
+            $route = @{
+                Method = 'Get'; Path = '/status'; AsyncRouteId = '__Get/status__'.Replace('/', '_'); IsAsync = $false; Logic = {} ; OpenApi = @{}
+            } | Set-PodeAsyncRouteOperation -Get  -In 'Path' -PassThru
 
             # Ensure the Path was modified to include taskId
-            $route.Path | Should -Be '/status/:taskId'
-        }
-
-        It 'Should append the taskId to the Path when In is Path' {
-            $route = Add-PodeAsyncRouteGet -Path '/status' -In 'Path' -PassThru
-
-            # Verify that the taskId is appended to the path
             $route.Path | Should -Be '/status/:taskId'
         }
     }

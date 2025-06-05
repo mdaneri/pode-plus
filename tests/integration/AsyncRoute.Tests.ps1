@@ -66,22 +66,56 @@ Describe 'ASYNC REST API Requests' {
             $response.Cancellable | Should -Be $true
         }
 
-        It 'Create Async Route Task /auth/asyncUsing with JSON body' {
-            $body = @{
-                callbackUrl = "http://localhost:$($Port)/receive/callback"
-            } | ConvertTo-Json
+        It 'Create Async Route Task /auth/asyncUsingCallback with JSON body and capture callback' {
+            $callbackPort = ([int]$Port) + 1
+            $callbackUrl = "http://localhost:$callbackPort/receive/callback"
 
+            # Prepare body with callback URL
+            $body = @{ callbackUrl = $callbackUrl } | ConvertTo-Json
+
+            # Prepare headers
             $headersWithContentType = $mindyCommonHeaders.Clone()
             $headersWithContentType['Content-Type'] = 'application/json'
 
-            $response = Invoke-RestMethod -Uri "http://localhost:$($Port)/auth/asyncUsing" -Method Put -Headers $headersWithContentType -Body $body
+            # Start temporary HTTP listener to capture callback
+            $listener = [System.Net.HttpListener]::new()
+            $listener.Prefixes.Add("$callbackUrl/")
+            $listener.Start()
 
-            # Assertions to validate the response
-            $response | Should -Not -BeNullOrEmpty
-            $response.User | Should -Be 'MINDY021'
-            $response.AsyncRouteId | Should -Be '[Put]/auth/asyncUsing'
-            $response.State | Should -BeIn @('NotStarted', 'Running')
-            $response.Cancellable | Should -Be $true
+            try {
+                # Trigger the async route
+                $response = Invoke-RestMethod -Uri "http://localhost:$($Port)/auth/asyncUsingCallback" -Method Put -Headers $headersWithContentType -Body $body
+
+                # Assertions for the route response
+                $response | Should -Not -BeNullOrEmpty
+                $response.User | Should -Be 'MINDY021'
+                $response.AsyncRouteId | Should -Be '[Put]/auth/asyncUsingCallback'
+                $response.State | Should -BeIn @('NotStarted', 'Running')
+                $response.Cancellable | Should -Be $true
+
+                $callbackContext = $listener.GetContext()    # returns as soon as callback arrives
+                # Validate callback received
+                $callbackContext | Should -Not -BeNullOrEmpty
+
+                $callbackContext.Request.HttpMethod | Should -Be 'POST'
+                # Read callback body
+                $callbackRequest = $callbackContext.Request
+                $callbackBody = [IO.StreamReader]::new($callbackRequest.InputStream).ReadToEnd()
+                $callbackBody | Should -Not -BeNullOrEmpty
+
+                # Respond with 200 OK
+                $callbackContext.Response.StatusCode = 200
+                $callbackContext.Response.Close()
+
+                # Assert callback body (you can adjust this depending on your callback content)
+                $callbackBody | Should -Not -BeNullOrEmpty
+                $callbackBody | Should  -be '{"Url":"http://localhost:8080/auth/asyncUsingCallback","Method":"put","EventName":"_auth_asyncUsingCallback_Callback","State":"Completed","Result":{"InnerValue":"coming from using"}}'
+            }
+            finally {
+                # Ensure listener is stopped
+                $listener.Stop()
+                $listener.Close()
+            }
         }
 
         It 'Create Async Route Task /auth/asyncStateNoColumn' {
@@ -141,22 +175,56 @@ Describe 'ASYNC REST API Requests' {
             $response.Cancellable | Should -Be $true
         }
 
-        It 'Create Async Route Task /auth/asyncUsing with JSON body' {
-            $body = @{
-                 callbackUrl = "http://localhost:$($Port)/receive/callback"
-            } | ConvertTo-Json
+         It 'Create Async Route Task /auth/asyncUsingCallback with JSON body and capture callback' {
+            $callbackPort = ([int]$Port) + 1
+            $callbackUrl = "http://localhost:$callbackPort/receive/callback"
 
+            # Prepare body with callback URL
+            $body = @{ callbackUrl = $callbackUrl } | ConvertTo-Json
+
+            # Prepare headers
             $headersWithContentType = $mortyCommonHeaders.Clone()
             $headersWithContentType['Content-Type'] = 'application/json'
 
-            $response = Invoke-RestMethod -Uri "http://localhost:$($Port)/auth/asyncUsing" -Method Put -Headers $headersWithContentType -Body $body
+            # Start temporary HTTP listener to capture callback
+            $listener = [System.Net.HttpListener]::new()
+            $listener.Prefixes.Add("$callbackUrl/")
+            $listener.Start()
 
-            # Assertions to validate the response
-            $response | Should -Not -BeNullOrEmpty
-            $response.User | Should -Be 'M0R7Y302'
-            $response.AsyncRouteId | Should -Be '[Put]/auth/asyncUsing'
-            $response.State | Should -BeIn @('NotStarted', 'Running')
-            $response.Cancellable | Should -Be $true
+            try {
+                # Trigger the async route
+                $response = Invoke-RestMethod -Uri "http://localhost:$($Port)/auth/asyncUsingCallback" -Method Put -Headers $headersWithContentType -Body $body
+
+                # Assertions for the route response
+                $response | Should -Not -BeNullOrEmpty
+                $response.User | Should -Be 'M0R7Y302'
+                $response.AsyncRouteId | Should -Be '[Put]/auth/asyncUsingCallback'
+                $response.State | Should -BeIn @('NotStarted', 'Running')
+                $response.Cancellable | Should -Be $true
+
+                $callbackContext = $listener.GetContext()    # returns as soon as callback arrives
+                # Validate callback received
+                $callbackContext | Should -Not -BeNullOrEmpty
+
+                $callbackContext.Request.HttpMethod | Should -Be 'POST'
+                # Read callback body
+                $callbackRequest = $callbackContext.Request
+                $callbackBody = [IO.StreamReader]::new($callbackRequest.InputStream).ReadToEnd()
+                $callbackBody | Should -Not -BeNullOrEmpty
+
+                # Respond with 200 OK
+                $callbackContext.Response.StatusCode = 200
+                $callbackContext.Response.Close()
+
+                # Assert callback body (you can adjust this depending on your callback content)
+                $callbackBody | Should -Not -BeNullOrEmpty
+                $callbackBody | Should  -be '{"Url":"http://localhost:8080/auth/asyncUsingCallback","Method":"put","EventName":"_auth_asyncUsingCallback_Callback","State":"Completed","Result":{"InnerValue":"coming from using"}}'
+            }
+            finally {
+                # Ensure listener is stopped
+                $listener.Stop()
+                $listener.Close()
+            }
         }
 
         It 'Throws exception - Create Async Route Task /auth/asyncStateNoColumn' {
@@ -262,13 +330,14 @@ Describe 'ASYNC REST API Requests' {
             } until (($response.state.where({ $_ -eq 'Running' -or $_ -eq 'NotStarted' }).count -eq 0) -or (++$counter -gt 60))
             # Assertions to validate the response
             $response | Should -Not -BeNullOrEmpty
+            $counter | Should -BeLessOrEqual 60
             $response.Count | Should -Be 7
             $response.state.where({ $_ -eq 'Aborted' }).count | Should -Be 1
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsingCancellable' }).Result.InnerValue | Should -Be 'coming from using'
-            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsing' }).Result.InnerValue | Should -Be 'coming from using'
+            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsingCallback' }).Result.InnerValue | Should -Be 'coming from using'
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsingNotCancellable' }).Result.InnerValue | Should -Be 'coming from using'
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncInfiniteLoop' }).State | Should -Be 'Aborted'
-            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncParam' }).Result.InnerValue | Should -Be 'comming as argument'
+            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncParam' }).Result.InnerValue | Should -Be 'coming as argument'
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncStateNoColumn' }).Result.InnerValue | Should -Be 'coming from a PodeState'
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncState' }).Result.InnerValue | Should -Be 'coming from a PodeState'
         }
@@ -288,9 +357,9 @@ Describe 'ASYNC REST API Requests' {
             $response.Count | Should -Be 5
             $response.state.where({ $_ -eq 'Aborted' }).count | Should -Be 0
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsingCancellable' }).Result.InnerValue | Should -Be 'coming from using'
-            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsing' }).Result.InnerValue | Should -Be 'coming from using'
+            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsingCallback' }).Result.InnerValue | Should -Be 'coming from using'
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncUsingNotCancellable' }).Result.InnerValue | Should -Be 'coming from using'
-            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncParam' }).Result.InnerValue | Should -Be 'comming as argument'
+            $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncParam' }).Result.InnerValue | Should -Be 'coming as argument'
             $response.where({ $_.AsyncRouteId -eq '[Put]/auth/asyncState' }).Result.InnerValue | Should -Be 'coming from a PodeState'
         }
 

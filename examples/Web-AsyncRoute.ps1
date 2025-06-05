@@ -39,7 +39,7 @@
     $headersWithContentType = $mortyCommonHeaders.Clone()
     $headersWithContentType['Content-Type'] = 'application/json'
 
-    $response_asyncUsing = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncUsing' -Method Put -Headers $headersWithContentType -Body $body
+    $response_asyncUsingCallBack = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncUsingCallback' -Method Put -Headers $headersWithContentType -Body $body
 
     $response_asyncState = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncState' -Method Put -Headers $mortyCommonHeaders
 
@@ -59,7 +59,7 @@
 
     $headersWithContentType = $mindyCommonHeaders.Clone()
     $headersWithContentType['Content-Type'] = 'application/json'
-    $response_Mindy_asyncUsing = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncUsing' -Method Put -Headers $headersWithContentType -Body $body
+    $response_Mindy_asyncUsingCallback = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncUsingCallback' -Method Put -Headers $headersWithContentType -Body $body
 
     $response_Mindy_asyncState = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncState' -Method Put -Headers $mindyCommonHeaders
 
@@ -247,8 +247,8 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
         Close-PodeServer
     } -PassThru | Set-PodeOARouteInfo -Summary 'Shutdown the server' -PassThru | Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation'
 
-    Add-PodeRoute -PassThru -Method Put -Path '/auth/asyncUsing' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'   -ScriptBlock {
-        Write-PodeHost '/auth/asyncUsing'
+    Add-PodeRoute -PassThru -Method Put -Path '/auth/asyncUsingCallback' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'   -ScriptBlock {
+        Write-PodeHost '/auth/asyncUsingCallback'
         Write-PodeHost "sleepTime=$($using:uSleepTime)"
         Write-PodeHost "Message=$($using:uMessage)"
         Start-Sleep $using:uSleepTime
@@ -298,7 +298,7 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
             Start-Sleep $sleepTime2
         }
         return @{ InnerValue = $Message }
-    } -ArgumentList @{sleepTime2 = 2; Message = 'comming as argument' } |
+    } -ArgumentList @{sleepTime2 = 2; Message = 'coming as argument' } |
         Set-PodeOARouteInfo -Summary 'Async with Parameters' -OperationId 'asyncParameters' -PassThru |
         Set-PodeAsyncRoute -ResponseContentType 'application/json', 'application/yaml' -Timeout 300
 
@@ -385,7 +385,7 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
     Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
         Set-PodeAsyncRouteOperation -Stop -ResponseContentType  'application/json', 'application/yaml' -In Query -PassThru |
         Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
- 
+
     Add-PodeRoute -Method Post -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
         Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
         Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'

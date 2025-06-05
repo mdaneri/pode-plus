@@ -1727,6 +1727,19 @@ function Remove-PodeRoute {
                 }
             }
         }
+        # remove the runspace
+        if ($r.IsAsync) {
+            $asyncRouteId = $r.Async.AsyncRouteId
+            if ( $asyncRouteId -and $PodeContext.RunspacePools.ContainsKey($asyncRouteId)) {
+                $PodeContext.Threads.AsyncRoutes -= $r.Async.MaxRunspaces
+                if ( ! $PodeContext.RunspacePools[$asyncRouteId].Pool.IsDisposed) {
+                    $PodeContext.RunspacePools[$asyncRouteId].Pool.BeginClose($null, $null)
+                    Close-PodeDisposable -Disposable ($PodeContext.RunspacePools[$asyncRouteId].Pool)
+                }
+                $v = ''
+                $null = $PodeContext.RunspacePools.TryRemove($asyncRouteId, [ref]$v)
+            }
+        }
     }
 
     # remove the route's logic

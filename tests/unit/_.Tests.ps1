@@ -8,7 +8,7 @@ BeforeDiscovery {
 
     # List of directories to exclude
     $excludeDirs = @('scripts', 'views', 'static', 'public', 'assets', 'timers', 'modules',
-        'Authentication', 'certs', 'logs', 'relative', 'routes', 'issues', 'auth')
+        'Authentication', 'certs', 'logs', 'relative', 'routes', 'issues', 'auth','Utilities')
 
     # Convert exlusion list into single regex pattern for directory matching
     $dirSeparator = [IO.Path]::DirectorySeparatorChar
@@ -24,7 +24,7 @@ BeforeDiscovery {
 BeforeAll {
     $path = $PSCommandPath
     $src = (Split-Path -Parent -Path $path) -ireplace '[\\/]tests[\\/]unit', '/src/'
-    
+
     # Import Pode Assembly
     $helperPath = (Split-Path -Parent -Path $path) -ireplace 'unit', 'shared'
     . "$helperPath/TestHelper.ps1"

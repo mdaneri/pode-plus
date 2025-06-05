@@ -389,6 +389,5 @@
     totalUptimeMessage                                                = 'Total Uptime:'
     undefinedOpenApiReferencesMessage                                 = 'Undefined OpenAPI References:'
     untestedPowerShellVersionWarningMessage                           = '[WARNING] Pode {0} has not been tested on PowerShell {1}, as it was not available when Pode was released.'
-    uptimeSinceLastRestartMessage                                     = 'Uptime Since Last Restart:'
-    queryPayloadBodyNotSupportedExceptionMessage                      = 'Query payload body is not supported in this context. Please use a different method to pass data.'
+    uptimeSinceLastRestartMessage                                     = 'Uptime Since Last Restart:' 
 }
