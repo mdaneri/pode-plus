@@ -1661,15 +1661,13 @@ function Add-PodeSignalRouteGroup {
     $null = Invoke-PodeScriptBlock -ScriptBlock $Routes -UsingVariables $usingVars -Splat -NoNewClosure
 }
 
+
 <#
 .SYNOPSIS
 Remove a specific Route.
 
 .DESCRIPTION
 Remove a specific Route.
-
-.PARAMETER Route
-A hashtable array representing the async route(s) to which permissions will be assigned or from which they will be removed. This parameter is mandatory.
 
 .PARAMETER Method
 The method of the Route to remove.
@@ -1687,64 +1685,40 @@ Remove-PodeRoute -Method Get -Route '/about'
 Remove-PodeRoute -Method Post -Route '/users/:userId' -EndpointName User
 #>
 function Remove-PodeRoute {
-    [CmdletBinding(DefaultParameterSetName = 'Route')]
+    [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true, ParameterSetName = 'Route', ValueFromPipeline = $true)]
-        [hashtable[]]
-        $Route,
-
-        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
+        [Parameter(Mandatory = $true)]
         [ValidateSet('Connect', 'Delete', 'Get', 'Head', 'Merge', 'Options', 'Patch', 'Post', 'Put', 'Trace', '*')]
         [string]
         $Method,
 
-        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
+        [Parameter(Mandatory = $true)]
         [string]
         $Path,
 
-        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
+        [Parameter()]
         [string]
         $EndpointName
     )
 
-    if ($Null -eq $Route -or $Route.Count -eq 0) {
-        # split route on '?' for query
-        $Path = Split-PodeRouteQuery -Path $Path
+    # split route on '?' for query
+    $Path = Split-PodeRouteQuery -Path $Path
 
-        # ensure the route has appropriate slashes and replace parameters
-        $Path = Update-PodeRouteSlash -Path $Path
-        $Path = Resolve-PodePlaceholder -Path $Path
+    # ensure the route has appropriate slashes and replace parameters
+    $Path = Update-PodeRouteSlash -Path $Path
+    $Path = Resolve-PodePlaceholder -Path $Path
 
-        # ensure route does exist
-        if (!$PodeContext.Server.Routes[$Method].Contains($Path)) {
-            return
-        }
-
-        # select the candidate route for deletion
-        $Route = @($PodeContext.Server.Routes[$Method][$Path] | Where-Object {
-                $_.Endpoint.Name -ieq $EndpointName
-            })
-    }else{
-        $Path =$Route.Path
-        $Method=$Route.Method
-        $EndpointName=$Route.Endpoint.Name
+    # ensure route does exist
+    if (!$PodeContext.Server.Routes[$Method].Contains($Path)) {
+        return
     }
 
-    foreach ($r in $Route) {
-        # remove the runspace
-        if ($r.IsAsync) {
-            $asyncRouteId = $r.Async.AsyncRouteId
-            if ( $asyncRouteId -and $PodeContext.RunspacePools.ContainsKey($asyncRouteId)) {
-                $PodeContext.Threads.AsyncRoutes -= $r.Async.MaxRunspaces
-                if ( ! $PodeContext.RunspacePools[$asyncRouteId].Pool.IsDisposed) {
-                    $PodeContext.RunspacePools[$asyncRouteId].Pool.BeginClose($null, $null)
-                    Close-PodeDisposable -Disposable ($PodeContext.RunspacePools[$asyncRouteId].Pool)
-                }
-                $v = ''
-                $null = $PodeContext.RunspacePools.TryRemove($asyncRouteId, [ref]$v)
-            }
-        }
+    # select the candidate route for deletion
+    $route = @($PodeContext.Server.Routes[$Method][$Path] | Where-Object {
+            $_.Endpoint.Name -ieq $EndpointName
+        })
 
+    foreach ($r in $route) {
         # remove the operationId from the openapi operationId list
         if ($r.OpenAPI) {
             foreach ( $tag in $r.OpenAPI.DefinitionTag) {

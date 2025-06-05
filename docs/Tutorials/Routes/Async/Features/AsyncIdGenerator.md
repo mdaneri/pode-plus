@@ -4,7 +4,7 @@ The `IdGenerator` parameter specifies the function used to generate unique IDs f
 
 - **Default Value**: The default function used is `New-PodeGuid`, which generates a unique GUID for each task.
 
-#### Customizing Async ID Generation
+## Customizing Async ID Generation
 
 You can define your own custom function to generate IDs by specifying it in the `IdGenerator` parameter. This can be useful if you need to follow a specific format or include particular information in the IDs.
 

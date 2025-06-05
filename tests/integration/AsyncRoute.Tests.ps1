@@ -143,7 +143,7 @@ Describe 'ASYNC REST API Requests' {
 
         It 'Create Async Route Task /auth/asyncUsing with JSON body' {
             $body = @{
-                Url = "http://localhost:$($Port)/receive/callback"
+                 callbackUrl = "http://localhost:$($Port)/receive/callback"
             } | ConvertTo-Json
 
             $headersWithContentType = $mortyCommonHeaders.Clone()

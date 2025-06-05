@@ -16,8 +16,8 @@ Describe 'Set-PodeAsyncRoutePermission' {
             $PodeContext = @{
                 AsyncRoutes = @{
                     Enabled      = $true
-                    Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
-                    Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                    Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                     HouseKeeping = @{
                         TimerInterval    = 30
                         RetentionMinutes = 10
@@ -97,8 +97,8 @@ Describe 'Set-PodeAsyncRoutePermission' {
             $PodeContext = @{
                 AsyncRoutes = @{
                     Enabled      = $true
-                    Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
-                    Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                    Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                     HouseKeeping = @{
                         TimerInterval    = 30
                         RetentionMinutes = 10
@@ -266,8 +266,8 @@ Describe 'Get-PodeAsyncRouteOperation' {
         $PodeContext = @{
             AsyncRoutes = @{
                 Enabled      = $true
-                Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
-                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 HouseKeeping = @{
                     TimerInterval    = 30
                     RetentionMinutes = 10
@@ -378,7 +378,7 @@ Describe 'Get-PodeAsyncRouteOperation' {
 
         # Assert
         $Result.Count | should -Be 3
-        $Result.GetType().tostring() | should -Be  'System.Collections.Concurrent.ConcurrentDictionary`2[System.String,System.Management.Automation.PSObject]'
+        $Result.GetType().tostring() | should -Be  'System.Collections.Concurrent.ConcurrentDictionary`2[System.String,System.Object]'
     }
 }
 
@@ -389,8 +389,8 @@ Describe 'Get-PodeAsyncRouteOperationByFilter' {
         $PodeContext = @{
             AsyncRoutes = @{
                 Enabled      = $true
-                Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
-                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 HouseKeeping = @{
                     TimerInterval    = 30
                     RetentionMinutes = 10
@@ -568,7 +568,7 @@ Describe 'Add-PodeAsyncRouteSse' {
         $PodeContext = @{
             AsyncRoutes = @{
                 Enabled      = $true
-                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 HouseKeeping = @{
                     TimerInterval    = 30
                     RetentionMinutes = 10
@@ -652,13 +652,13 @@ Describe 'Set-PodeAsyncRoute' {
             Threads       = @{
                 AsyncRoutes = 0
             }
-            RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+            RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             RunspaceState = [initialsessionstate]::CreateDefault()
 
             AsyncRoutes   = @{
                 Enabled      = $true
-                Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
-                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                Items        = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 HouseKeeping = @{
                     TimerInterval    = 30
                     RetentionMinutes = 10
@@ -729,12 +729,12 @@ Describe 'Stop-PodeAsyncRouteOperation' {
             Threads       = @{
                 AsyncRoutes = 0
             }
-            RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+            RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             RunspaceState = [initialsessionstate]::CreateDefault()
 
             AsyncRoutes   = @{
                 Enabled      = $true
-                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                Processes    = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 HouseKeeping = @{
                     TimerInterval    = 30
                     RetentionMinutes = 10

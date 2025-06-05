@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = '잘못된 {0} 별칭이 발견되었습니다: {1}'
     invalidAtomCharacterExceptionMessage                              = '잘못된 원자 문자: {0}'
     invalidBase64JwtExceptionMessage                                  = 'JWT에서 잘못된 Base64 인코딩 값이 발견되었습니다.'
+    invalidCallbackUrlSchemeExceptionMessage                          = '콜백 URL 스킴 ''{0}''는 지원되지 않습니다. ''http'' 또는 ''https''와 같은 유효한 스킴을 사용하세요.'
     invalidContentTypeForSchemaExceptionMessage                       = '스키마에 대해 잘못된 ''content-type''이 발견되었습니다: {0}'
     invalidCronAtomFormatExceptionMessage                             = '잘못된 크론 원자 형식이 발견되었습니다: {0}'
     invalidHostnameSuppliedExceptionMessage                           = '제공된 호스트 이름이 잘못되었습니다: {0}'

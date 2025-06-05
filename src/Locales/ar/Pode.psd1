@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'تم العثور على اسم مستعار غير صالح {0}: {1}'
     invalidAtomCharacterExceptionMessage                              = 'حرف الذرة غير صالح: {0}'
     invalidBase64JwtExceptionMessage                                  = 'تم العثور على قيمة مشفرة بتنسيق Base64 غير صالحة في JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'مخطط عنوان URL لرد الاتصال ''{0}'' غير مدعوم. يرجى استخدام مخطط صالح مثل ''http'' أو ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = '''content-type'' غير صالح في المخطط: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'تم العثور على تنسيق cron غير صالح: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'اسم المضيف المقدم غير صالح: {0}'

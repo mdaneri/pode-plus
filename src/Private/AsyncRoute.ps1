@@ -220,6 +220,9 @@ function Complete-PodeAsyncRouteOperation {
 
             # Resolve the callback URL, method, content type, and headers
             $callbackUrl = (Convert-PodeAsyncRouteCallBackRuntimeExpression -Variable $AsyncProcess['CallbackSettings'].UrlField).Value
+            if (!($callbackUrl -match '^(https?)://[^\s/$.?#].[^\s]*$')) {
+                throw ($PodeLocale.invalidCallbackUrlSchemeExceptionMessage -f $callbackUrl)
+            }
             $method = (Convert-PodeAsyncRouteCallBackRuntimeExpression -Variable $AsyncProcess['CallbackSettings'].Method -DefaultValue 'Post').Value
             $contentType = (Convert-PodeAsyncRouteCallBackRuntimeExpression -Variable $AsyncProcess['CallbackSettings'].ContentType).Value
             $headers = @{}
@@ -267,7 +270,6 @@ function Complete-PodeAsyncRouteOperation {
             for ($i = 0; $i -le 3; $i++) {
                 try {
                     $AsyncProcess['CallbackTentative'] = $AsyncProcess['CallbackTentative'] + 1
-                    write-podehost "callbackUrl=$callbackUrl"
                     $null = Invoke-RestMethod -Uri $callbackUrl -Method $method -Headers $headers -Body $cBody -ContentType $contentType -ErrorAction Stop
                     $AsyncProcess['CallbackInfoState'] = 'Completed'
                     break
@@ -604,9 +606,10 @@ function Convert-PodeAsyncRouteCallBackRuntimeExpression {
     }
     # Check if the variable starts with '$request.body'
     elseif ($Variable.StartsWith('$request.body')) {
+        # If the variable is a body field, it can be in the format '$request.body#/field-name'
         # Match the body data key
         if ($Variable -match '^[^.]*\.[^.]*#/(.*)') {
-            $Value = $WebEvent.data.$($Matches[1])
+            $Value = $WebEvent.Data.$($Matches[1])
             if ($Value) {
                 return @{Key = $Matches[1]; Value = $Value }
             }
@@ -738,7 +741,7 @@ function Get-PodeAsyncRouteSetScriptBlock {
             $id = Invoke-PodeScriptBlock -ScriptBlock  $asyncRouteTask.AsyncRouteTaskIdGenerator -Return
 
             # Make a deepcopy of webEvent
-            $webEventClone = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+            $webEventClone = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
             foreach ($key in $webEvent.Keys) {
                 if (!('OnEnd', 'Route', 'Sse', 'Response', 'Request', 'Lockable' -contains $key)) {

@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Ongeldige {0} alias gevonden: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Ongeldig atoomteken: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Ongeldige Base64-gecodeerde waarde gevonden in JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'Het callback-URL-schema ''{0}'' wordt niet ondersteund. Gebruik een geldig schema zoals ''http'' of ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = 'Ongeldige ''content-type'' gevonden voor schema: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Ongeldig cron-atoomformaat gevonden: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Ongeldige hostnaam opgegeven: {0}'

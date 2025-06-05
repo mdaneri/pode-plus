@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Alias {0} inválido encontrado: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Caractere atômico inválido: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Valor codificado Base64 inválido encontrado no JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'O esquema da URL de callback ''{0}'' não é suportado. Use um esquema válido, como ''http'' ou ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = '''content-type'' inválido encontrado para o esquema: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Formato de átomo cron inválido encontrado: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Nome de host fornecido inválido: {0}'

@@ -137,9 +137,9 @@ Describe 'Remove-PodeRoute' {
                     }
                 }
             }
-            RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+            RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             AsyncRoutes   = @{
-                Items = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                Items = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             }
             Threads       = @{
                 AsyncRoutes = 0

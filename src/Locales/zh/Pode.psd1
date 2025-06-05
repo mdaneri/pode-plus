@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = '找到了无效的 {0} 别名: {1}'
     invalidAtomCharacterExceptionMessage                              = '无效的原子字符: {0}'
     invalidBase64JwtExceptionMessage                                  = '在 JWT 中找到无效的 Base64 编码值'
+    invalidCallbackUrlSchemeExceptionMessage                          = '回调 URL 模式 ''{0}'' 不受支持。请使用有效的模式，如 ''http'' 或 ''https''。'
     invalidContentTypeForSchemaExceptionMessage                       = '架构中发现无效的 ''content-type'': {0}'
     invalidCronAtomFormatExceptionMessage                             = '发现无效的 cron 原子格式: {0}'
     invalidHostnameSuppliedExceptionMessage                           = '提供的主机名无效: {0}'

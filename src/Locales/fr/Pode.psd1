@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Alias {0} non valide trouvé : {1}'
     invalidAtomCharacterExceptionMessage                              = 'Caractère d''atome cron non valide : {0}'
     invalidBase64JwtExceptionMessage                                  = 'Valeur encodée en Base64 non valide trouvée dans le JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'Le schéma d''URL de rappel ''{0}'' n''est pas pris en charge. Veuillez utiliser un schéma valide tel que ''http'' ou ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = '''content-type'' invalide trouvé pour le schéma : {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Format d''atome cron invalide trouvé: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Nom d''hôte fourni invalide: {0}'

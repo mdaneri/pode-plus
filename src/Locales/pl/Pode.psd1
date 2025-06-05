@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Znaleziono nieprawidłowy alias {0}: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Nieprawidłowy znak atomu: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Nieprawidłowa wartość zakodowana w Base64 znaleziona w JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'Schemat URL zwrotnego wywołania ''{0}'' nie jest obsługiwany. Użyj poprawnego schematu, np. ''http'' lub ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = 'Nieprawidłowy ''content-type'' znaleziony w schemacie: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Znaleziono nieprawidłowy format atomu cron: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Podano nieprawidłową nazwę hosta: {0}'

@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Alias {0} non valido trovato: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Carattere cron ''atom'' non valido: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Valore codificato Base64 non valido trovato in JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'Lo schema URL di callback ''{0}'' non è supportato. Utilizzare uno schema valido come ''http'' o ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = '''content-type'' non valido trovato per lo schema: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Formato cron ''atom'' non valido trovato: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Nome host fornito non valido: {0}'

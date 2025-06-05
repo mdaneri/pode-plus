@@ -151,7 +151,7 @@ function New-PodeContext {
 
     $ctx.AsyncRoutes = @{
         Enabled             = $true
-        Processes           = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+        Processes           = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         HouseKeeping        = @{
             TimerInterval    = 30
             RetentionMinutes = 10
@@ -526,7 +526,7 @@ function New-PodeContext {
     $ctx.Server.Endware = @()
 
     # runspace pools
-    $ctx.RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+    $ctx.RunspacePools = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $ctx.RunspacePools['Main'] = $null
     $ctx.RunspacePools['Web'] = $null
     $ctx.RunspacePools['Smtp'] = $null

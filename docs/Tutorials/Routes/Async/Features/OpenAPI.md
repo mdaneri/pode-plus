@@ -1,62 +1,98 @@
+Certainly! Here is your **updated OpenAPI integration documentation** for async routes, reflecting the new unified `Set-PodeAsyncRouteOperation` function. All references to the old functions are removed, and usage now only shows the new merged pattern.
+
+---
 
 # OpenAPI Integration with Async Routes
 
-Async routes defined using the `Set-PodeAsyncRoute` function can seamlessly integrate with OpenAPI documentation. This feature automatically generates detailed documentation, including response types and callback information, enhancing the ease of sharing and maintaining your API specifications.
+Async routes configured via `Set-PodeAsyncRoute` and `Set-PodeAsyncRouteOperation` integrate seamlessly with Pode’s OpenAPI documentation. This enables you to automatically generate accurate API specifications for all async endpoints—whether you are retrieving task status, stopping a task, or querying for task information.
 
 ## Key Features
 
 ### Automatic Documentation Generation
 
-When an async route is configured using `Set-PodeAsyncRoute`, the corresponding OpenAPI documentation is automatically generated. This documentation includes:
-- **Route Details**: Information about the HTTP method, path, and operation summary.
-- **Response Types**: Details of the possible response content types (`application/json`, `application/yaml`, etc.) and their associated schemas.
-- **Callback Details**: If the route includes callbacks, these are also documented in the OpenAPI definition.
+When you configure async routes using `Set-PodeAsyncRouteOperation`, the associated OpenAPI documentation is created automatically. This documentation includes:
+
+* **Route Details**: HTTP method, path, and operation summary for each async operation.
+* **Response Types**: All supported content types (such as `application/json`, `application/yaml`, etc.) with proper schema references.
+* **Callback Details**: If the async route is configured with a callback, it will be included in the OpenAPI definition.
 
 ### Customization Options
 
-You can tailor the generated OpenAPI documentation to fit your specific needs:
-- **OpenApi Schemas**: Customize the schema name for the async route task using the `OATypeName` parameter, or other relevant parameters like `$TaskIdName`, `$QueryRequestName`, and `$QueryParameterName` using `Set-PodeAsyncRouteOASchemaName`.
-- **Route Information**: Further customize the OpenAPI route definition using Pode’s OpenAPI functions, such as `Set-PodeOARouteInfo` and any othe OpenApi functions available for route definition.
+You can fully tailor your OpenAPI documentation:
+
+* **Custom Schemas**: Use `Set-PodeAsyncRouteOASchemaName` to specify schema names (e.g., `OATypeName`, `TaskIdName`, `QueryRequestName`, `QueryParameterName`) for your async task documentation.
+* **Route Metadata**: Add or update operation summaries, descriptions, tags, or other OpenAPI metadata using Pode’s OpenAPI helper functions, such as `Set-PodeOARouteInfo`.
 
 ### Piping for Documentation
 
-To generate OpenAPI documentation for an async route, you must pipe the route definition through `Set-PodeOARouteInfo`, as shown in the example below. This requirement also applies to the following async routes:
-- `Add-PodeAsyncRouteQuery`
-- `Add-PodeAsyncRouteStop`
-- `Add-PodeAsyncRouteGet`
+To ensure the route is included in OpenAPI documentation, pipe your async route through `Set-PodeOARouteInfo`. This requirement applies to any async operation created using `Set-PodeAsyncRouteOperation`, including *Get* (status), *Stop*, and *Query* variants.
 
 ## Example Usage
 
-The following example demonstrates how to define an async route and customize its OpenAPI documentation:
+The following examples demonstrate how to define async routes for different operations and customize their OpenAPI documentation:
 
 ```powershell
 # Set a custom schema name for the async route task
 Set-PodeAsyncRouteOASchemaName -OATypeName 'MyTask'
 
-# Define an async route and customize its OpenAPI information
-Add-PodeRoute -PassThru -Method Post -Path '/asyncExample' -ScriptBlock {
-    return @{ Message = "Async Route" }
-} | Set-PodeAsyncRoute -ResponseContentType 'application/json', 'application/yaml' -PassThru |
-    Set-PodeOARouteInfo -Summary 'My Async Route Task' -Description 'This is a description'
+# Example 1: Async Query Route
+Add-PodeRoute -Method Post -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+    Set-PodeAsyncRouteOperation -Query -ResponseContentType 'application/json', 'application/yaml' -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
+    Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
+
+# Example 2: Async Get (Status) Route
+Add-PodeRoute -Method Get -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+    Set-PodeAsyncRouteOperation -Get -ResponseContentType 'application/json', 'application/yaml' -In Path -PassThru |
+    Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
+
+# Example 3: Async Stop Route
+Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+    Set-PodeAsyncRouteOperation -Stop -ResponseContentType 'application/json', 'application/yaml' -In Query -PassThru |
+    Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
 ```
 
 ### Resulting OpenAPI Documentation
 
-The generated OpenAPI documentation might look as follows:
+The generated OpenAPI documentation for an async route might look like this:
 
 ```yaml
-/asyncExample:
+/tasks:
   post:
-    summary: My Async Route Task
-    description: This is a description
+    summary: Query Async Route Task Info
     responses:
       200:
         description: Successful operation
         content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyTask'
           application/yaml:
             schema:
               $ref: '#/components/schemas/MyTask'
+
+/task:
+  get:
+    summary: Get Async Route Task Info
+    responses:
+      200:
+        description: Successful operation
+        content:
           application/json:
+            schema:
+              $ref: '#/components/schemas/MyTask'
+          application/yaml:
+            schema:
+              $ref: '#/components/schemas/MyTask'
+  delete:
+    summary: Stop Async Route Task
+    responses:
+      200:
+        description: Successful operation
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyTask'
+          application/yaml:
             schema:
               $ref: '#/components/schemas/MyTask'
 
@@ -91,4 +127,7 @@ components:
               description: The inner value returned by the operation.
 ```
 
-**Note**: The `MyTask` schema definition provided above is a partial example. You can expand this definition with additional properties according to your specific use case.
+> **Note:**
+> The `MyTask` schema above is just a sample. You can extend or customize it further using `Set-PodeAsyncRouteOASchemaName` or by providing custom schema properties as needed.
+
+ 

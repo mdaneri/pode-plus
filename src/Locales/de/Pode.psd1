@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Ungültiges {0}-Alias gefunden: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Ungültiges Atomzeichen: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Ungültiger Base64-codierter Wert in JWT gefunden'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'Das Callback-URL-Schema ''{0}'' wird nicht unterstützt. Bitte verwenden Sie ein gültiges Schema wie ''http'' oder ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = 'Ungültiger ''content-type'' im Schema gefunden: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Ungültiges Cron-Atom-Format gefunden: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Der angegebene Hostname ist ungültig: {0}'

@@ -866,7 +866,7 @@ function Set-PodeOARequest {
             }
         }
 
-        if ($PassThru) { 
+        if ($PassThru) {
             return $Route
         }
 
@@ -1743,6 +1743,8 @@ function Set-PodeOARouteInfo {
                 else {
                     Invoke-Command -ScriptBlock $r.OpenApi.Postponed
                 }
+                $r.OpenApi.Postponed = $null
+                $r.OpenApi.PostponedArgumentList = $null
             }
         }
 

@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Se encontró un alias {0} no válido: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Carácter de átomo cron no válido: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Valor Base64 no válido encontrado en JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'El esquema de URL de callback ''{0}'' no es compatible. Utilice un esquema válido, como ''http'' o ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = '''content-type'' inválido encontrado para el esquema: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Formato de átomo cron inválido encontrado: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Nombre de host no válido proporcionado: {0}'

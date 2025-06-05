@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = '無効な{0}エイリアスが見つかりました: {1}'
     invalidAtomCharacterExceptionMessage                              = '無効なアトム文字: {0}'
     invalidBase64JwtExceptionMessage                                  = 'JWTに無効なBase64エンコード値が見つかりました。'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'コールバックURLスキーム ''{0}'' はサポートされていません。有効なスキーム（''http'' または ''https''）を使用してください。'
     invalidContentTypeForSchemaExceptionMessage                       = 'スキーマの ''content-type'' が無効です: {0}'
     invalidCronAtomFormatExceptionMessage                             = '無効な cron アトム形式が見つかりました: {0}'
     invalidHostnameSuppliedExceptionMessage                           = '無効なホスト名が指定されました: {0}'

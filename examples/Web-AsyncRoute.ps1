@@ -111,7 +111,8 @@ catch { throw }
 
 Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
 
-    Add-PodeEndpoint -Address localhost -Port $Port -Protocol Http -DualMode
+    Add-PodeEndpoint -Address localhost -Port $Port -Protocol Http -DualMode -name 'http'
+    Add-PodeEndpoint -Address localhost -Port 4043 -Protocol Https -DualMode -SelfSigned -Name 'https'
     New-PodeLoggingMethod -name 'async' -File  -Path "$ScriptPath/logs" | Enable-PodeErrorLogging
 
     # request logging
@@ -375,19 +376,26 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
         ) | Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content  @{ 'application/json' = New-PodeOANumberProperty -Name 'Result' -Format Double -Description 'Result' -Required -Object }
 
 
-    #Add-PodeAsyncRouteGet -Path '/task' -ResponseContentType  'application/json', 'application/yaml'  -In Path -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'  -PassThru | Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
 
-     Add-PodeRoute -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru | Set-PodeAsyncRouteOperation -Operation Get -ResponseContentType  'application/json', 'application/yaml'  -In Path -PassThru | Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
+    Add-PodeRoute -Method Get -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+        Set-PodeAsyncRouteOperation -Get -ResponseContentType  'application/json', 'application/yaml'  -In Path -PassThru |
+        Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
 
-       Add-PodeAsyncRouteStop -Path '/task' -ResponseContentType 'application/json', 'application/yaml' -In Query -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -OADefinitionTag 'Default', 'v3.1' -PassThru | Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
-     #Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru | Set-PodeAsyncRouteOperation -Operation Stop -ResponseContentType  'application/json', 'application/yaml' -In Path -PassThru | Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
-    Add-PodeAsyncRouteQuery -path '/tasks'  -ResponseContentType 'application/json', 'application/yaml'   -Payload  Body -QueryContentType 'application/json', 'application/yaml'  -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'  -PassThru | Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
+
+    Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+        Set-PodeAsyncRouteOperation -Stop -ResponseContentType  'application/json', 'application/yaml' -In Query -PassThru |
+        Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
+ 
+    Add-PodeRoute -Method Post -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
+
+
 
     Add-PodeRoute -PassThru -Method Post -path '/receive/callback' -ScriptBlock {
         write-podehost 'Callback received'
         write-podehost $WebEvent.Data -Explode
     }
-
 
     Add-PodeRoute  -Method 'Get' -Path '/hello' -ScriptBlock {
         Write-PodeJsonResponse -Value @{'message' = 'Hello!' } -StatusCode 200

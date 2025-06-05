@@ -102,6 +102,7 @@
     invalidAliasFoundExceptionMessage                                 = 'Invalid {0} alias found: {1}'
     invalidAtomCharacterExceptionMessage                              = 'Invalid atom character: {0}'
     invalidBase64JwtExceptionMessage                                  = 'Invalid Base64 encoded value found in JWT'
+    invalidCallbackUrlSchemeExceptionMessage                          = 'The callback URL scheme ''{0}'' is not supported. Please use a valid scheme, such as ''http'' or ''https''.'
     invalidContentTypeForSchemaExceptionMessage                       = 'Invalid ''content-type'' found for schema: {0}'
     invalidCronAtomFormatExceptionMessage                             = 'Invalid cron atom format found: {0}'
     invalidHostnameSuppliedExceptionMessage                           = 'Invalid hostname supplied: {0}'
