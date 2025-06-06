@@ -21,33 +21,33 @@ param()
 	`netstandard2.0`, `net6.0`, etc., inside the `Libs` folder.
 #>
 function Import-PodeAssembly {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$SrcPath
-    )
+  param (
+    [Parameter(Mandatory = $true)]
+    [string]$SrcPath
+  )
 
-    # Check if Pode is already loaded
-    if (!([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'Pode' })) {
-        # Fetch the .NET runtime version
-        $version = [System.Environment]::Version.Major
-        $libsPath = Join-Path -Path $SrcPath -ChildPath 'Libs'
+  # Check if Pode is already loaded
+  if (!([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'Pode' })) {
+    # Fetch the .NET runtime version
+    $version = [System.Environment]::Version.Major
+    $libsPath = Join-Path -Path $SrcPath -ChildPath 'Libs'
 
-        # Filter .NET DLL folders based on version and get the latest one
-        $netFolder = if (![string]::IsNullOrWhiteSpace($version)) {
-            Get-ChildItem -Path $libsPath -Directory -Force |
-                Where-Object { $_.Name -imatch "net[1-$($version)]" } |
-                Sort-Object -Property Name -Descending |
-                Select-Object -First 1 -ExpandProperty FullName
-        }
-
-        # Use netstandard2.0 if no folder found
-        if ([string]::IsNullOrWhiteSpace($netFolder)) {
-            $netFolder = Join-Path -Path $libsPath -ChildPath 'netstandard2.0'
-        }
-
-        # Append Pode.dll and mount
-        Add-Type -LiteralPath (Join-Path -Path $netFolder -ChildPath 'Pode.dll') -ErrorAction Stop
+    # Filter .NET DLL folders based on version and get the latest one
+    $netFolder = if (![string]::IsNullOrWhiteSpace($version)) {
+      Get-ChildItem -Path $libsPath -Directory -Force |
+        Where-Object { $_.Name -imatch "net[1-$($version)]" } |
+        Sort-Object -Property Name -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
     }
+
+    # Use netstandard2.0 if no folder found
+    if ([string]::IsNullOrWhiteSpace($netFolder)) {
+      $netFolder = Join-Path -Path $libsPath -ChildPath 'netstandard2.0'
+    }
+
+    # Append Pode.dll and mount
+    Add-Type -LiteralPath (Join-Path -Path $netFolder -ChildPath 'Pode.dll') -ErrorAction Stop
+  }
 }
 
 
@@ -81,11 +81,11 @@ function Import-PodeAssembly {
   This function ensures that strings with different line-ending formats are treated as equal if their content is otherwise identical.
 #>
 function Compare-StringRnLn {
-    param (
-        [string]$InputString1,
-        [string]$InputString2
-    )
-    return ($InputString1.Trim() -replace "`r`n|`n|`r", "`n") -eq ($InputString2.Trim() -replace "`r`n|`n|`r", "`n")
+  param (
+    [string]$InputString1,
+    [string]$InputString2
+  )
+  return ($InputString1.Trim() -replace "`r`n|`n|`r", "`n") -eq ($InputString2.Trim() -replace "`r`n|`n|`r", "`n")
 }
 
 <#
@@ -117,57 +117,57 @@ function Compare-StringRnLn {
   This function preserves key order and supports recursive conversion of nested objects and collections.
 #>
 function Convert-PsCustomObjectToOrderedHashtable {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [PSCustomObject]$InputObject
-    )
-    begin {
-        # Define a recursive function within the process block
-        function Convert-ObjectRecursively {
-            param (
-                [Parameter(Mandatory = $true)]
-                [System.Object]
-                $InputObject
-            )
+  [CmdletBinding()]
+  param (
+    [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+    [PSCustomObject]$InputObject
+  )
+  begin {
+    # Define a recursive function within the process block
+    function Convert-ObjectRecursively {
+      param (
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $InputObject
+      )
 
-            # Initialize an ordered dictionary
-            $orderedHashtable = [ordered]@{}
+      # Initialize an ordered dictionary
+      $orderedHashtable = [ordered]@{}
 
-            # Loop through each property of the PSCustomObject
-            foreach ($property in $InputObject.PSObject.Properties) {
-                # Check if the property value is a PSCustomObject
-                if ($property.Value -is [PSCustomObject]) {
-                    # Recursively convert the nested PSCustomObject
-                    $orderedHashtable[$property.Name] = Convert-ObjectRecursively -InputObject $property.Value
-                }
-                elseif ($property.Value -is [System.Collections.IEnumerable] -and -not ($property.Value -is [string])) {
-                    # If the value is a collection, check each element
-                    $convertedCollection = @()
-                    foreach ($item in $property.Value) {
-                        if ($item -is [PSCustomObject]) {
-                            $convertedCollection += Convert-ObjectRecursively -InputObject $item
-                        }
-                        else {
-                            $convertedCollection += $item
-                        }
-                    }
-                    $orderedHashtable[$property.Name] = $convertedCollection
-                }
-                else {
-                    # Add the property name and value to the ordered hashtable
-                    $orderedHashtable[$property.Name] = $property.Value
-                }
-            }
-
-            # Return the resulting ordered hashtable
-            return $orderedHashtable
+      # Loop through each property of the PSCustomObject
+      foreach ($property in $InputObject.PSObject.Properties) {
+        # Check if the property value is a PSCustomObject
+        if ($property.Value -is [PSCustomObject]) {
+          # Recursively convert the nested PSCustomObject
+          $orderedHashtable[$property.Name] = Convert-ObjectRecursively -InputObject $property.Value
         }
+        elseif ($property.Value -is [System.Collections.IEnumerable] -and -not ($property.Value -is [string])) {
+          # If the value is a collection, check each element
+          $convertedCollection = @()
+          foreach ($item in $property.Value) {
+            if ($item -is [PSCustomObject]) {
+              $convertedCollection += Convert-ObjectRecursively -InputObject $item
+            }
+            else {
+              $convertedCollection += $item
+            }
+          }
+          $orderedHashtable[$property.Name] = $convertedCollection
+        }
+        else {
+          # Add the property name and value to the ordered hashtable
+          $orderedHashtable[$property.Name] = $property.Value
+        }
+      }
+
+      # Return the resulting ordered hashtable
+      return $orderedHashtable
     }
-    process {
-        # Call the recursive helper function for each input object
-        Convert-ObjectRecursively -InputObject $InputObject
-    }
+  }
+  process {
+    # Call the recursive helper function for each input object
+    Convert-ObjectRecursively -InputObject $InputObject
+  }
 }
 
 <#
@@ -202,69 +202,69 @@ function Convert-PsCustomObjectToOrderedHashtable {
 
 #>
 function Compare-Hashtable {
-    param (
-        [object]$Hashtable1,
-        [object]$Hashtable2
-    )
+  param (
+    [object]$Hashtable1,
+    [object]$Hashtable2
+  )
 
-    # Function to compare two hashtable values
-    function Compare-Value($value1, $value2) {
-        # Check if both values are hashtables
-        if ((($value1 -is [hashtable] -or $value1 -is [System.Collections.Specialized.OrderedDictionary]) -and
+  # Function to compare two hashtable values
+  function Compare-Value($value1, $value2) {
+    # Check if both values are hashtables
+    if ((($value1 -is [hashtable] -or $value1 -is [System.Collections.Specialized.OrderedDictionary]) -and
     ($value2 -is [hashtable] -or $value2 -is [System.Collections.Specialized.OrderedDictionary]))) {
-            return Compare-Hashtable -Hashtable1 $value1 -Hashtable2 $value2
-        }
-        # Check if both values are arrays
-        elseif (($value1 -is [Object[]]) -and ($value2 -is [Object[]])) {
-            if ($value1.Count -ne $value2.Count) {
-                return $false
-            }
-            for ($i = 0; $i -lt $value1.Count; $i++) {
-                $found = $false
-                for ($j = 0; $j -lt $value2.Count; $j++) {
-                    if ( Compare-Value $value1[$i] $value2[$j]) {
-                        $found = $true
-                    }
-                }
-                if ($found -eq $false) {
-                    return $false
-                }
-            }
-            return $true
-        }
-        else {
-            if ($value1 -is [string] -and $value2 -is [string]) {
-                return  Compare-StringRnLn $value1 $value2
-            }
-            # Check if the values are equal
-            return $value1 -eq $value2
-        }
+      return Compare-Hashtable -Hashtable1 $value1 -Hashtable2 $value2
     }
-
-    $keys1 = $Hashtable1.Keys
-    $keys2 = $Hashtable2.Keys
-
-    # Check if both hashtables have the same keys
-    if ($keys1.Count -ne $keys2.Count) {
+    # Check if both values are arrays
+    elseif (($value1 -is [Object[]]) -and ($value2 -is [Object[]])) {
+      if ($value1.Count -ne $value2.Count) {
         return $false
+      }
+      for ($i = 0; $i -lt $value1.Count; $i++) {
+        $found = $false
+        for ($j = 0; $j -lt $value2.Count; $j++) {
+          if ( Compare-Value $value1[$i] $value2[$j]) {
+            $found = $true
+          }
+        }
+        if ($found -eq $false) {
+          return $false
+        }
+      }
+      return $true
+    }
+    else {
+      if ($value1 -is [string] -and $value2 -is [string]) {
+        return  Compare-StringRnLn $value1 $value2
+      }
+      # Check if the values are equal
+      return $value1 -eq $value2
+    }
+  }
+
+  $keys1 = $Hashtable1.Keys
+  $keys2 = $Hashtable2.Keys
+
+  # Check if both hashtables have the same keys
+  if ($keys1.Count -ne $keys2.Count) {
+    return $false
+  }
+
+  foreach ($key in $keys1) {
+    if (! ($Hashtable2.Keys -contains $key)) {
+      return $false
     }
 
-    foreach ($key in $keys1) {
-        if (! ($Hashtable2.Keys -contains $key)) {
-            return $false
-        }
-
-        if ($Hashtable2[$key] -is [hashtable] -or $Hashtable2[$key] -is [System.Collections.Specialized.OrderedDictionary]) {
-            if (! (Compare-Hashtable -Hashtable1 $Hashtable1[$key] -Hashtable2 $Hashtable2[$key])) {
-                return $false
-            }
-        }
-        elseif (!(Compare-Value $Hashtable1[$key] $Hashtable2[$key])) {
-            return $false
-        }
+    if ($Hashtable2[$key] -is [hashtable] -or $Hashtable2[$key] -is [System.Collections.Specialized.OrderedDictionary]) {
+      if (! (Compare-Hashtable -Hashtable1 $Hashtable1[$key] -Hashtable2 $Hashtable2[$key])) {
+        return $false
+      }
     }
+    elseif (!(Compare-Value $Hashtable1[$key] $Hashtable2[$key])) {
+      return $false
+    }
+  }
 
-    return $true
+  return $true
 }
 
 
@@ -306,58 +306,110 @@ function Compare-Hashtable {
   This function ensures that the web server is fully responding, not just that the port is open.
 #>
 function Wait-ForWebServer {
-    [CmdletBinding(DefaultParameterSetName = 'localhost')]
-    [OutputType([bool])]
-    param (
-        [Parameter(Mandatory = $true, ParameterSetName = 'Uri' )]
-        [string]$Uri,
+  [CmdletBinding(DefaultParameterSetName = 'localhost')]
+  [OutputType([bool])]
+  param (
+    [Parameter(Mandatory = $true, ParameterSetName = 'Uri' )]
+    [string]$Uri,
 
-        [Parameter(ParameterSetName = 'localhost' )]
-        [ValidateSet('http', 'https')]
-        [string]$Protocol = 'http',
+    [Parameter(ParameterSetName = 'localhost' )]
+    [ValidateSet('http', 'https')]
+    [string]$Protocol = 'http',
 
-        [Parameter(ParameterSetName = 'localhost' )]
-        [int]$Port,
+    [Parameter(ParameterSetName = 'localhost' )]
+    [int]$Port,
 
-        [Parameter()]
-        [int]$Timeout = 60,
+    [Parameter()]
+    [int]$Timeout = 60,
 
-        [Parameter()]
-        [int]$Interval = 2
-    )
+    [Parameter()]
+    [int]$Interval = 2
+  )
 
-    # Determine the final URI: If no URI is provided, use "http://localhost:$Port"
-    if (-not $Uri) {
-        if ($Port -gt 0) {
-            $Uri = "$($Protocol)://localhost:$Port"
-        }
-        else {
-            $Uri = "$($Protocol)://localhost"
-        }
+  # Determine the final URI: If no URI is provided, use "http://localhost:$Port"
+  if (-not $Uri) {
+    if ($Port -gt 0) {
+      $Uri = "$($Protocol)://localhost:$Port"
+    }
+    else {
+      $Uri = "$($Protocol)://localhost"
+    }
+  }
+
+  $MaxRetries = [math]::Ceiling($Timeout / $Interval)
+  $RetryCount = 0
+
+  while ($RetryCount -lt $MaxRetries) {
+    try {
+      # Send a request but ignore status codes (any response means the server is online)
+      $null = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3 -SkipCertificateCheck
+      Write-Host "Webserver is online at $Uri"
+      return $true
+    }
+    catch {
+      if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 404) {
+        return $true
+      }
+      else {
+        Write-Host "Waiting for webserver to come online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
+      }
     }
 
-    $MaxRetries = [math]::Ceiling($Timeout / $Interval)
-    $RetryCount = 0
+    Start-Sleep -Seconds $Interval
+    $RetryCount++
+  }
 
-    while ($RetryCount -lt $MaxRetries) {
-        try {
-            # Send a request but ignore status codes (any response means the server is online)
-            $null = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3 -SkipCertificateCheck
-            Write-Host "Webserver is online at $Uri"
-            return $true
-        }
-        catch {
-            if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 404) {
-                return $true
-            }
-            else {
-                Write-Host "Waiting for webserver to come online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
-            }
-        }
+  return $false
+}
 
-        Start-Sleep -Seconds $Interval
-        $RetryCount++
+
+function Get-SseEvent {
+  param(
+    [string]$BaseUrl,
+    [int] $TimeoutSeconds = 150
+  )
+  # 1. One client, shared cookies
+  $handler = [System.Net.Http.HttpClientHandler]::new()
+  $handler.UseCookies = $true
+  $handler.CookieContainer = [System.Net.CookieContainer]::new()
+  $client = [System.Net.Http.HttpClient]::new($handler)
+  $client.Timeout = [timespan]::FromMinutes(10)      # infinite-ish
+
+  # 2. Discover stream URL  (GET /sse returns  { Sse = @{ Url = '/sse_events' } })
+  $meta = $client.GetStringAsync("$BaseUrl/sse").Result | ConvertFrom-Json
+  $sseUri = $meta.Sse.Url
+  if ([System.Uri]::IsWellFormedUriString( $meta.Sse.Url, 'Absolute')) {
+    $sseUri = $meta.Sse.Url
+  }
+  else {
+    # Ensure the base ends with a slash, then combine
+    $base = if ($BaseUrl.EndsWith('/')) { $BaseUrl } else { "$BaseUrl/" }
+    $sseUri = [System.Uri]::new($base + $meta.Sse.Url.TrimStart('/'))
+  }
+
+
+  # 3. Open the stream (HTTP/1.1 avoids rare HTTP/2 flush issues)
+  $req = [System.Net.Http.HttpRequestMessage]::new('GET', $sseUri)
+  $req.Version = [Version]::new(1, 1)
+  $req.VersionPolicy = [System.Net.Http.HttpVersionPolicy]::RequestVersionExact
+  $req.Headers.Accept.Add([System.Net.Http.Headers.MediaTypeWithQualityHeaderValue]::new('text/event-stream'))
+  $resp = $client.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).Result
+  $reader = [System.IO.StreamReader]::new($resp.Content.ReadAsStreamAsync().Result)
+
+  # 4. Parse frames (default = "message")
+  $events = @()
+  while ($true) {
+    $line = $reader.ReadLine(); if ($null -eq $line) { break }
+    if ($line -eq '') {
+      if ($evtData) {
+        $events += [pscustomobject]@{Event = $evtName; Data = $evtData }
+        $evtName = 'message'; $evtData = ''
+      }
+      continue
     }
-
-    return $false
+    if ($line.StartsWith('event:')) { $evtName = $line.Substring(6).Trim() }
+    elseif ($line.StartsWith('data:')) { $evtData += (($evtData)? "`n":'') + $line.Substring(5).Trim() }
+  }
+  
+  return $events
 }

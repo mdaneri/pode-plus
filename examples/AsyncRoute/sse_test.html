@@ -22,7 +22,9 @@
             return true;
         }
         // Fetch the EventSource URL
-        fetch('http://localhost:8081/sse')
+       const baseUrl = `${window.location.protocol}//${window.location.host}`;
+ 
+        fetch(`${baseUrl}/sse`)
             .then(response => response.json())
             .then(data => {
                 // Log the full data received from the RESTful call
@@ -158,6 +160,13 @@
                     `;
                 };
 
+                sse.onerror = function(event) {
+                    console.error("SSE error occurred:", event);
+                    outputDiv.innerHTML += `
+                    <p style="color:red;"><strong>Error:</strong> SSE connection failed or interrupted.</p>
+                    <hr>
+                    `;
+                };
 
 
                 sse.addEventListener('pode.error', (e) => {

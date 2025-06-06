@@ -2,6 +2,7 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseUsingScopeModifierInNewRunspaces', '')]
 param()
 
+
 Describe 'ASYNC REST API Requests' {
 
     BeforeAll {
@@ -40,6 +41,7 @@ Describe 'ASYNC REST API Requests' {
             $response.message | Should -Be 'Hello!'
         }
     }
+
 
     Describe 'Create Async Route Task on behalf of Mindy' {
 
@@ -175,7 +177,7 @@ Describe 'ASYNC REST API Requests' {
             $response.Cancellable | Should -Be $true
         }
 
-         It 'Create Async Route Task /auth/asyncUsingCallback with JSON body and capture callback' {
+        It 'Create Async Route Task /auth/asyncUsingCallback with JSON body and capture callback' {
             $callbackPort = ([int]$Port) + 1
             $callbackUrl = "http://localhost:$callbackPort/receive/callback"
 
@@ -378,6 +380,26 @@ Describe 'ASYNC REST API Requests' {
             $response.state.where({ $_ -eq 'Aborted' }).count | Should -Be 1
         }
 
+    }
+
+    
+    Describe 'Pode SSE endpoint' {
+        It 'emits the expected sequence of events' {
+            $events = Get-SseEvent -BaseUrl "http://localhost:$($Port)" -TimeoutSeconds 10
+
+            # Quick sanity checks – amend / add assertions as needed
+            $events.Where{ $_.event -eq 'pode.open' }.Count |
+                Should -Be 1
+
+            #    $events.Where{ $_.event -eq 'pode.progress' }.Count |
+            #      Should -BeGreaterOrEqual 1
+
+            $events[0].event |
+                Should -Be 'pode.open'
+
+            $events[-1].event |
+                Should -BeIn @('pode.close', 'pode.taskCompleted')
+        }
     }
 
 }
