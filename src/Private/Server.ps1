@@ -46,6 +46,9 @@ function Start-PodeInternalServer {
         # run start event hooks
         Invoke-PodeEvent -Type Starting
 
+        # Indicating that the Watchdog client is starting
+        Set-PodeWatchdogHearthbeatStatus -Status 'Starting'
+
         # setup temp drives for internal dirs
         Add-PodePSInbuiltDrive
 
@@ -68,6 +71,7 @@ function Start-PodeInternalServer {
         }
 
         $_script = Convert-PodeScopedVariables -ScriptBlock $_script -Exclude Session, Using
+
         $null = Invoke-PodeScriptBlock -ScriptBlock $_script -NoNewClosure -Splat
 
         #Validate OpenAPI definitions
@@ -195,6 +199,12 @@ function Start-PodeInternalServer {
         # run running event hooks
         Invoke-PodeEvent -Type Running
 
+        # Displays startup information for the Pode Watchdog service.
+        Write-PodeWatchdogStartupMessage
+
+        # Marking the Watchdog client as 'Running' now that the process is stable
+        Set-PodeWatchdogHearthbeatStatus -Status 'Running'
+
 
         # Start Service Monitor
         Start-PodeServiceHeartbeat
@@ -231,13 +241,21 @@ function Restart-PodeInternalServer {
         # Restarting server...
         Show-PodeConsoleInfo
 
+        # Setting the Watchdog status to 'Restarting' as part of the process recovery
+        Set-PodeWatchdogHearthbeatStatus -Status 'Restarting'
+
         # run restarting event hooks
         Invoke-PodeEvent -Type Restarting
 
         # cancel the session token
         Close-PodeCancellationTokenRequest -Type Cancellation, Terminate
 
+        # stop the watchdog if it's running
+        Write-Verbose 'Stopping watchdog'
+        Stop-PodeWatchdog
+
         # close all current runspaces
+        Write-Verbose 'Closing runspaces'
         Close-PodeRunspace -ClosePool
 
         # remove all of the pode temp drives
@@ -645,4 +663,72 @@ function Disable-PodeServerInternal {
 
 function Test-PodeServerIsEnabled {
     return !(Test-PodeLimitRateRule -Name $PodeContext.Server.AllowedActions.DisableSettings.LimitRuleName)
+}
+
+<#
+.SYNOPSIS
+    Closes and cleans up all resources associated with the internal Pode server context.
+
+.DESCRIPTION
+    This function performs a full cleanup of the internal Pode server state. It cancels running tokens, stops background monitoring processes,
+    closes active runspaces, disposes of mutexes and semaphores, and removes internal PowerShell drives. This function is meant for internal use
+    within the Pode server lifecycle and should be called when the server is shutting down or restarting.
+
+.PARAMETER None
+    This internal function does not take any parameters.
+
+.OUTPUTS
+    None
+
+.EXAMPLE
+    Close-PodeServerInternal
+
+.NOTES
+    This is an internal Pode function and is subject to change.
+#>
+function Close-PodeServerInternal {
+    # PodeContext doesn't exist return
+    if ($null -eq $PodeContext) { return }
+    try {
+        # ensure the token is cancelled
+        Write-Verbose 'Cancelling main cancellation token'
+        Close-PodeCancellationTokenRequest -Type Cancellation, Terminate
+
+        # stop the watchdog if it's running
+        Write-Verbose 'Stopping watchdog'
+        Stop-PodeWatchdog
+
+        # stop all current runspaces
+        Write-Verbose 'Closing runspaces'
+        Close-PodeRunspace -ClosePool
+
+        # stop the file monitor if it's running
+        Write-Verbose 'Stopping file monitor'
+        Stop-PodeFileMonitor
+
+        try {
+            # remove all the cancellation tokens
+            Write-Verbose 'Disposing cancellation tokens'
+            Close-PodeCancellationToken #-Type Cancellation, Terminate, Restart, Suspend, Resume, Start
+
+            # dispose mutex/semaphores
+            Write-Verbose 'Diposing mutex and semaphores'
+            Clear-PodeMutexes
+            Clear-PodeSemaphores
+        }
+        catch {
+            $_ | Out-Default
+        }
+
+        # remove all of the pode temp drives
+        Write-Verbose 'Removing internal PSDrives'
+        Remove-PodePSDrive
+    }
+    finally {
+        if ($null -ne $PodeContext) {
+            # Remove any tokens
+            $PodeContext.Tokens = $null
+        }
+    }
+
 }
