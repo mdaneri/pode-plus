@@ -8,18 +8,7 @@ Describe 'OpenAPI integration tests' {
 
         $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
         . "$helperPath/TestHelper.ps1"
-
-        $mindyCommonHeaders = @{
-            'accept'        = 'application/json'
-            'X-API-KEY'     = 'test2-api-key'
-            'Authorization' = 'Basic bWluZHk6cGlja2xl'
-        }
-
-        $mortyCommonHeaders = @{
-            'accept'        = 'application/json'
-            'X-API-KEY'     = 'test-api-key'
-            'Authorization' = 'Basic bW9ydHk6cGlja2xl'
-        }
+        
         $PortV3 = 8080
         $PortV3_1 = 8081
         $scriptPath = "$($PSScriptRoot)\..\..\examples\OpenApi-TuttiFrutti.ps1"
