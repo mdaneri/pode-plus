@@ -153,7 +153,7 @@ function New-PodeContext {
         Enabled             = $true
         Processes           = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         HouseKeeping        = @{
-            TimerInterval    = 30
+            TimerInterval    = 20
             RetentionMinutes = 10
         }
         UserFieldIdentifier = 'Id'

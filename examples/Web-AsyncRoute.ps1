@@ -112,7 +112,6 @@ catch { throw }
 Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
 
     Add-PodeEndpoint -Address localhost -Port $Port -Protocol Http -DualMode -name 'http'
-    Add-PodeEndpoint -Address localhost -Port 4043 -Protocol Https -DualMode -SelfSigned -Name 'https'
     New-PodeLoggingMethod -name 'async' -File  -Path "$ScriptPath/logs" | Enable-PodeErrorLogging
 
     # request logging
@@ -434,5 +433,5 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
     } | Set-PodeAsyncRoute -ResponseContentType 'application/json'  -MaxRunspaces 4  -PassThru |
         Add-PodeAsyncRouteSse -SseGroup 'Test events' -SendResult
 
-    Add-PodeStaticRoute -Path '/' -File "./AsyncRoute"
+    Add-PodeStaticRoute -Path '/' -File './AsyncRoute'
 }

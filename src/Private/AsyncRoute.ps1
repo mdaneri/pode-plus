@@ -283,7 +283,6 @@ function Complete-PodeAsyncRouteOperation {
                     Start-Sleep -Seconds 2
                 }
             }
-            write-podehost "s"
         }
     }
     catch {
@@ -322,7 +321,6 @@ function Start-PodeAsyncRoutesHousekeeper {
         if ($PodeContext.AsyncRoutes.Processes.Count -eq 0) {
             return
         }
-
         $now = [datetime]::UtcNow
         $RetentionMinutes = $PodeContext.AsyncRoutes.HouseKeeping.RetentionMinutes
         # Iterate over the keys of the async route results
@@ -335,10 +333,7 @@ function Start-PodeAsyncRoutesHousekeeper {
                     try {
                         # Remove the task if it is past the removal time
                         if ($result['CompletedTime'] -and $result['CompletedTime'].AddMinutes($RetentionMinutes) -le $now) {
-                            $result['Runspace'].Pipeline.Dispose()
-                            $v = 0
-                            $removed = $PodeContext.AsyncRoutes.Processes.TryRemove($key, [ref]$v)
-                            Write-Verbose "Key $key Removed: $removed"
+                            Close-PodeAsyncRouteInternal -Process  $PodeContext.AsyncRoutes.Processes[$key]
                         }
                     }
                     catch {
@@ -1540,4 +1535,29 @@ function Add-PodeAsyncRouteComponentSchema {
                         New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name $Name -DefinitionTag $DefinitionTag
     }
 
+}
+
+
+function Close-PodeAsyncRouteInternal {
+    param(
+        [Parameter()]
+        [hashtable]
+        $Process,
+
+        [switch]
+        $Keep
+    )
+
+    # return if no process
+    if ($null -eq $Process) {
+        return
+    }
+
+    # close the runspace
+    Close-PodeDisposable -Disposable $Process.Runspace.Pipeline
+
+    # remove the process
+    if (!$Keep) {
+        $null = $PodeContext.AsyncRoutes.Processes.TryRemove($Process.Id, [ref]$null)
+    }
 }

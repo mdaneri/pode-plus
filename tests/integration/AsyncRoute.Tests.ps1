@@ -94,26 +94,28 @@ Describe 'ASYNC REST API Requests' {
                 $response.AsyncRouteId | Should -Be '[Put]/auth/asyncUsingCallback'
                 $response.State | Should -BeIn @('NotStarted', 'Running')
                 $response.Cancellable | Should -Be $true
+                try {
+                    $callbackContext = $listener.GetContext()    # returns as soon as callback arrives
+                    # Validate callback received
+                    $callbackContext | Should -Not -BeNullOrEmpty
 
-                $callbackContext = $listener.GetContext()    # returns as soon as callback arrives
-                # Validate callback received
-                $callbackContext | Should -Not -BeNullOrEmpty
-
-                $callbackContext.Request.HttpMethod | Should -Be 'POST'
-                # Read callback body
-                $callbackRequest = $callbackContext.Request
-                $callbackBody = [IO.StreamReader]::new($callbackRequest.InputStream).ReadToEnd()
-                $callbackBody | Should -Not -BeNullOrEmpty
-
-                # Respond with 200 OK
-                $callbackContext.Response.StatusCode = 200
-                $callbackContext.Response.Close()
-
+                    $callbackContext.Request.HttpMethod | Should -Be 'POST'
+                    # Read callback body
+                    $callbackRequest = $callbackContext.Request
+                    $callbackBody = [IO.StreamReader]::new($callbackRequest.InputStream).ReadToEnd()
+                    $callbackBody | Should -Not -BeNullOrEmpty
+                }
+                finally {
+                    # Respond with 200 OK
+                    $callbackContext.Response.StatusCode = 200
+                    $callbackContext.Response.Close()
+                }
                 # Assert callback body (you can adjust this depending on your callback content)
                 $callbackBody | Should -Not -BeNullOrEmpty
                 $callbackBody | Should  -be '{"Url":"http://localhost:8080/auth/asyncUsingCallback","Method":"put","EventName":"_auth_asyncUsingCallback_Callback","State":"Completed","Result":{"InnerValue":"coming from using"}}'
             }
             finally {
+
                 # Ensure listener is stopped
                 $listener.Stop()
                 $listener.Close()
@@ -203,21 +205,22 @@ Describe 'ASYNC REST API Requests' {
                 $response.AsyncRouteId | Should -Be '[Put]/auth/asyncUsingCallback'
                 $response.State | Should -BeIn @('NotStarted', 'Running')
                 $response.Cancellable | Should -Be $true
+                try {
+                    $callbackContext = $listener.GetContext()    # returns as soon as callback arrives
+                    # Validate callback received
+                    $callbackContext | Should -Not -BeNullOrEmpty
 
-                $callbackContext = $listener.GetContext()    # returns as soon as callback arrives
-                # Validate callback received
-                $callbackContext | Should -Not -BeNullOrEmpty
-
-                $callbackContext.Request.HttpMethod | Should -Be 'POST'
-                # Read callback body
-                $callbackRequest = $callbackContext.Request
-                $callbackBody = [IO.StreamReader]::new($callbackRequest.InputStream).ReadToEnd()
-                $callbackBody | Should -Not -BeNullOrEmpty
-
-                # Respond with 200 OK
-                $callbackContext.Response.StatusCode = 200
-                $callbackContext.Response.Close()
-
+                    $callbackContext.Request.HttpMethod | Should -Be 'POST'
+                    # Read callback body
+                    $callbackRequest = $callbackContext.Request
+                    $callbackBody = [IO.StreamReader]::new($callbackRequest.InputStream).ReadToEnd()
+                    $callbackBody | Should -Not -BeNullOrEmpty
+                }
+                finally {
+                    # Respond with 200 OK
+                    $callbackContext.Response.StatusCode = 200
+                    $callbackContext.Response.Close()
+                }
                 # Assert callback body (you can adjust this depending on your callback content)
                 $callbackBody | Should -Not -BeNullOrEmpty
                 $callbackBody | Should  -be '{"Url":"http://localhost:8080/auth/asyncUsingCallback","Method":"put","EventName":"_auth_asyncUsingCallback_Callback","State":"Completed","Result":{"InnerValue":"coming from using"}}'
@@ -382,7 +385,6 @@ Describe 'ASYNC REST API Requests' {
 
     }
 
-    
     Describe 'Pode SSE endpoint' {
         It 'emits the expected sequence of events' {
             $events = Get-SseEvent -BaseUrl "http://localhost:$($Port)" -TimeoutSeconds 10

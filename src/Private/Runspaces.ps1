@@ -274,6 +274,13 @@ function Close-PodeRunspace {
                 }
             }
 
+             # dispose of AsyncRoutes runspaces
+            if ($PodeContext.AsyncRoutes.Processes.Count -gt 0) {
+                foreach ($key in $PodeContext.AsyncRoutes.Processes.Keys.Clone()) {
+                    Close-PodeAsyncRouteInternal -Process $PodeContext.AsyncRoutes.Processes[$key]
+                }
+            }
+
             $PodeContext.Runspaces = @()
             Write-Verbose 'Runspaces disposed'
         }
