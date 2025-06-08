@@ -8,13 +8,20 @@ Describe 'OpenAPI integration tests' {
 
         $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
         . "$helperPath/TestHelper.ps1"
-        
+
         $PortV3 = 8080
         $PortV3_1 = 8081
+
+        # Ensure the port is free
+        Wait-ForWebServer -Port $PortV3 -Offline
+        # Ensure the port is free
+        Wait-ForWebServer -Port $PortV3_1 -Offline
+        
         $scriptPath = "$($PSScriptRoot)\..\..\examples\OpenApi-TuttiFrutti.ps1"
         Start-Process (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -File `"$scriptPath`" -PortV3 $PortV3 -PortV3_1 $PortV3_1 -Daemon -IgnoreServerConfig" -NoNewWindow
 
         Wait-ForWebServer -Port $PortV3
+        Wait-ForWebServer -Port $PortV3_1
     }
 
     AfterAll {

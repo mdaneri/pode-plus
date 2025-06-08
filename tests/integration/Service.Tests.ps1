@@ -10,10 +10,12 @@ Describe 'Service Lifecycle' {
         if ($IsMacOS) {
             $isAgent = $true
         }
-
-        $Uri = 'http://localhost:8080'
+        $Port = 8080
+        $Uri = "http://localhost:$($Port)"
         $SleepTime = 15
 
+        # Ensure the port is free
+        Wait-ForWebServer -Port $Port -Offline
     }
     it 'register' {
         $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Register -Agent:$isAgent

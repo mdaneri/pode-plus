@@ -1448,7 +1448,7 @@ function Close-PodeAsyncRouteTimer {
         $Operation['Timer'].Stop()
         $Operation['Timer'].Dispose()
         Unregister-Event -SourceIdentifier $Operation['eventName'] -Force
-        $null = $Operation.Remove('Timer')
+        $null = $Operation.TryRemove('Timer', [ref]$null)
     }
     catch {
         $_ | Write-PodeErrorLog

@@ -596,7 +596,7 @@ function Get-PodeSubnetRange {
         IP      = ($ip_parts -join '.')
     }
 }
- 
+
 
 function New-PodePSDrive {
     param(
@@ -1506,7 +1506,7 @@ function ConvertFrom-PodeRequestContent {
                 $Result.Data = ($Content | ConvertFrom-Json -AsHashtable)
             }
             else {
-                $Result.Data = ConvertTo-PodeHashtable -PSObject ($Content | ConvertFrom-Json)
+                $Result.Data = ConvertTo-PodeHashtable -InputObject ($Content | ConvertFrom-Json)
             }
         }
 

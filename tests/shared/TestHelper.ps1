@@ -323,7 +323,11 @@ function Wait-ForWebServer {
     [int]$Timeout = 60,
 
     [Parameter()]
-    [int]$Interval = 2
+    [int]$Interval = 2,
+
+    [Parameter()]
+    [switch]$Offline
+
   )
 
   # Determine the final URI: If no URI is provided, use "http://localhost:$Port"
@@ -344,13 +348,24 @@ function Wait-ForWebServer {
       # Send a request but ignore status codes (any response means the server is online)
       $null = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3 -SkipCertificateCheck
       Write-Host "Webserver is online at $Uri"
+      if ($Offline) {
+        Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
+        continue
+      }
       return $true
     }
     catch {
       if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 404) {
+        if ($Offline) {
+          Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
+          continue
+        }
         return $true
       }
       else {
+        if ($Offline) {
+          return $true
+        }
         Write-Host "Waiting for webserver to come online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
       }
     }
@@ -362,10 +377,49 @@ function Wait-ForWebServer {
   return $false
 }
 
+<#
+.SYNOPSIS
+    Retrieves Server-Sent Events (SSE) from a target server.
 
+.DESCRIPTION
+    The `Get-SseEvent` function connects to a server's SSE endpoint and streams incoming events.
+    It first queries a metadata endpoint (default = `/sse`) to discover the actual SSE stream URL.
+    Then it opens an HTTP/1.1 stream to avoid known flush issues with HTTP/2 and reads
+    event frames from the stream, returning them as an array of objects.
+
+.PARAMETER BaseUrl
+    The base URL of the server hosting the SSE endpoint.
+    Example: 'http://localhost:8080'
+
+.PARAMETER MetaEndpoint
+    The relative endpoint used to discover the SSE URL.
+    Defaults to '/sse'.
+
+.PARAMETER TimeoutSeconds
+    The timeout (in seconds) for the initial HTTP request to the server.
+    Default is 150 seconds. (Note: The stream itself uses an extended timeout internally.)
+
+.OUTPUTS
+    [pscustomobject[]]
+    An array of objects with properties:
+    - Event: the event name (default is 'message')
+    - Data:  the event payload
+
+.EXAMPLE
+    $events = Get-SseEvent -BaseUrl 'http://localhost:8080'
+
+.EXAMPLE
+    $events = Get-SseEvent -BaseUrl 'http://localhost:8080' -MetaEndpoint '/my_custom_sse'
+
+.NOTES
+    This function uses HttpClient and requires .NET 5+ / PowerShell 7+ for full compatibility.
+    For internal or test use; not intended as a fully resilient production SSE client.
+
+#>
 function Get-SseEvent {
   param(
     [string]$BaseUrl,
+    [string]$MetaEndpoint = '/sse',
     [int] $TimeoutSeconds = 150
   )
   # 1. One client, shared cookies
@@ -376,7 +430,7 @@ function Get-SseEvent {
   $client.Timeout = [timespan]::FromMinutes(10)      # infinite-ish
 
   # 2. Discover stream URL  (GET /sse returns  { Sse = @{ Url = '/sse_events' } })
-  $meta = $client.GetStringAsync("$BaseUrl/sse").Result | ConvertFrom-Json
+  $meta = $client.GetStringAsync("$BaseUrl$MetaEndpoint").Result | ConvertFrom-Json
   $sseUri = $meta.Sse.Url
   if ([System.Uri]::IsWellFormedUriString( $meta.Sse.Url, 'Absolute')) {
     $sseUri = $meta.Sse.Url
@@ -408,8 +462,10 @@ function Get-SseEvent {
       continue
     }
     if ($line.StartsWith('event:')) { $evtName = $line.Substring(6).Trim() }
-    elseif ($line.StartsWith('data:')) { $evtData += (($evtData)? "`n":'') + $line.Substring(5).Trim() }
+    elseif ($line.StartsWith('data:')) {
+      $evtData += (if ($evtData) { "`n" }else { '' }) + $line.Substring(5).Trim()
+    }
   }
-  
+
   return $events
 }

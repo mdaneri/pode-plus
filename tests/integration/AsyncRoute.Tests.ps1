@@ -10,6 +10,8 @@ Describe 'ASYNC REST API Requests' {
         $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
         . "$helperPath/TestHelper.ps1"
 
+
+
         $mindyCommonHeaders = @{
             'accept'        = 'application/json'
             'X-API-KEY'     = 'test2-api-key'
@@ -24,7 +26,8 @@ Describe 'ASYNC REST API Requests' {
         $Port = 8080
         $Endpoint = "http://127.0.0.1:$($Port)"
         $scriptPath = "$($PSScriptRoot)\..\..\examples\Web-AsyncRoute.ps1"
-
+        
+        Wait-ForWebServer -Port $Port -Offline
         Start-Process  (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -File `"$scriptPath`" -Port $Port  -Daemon"  -NoNewWindow
         Wait-ForWebServer -Port $Port
     }
@@ -385,7 +388,7 @@ Describe 'ASYNC REST API Requests' {
 
     }
 
-    Describe 'Pode SSE endpoint' {
+    Describe 'Pode SSE endpoint' -Tag 'Exclude_DesktopEdition'{
         It 'emits the expected sequence of events' {
             $events = Get-SseEvent -BaseUrl "http://localhost:$($Port)" -TimeoutSeconds 10
 
