@@ -26,7 +26,7 @@ Describe 'ASYNC REST API Requests' {
         $Port = 8080
         $Endpoint = "http://127.0.0.1:$($Port)"
         $scriptPath = "$($PSScriptRoot)\..\..\examples\Web-AsyncRoute.ps1"
-        
+
         Wait-ForWebServer -Port $Port -Offline
         Start-Process  (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -File `"$scriptPath`" -Port $Port  -Daemon"  -NoNewWindow
         Wait-ForWebServer -Port $Port
@@ -35,7 +35,6 @@ Describe 'ASYNC REST API Requests' {
     AfterAll {
         Start-Sleep -Seconds 5
         Invoke-RestMethod -Uri "$($Endpoint)/close" -Method Post | Out-Null
-        Start-Sleep -Seconds 10
     }
 
     Describe 'Hello Server' {
