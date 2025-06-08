@@ -30,9 +30,9 @@ Describe 'ASYNC REST API Requests' {
     }
 
     AfterAll {
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 5
         Invoke-RestMethod -Uri "$($Endpoint)/close" -Method Post | Out-Null
-
+        Start-Sleep -Seconds 10
     }
 
     Describe 'Hello Server' {
