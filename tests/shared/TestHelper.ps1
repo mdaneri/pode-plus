@@ -462,10 +462,8 @@ function Get-SseEvent {
       continue
     }
     if ($line.StartsWith('event:')) { $evtName = $line.Substring(6).Trim() }
-    elseif ($line.StartsWith('data:')) {
-      $evtData += (if ($evtData) { "`n" }else { '' }) + $line.Substring(5).Trim()
-    }
-  }
+    elseif ($line.StartsWith('data:')) { $evtData += (($evtData)? "`n":'') + $line.Substring(5).Trim() }
+ }
 
   return $events
 }

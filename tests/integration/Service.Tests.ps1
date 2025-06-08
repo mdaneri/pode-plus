@@ -6,6 +6,8 @@ param()
 Describe 'Service Lifecycle' {
 
     BeforeAll {
+        $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
+        . "$helperPath/TestHelper.ps1"
         $isAgent = $false
         if ($IsMacOS) {
             $isAgent = $true
