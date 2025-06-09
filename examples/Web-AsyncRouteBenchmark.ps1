@@ -84,7 +84,7 @@ param(
 
 if ($Client) {
     $totalSteps = [math]::Floor([int]::MaxValue / ($StepSize  ))
-    Write-Progress -Id 1 -ParentId 0 -Activity 'Overall Progress' -Status "Invoking Rest" -PercentComplete 0
+    Write-Progress -Id 1 -ParentId 0 -Activity 'Overall Progress' -Status 'Invoking Rest' -PercentComplete 0
     $jobs = 0..$totalSteps | ForEach-Object -Parallel {
 
         $i = ($_ ) * ($using:StepSize )
@@ -106,7 +106,7 @@ if ($Client) {
     # Wait for all jobs to complete with a progress bar
     $jobCount = $jobs.Count
     $allJobsCompleted = $false
-    Write-Progress -Id 1 -ParentId 0 -Activity 'Overall Progress' -Status "Waiting for Jobs to complete" -PercentComplete 0
+    Write-Progress -Id 1 -ParentId 0 -Activity 'Overall Progress' -Status 'Waiting for Jobs to complete' -PercentComplete 0
     while (! $allJobsCompleted) {
         $allJobsCompleted = $true
         $completedJobs = 0
@@ -115,7 +115,7 @@ if ($Client) {
             if (  $jobStatus.IsCompleted) {
                 $completedJobs++
             }
-            Write-Progress -Id 1 -ParentId 0 -Activity 'Overall Progress' -Status "Waiting for Jobs to complete" -PercentComplete (($completedJobs / $jobCount) * 100)
+            Write-Progress -Id 1 -ParentId 0 -Activity 'Overall Progress' -Status 'Waiting for Jobs to complete' -PercentComplete (($completedJobs / $jobCount) * 100)
         }
     }
 
@@ -340,11 +340,17 @@ public class MathOperations
             ) | Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content  @{ 'application/json' = New-PodeOANumberProperty -Name 'Result' -Format Double -Description 'Result' -Required -Object }
 
 
-        Add-PodeAsyncRouteGet -Path '/task' -ResponseContentType  'application/json', 'application/yaml'  -In Path
-        Add-PodeAsyncRouteStop -Path '/task' -ResponseContentType 'application/json', 'application/yaml' -In Query
+        Add-PodeRoute -Method Get -Path '/task' -PassThru |
+            Set-PodeAsyncRouteOperation -Get -ResponseContentType  'application/json', 'application/yaml'  -In Path -PassThru |
+            Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
 
-        Add-PodeAsyncRouteQuery -path '/tasks'  -ResponseContentType 'application/json', 'application/yaml'   -Payload  Body -QueryContentType 'application/json', 'application/yaml'
+        Add-PodeRoute -Method Delete -Path '/task' -PassThru |
+            Set-PodeAsyncRouteOperation -Stop -ResponseContentType  'application/json', 'application/yaml' -In Query -PassThru |
+            Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
 
+        Add-PodeRoute -Method Post -Path '/tasks'  -PassThru |
+            Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
+            Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
 
         Add-PodeRoute  -Method 'Post' -Path '/close' -ScriptBlock {
             Close-PodeServer

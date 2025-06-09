@@ -1699,6 +1699,16 @@ function Set-PodeOARouteInfo {
                 }
             }
 
+            if ($r.Async -and !$r.OpenApi.Swagger) {
+                $oaName = Get-PodeAsyncRouteOAName -Tag $r.OpenApi.DefinitionTag -ForEachOADefinition
+                foreach ($key in $oaName.Keys) {
+                    Add-PodeAsyncRouteComponentSchema -Name $oaName[$key].oATypeName -DefinitionTag $key
+                    $r |
+                        Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' `
+                            -DefinitionTag $key `
+                            -Content (New-PodeOAContentMediaType -MediaType $ResponseContentType  -Content $oaName[$key].OATypeName )
+                }
+            }
             if ($OperationId) {
                 if ($Route.Count -gt 1) {
                     # OperationID:$OperationId has to be unique and cannot be applied to an array
@@ -1747,6 +1757,8 @@ function Set-PodeOARouteInfo {
                 $r.OpenApi.PostponedArgumentList = $null
             }
         }
+
+
 
         if ($PassThru) {
             return $Route

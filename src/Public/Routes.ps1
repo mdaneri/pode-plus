@@ -128,7 +128,7 @@ function Add-PodeRoute {
 
         [Parameter(ParameterSetName = 'Script')]
         [scriptblock]
-        $ScriptBlock,
+        $ScriptBlock = {},
 
         [Parameter( )]
         [AllowNull()]
@@ -302,10 +302,10 @@ function Add-PodeRoute {
     }
 
     # if middleware, scriptblock and file path are all null/empty, error
-    if ((Test-PodeIsEmpty $Middleware) -and (Test-PodeIsEmpty $ScriptBlock) -and (Test-PodeIsEmpty $FilePath) -and (Test-PodeIsEmpty $Authentication)) {
-        # [Method] Path: No logic passed
-        throw ($PodeLocale.noLogicPassedForMethodRouteExceptionMessage -f ($Method -join ','), $Path)
-    }
+    #   if ((Test-PodeIsEmpty $Middleware) -and (Test-PodeIsEmpty $ScriptBlock) -and (Test-PodeIsEmpty $FilePath) -and (Test-PodeIsEmpty $Authentication)) {
+    # [Method] Path: No logic passed
+    #      throw ($PodeLocale.noLogicPassedForMethodRouteExceptionMessage -f ($Method -join ','), $Path)
+    # }
 
     # if we have a file path supplied, load that path as a scriptblock
     if ($PSCmdlet.ParameterSetName -ieq 'file') {

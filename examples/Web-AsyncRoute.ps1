@@ -285,8 +285,6 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
         Set-PodeAsyncRoute -ResponseContentType 'application/json', 'application/yaml' -Timeout 300
 
 
-
-
     Add-PodeRoute -PassThru -Method Put -Path '/auth/asyncParam'  -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -ScriptBlock {
         param($sleepTime2, $Message)
         Write-PodeHost '/auth/asyncParam'
@@ -329,8 +327,6 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
         }
     } | Set-PodeOARouteInfo -Summary 'Async infinite loop' -OperationId 'asyncInfiniteLoop' -PassThru |
         Set-PodeAsyncRoute -ResponseContentType 'application/json', 'application/yaml' -Timeout 300
-
-
 
     Add-PodeRoute -PassThru -Method Put -Path '/auth/asyncInfiniteLoopTimeout' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software'  -ScriptBlock {
         while ($true) {

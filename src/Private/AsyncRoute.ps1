@@ -270,14 +270,13 @@ function Complete-PodeAsyncRouteOperation {
             for ($i = 0; $i -le 3; $i++) {
                 try {
                     $AsyncProcess['CallbackTentative'] = $AsyncProcess['CallbackTentative'] + 1
-                    write-podehost "Invoking callback URL: $callbackUrl with method: $method and content type: $contentType body:$cbody  tentative: $($AsyncProcess['CallbackTentative']  )"
+                    Write-Verbose "Invoking callback URL: $callbackUrl with method: $method and content type: $contentType body:$cbody  tentative: $($AsyncProcess['CallbackTentative']  )"
                     $null = Invoke-RestMethod -Uri $callbackUrl -Method $method -Headers $headers -Body $cBody -ContentType $contentType -ErrorAction Stop
-                    Write-PodeHost "Callback URL: $callbackUrl invoked successfully with method: $method and content type: $contentType"
+                    Write-Verbose "Callback URL: $callbackUrl invoked successfully with method: $method and content type: $contentType"
                     $AsyncProcess['CallbackInfoState'] = 'Completed'
                     break
                 }
                 catch {
-                    write-podehost $_
                     $_ | Write-PodeErrorLog
                     $AsyncProcess['CallbackInfoState'] = 'Failed'
                     Start-Sleep -Seconds 2
@@ -286,7 +285,6 @@ function Complete-PodeAsyncRouteOperation {
         }
     }
     catch {
-        Write-Podehost "Error invoking callback URL: $($_.Exception.Message)"
         # Log any errors encountered during the callback process
         $_ | Write-PodeErrorLog
         $AsyncProcess['CallbackInfoState'] = 'Failed'
