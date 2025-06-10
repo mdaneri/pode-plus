@@ -347,17 +347,22 @@ function Wait-ForWebServer {
     try {
       # Send a request but ignore status codes (any response means the server is online)
       $null = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3 -SkipCertificateCheck
-      Write-Host "Webserver is online at $Uri"
       if ($Offline) {
-        Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
+        $RetryCount++
+        Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount)/$MaxRetries)"
         continue
+      }
+      else {
+        Write-Host "Webserver is online at $Uri"
       }
       return $true
     }
     catch {
       if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 404) {
         if ($Offline) {
-          Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
+          $RetryCount++
+          Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount)/$MaxRetries)"
+
           continue
         }
         return $true
@@ -466,7 +471,7 @@ function Get-SseEvent {
       if ($evtData) {
         $evtData += "`n"
       }
-      $evtData += $line.Substring(5).Trim() 
+      $evtData += $line.Substring(5).Trim()
     }
   }
 
