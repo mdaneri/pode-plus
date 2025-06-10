@@ -49,7 +49,7 @@
 
     $response = Invoke-RestMethod -Uri 'http://localhost:8080/tasks' -Method Post -Body '{}' -Headers $mortyCommonHeaders
 
-
+    $response = Invoke-RestMethod -Uri 'http://localhost:8080/tasks?filter[AsyncRouteId][value]=Get&filter[AsyncRouteId][op]=LIKE&filter[State][value]=Completed&filter[State][op]=EQ&filter[Cancellable][value]=true&filter[Cancellable][op]=EQ' -Method get  -Headers $mortyCommonHeaders
 
     $response_Mindy_asyncWaitForever = Invoke-RestMethod -Uri 'http://localhost:8080/auth/asyncInfiniteLoop' -Method Put -Headers $mindyCommonHeaders
 
@@ -383,6 +383,10 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
 
     Add-PodeRoute -Method Post -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
         Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
+
+        Add-PodeRoute -Method Get -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -DeepObject -PassThru |
         Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
 
 

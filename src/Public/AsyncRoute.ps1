@@ -1,72 +1,85 @@
 <#
 .SYNOPSIS
-	Adds or configures an asynchronous operation endpoint (Get, Stop, or Query) for an existing Pode route.
+    Adds or configures asynchronous operation endpoints (Get, Stop, or Query) for existing Pode routes.
 
 .DESCRIPTION
-	The `Set-PodeAsyncRouteOperation` function consolidates the creation of standard asynchronous operation endpoints
-	for Pode routes, specifically for status retrieval (Get), stopping (Stop), and querying (Query) of async tasks.
+    The `Set-PodeAsyncRouteOperation` function centralizes the setup of common asynchronous endpoints for Pode routes.
+    It supports three operation modes:
+    - **Get**: Retrieves async task status (typically via GET)
+    - **Stop**: Aborts async tasks (typically via DELETE)
+    - **Query**: Enables advanced filtering of async tasks (typically via POST)
 
+    For the Query mode, the function supports two styles:
+    - **QueryJson**: Accepts a structured request body (JSON/YAML/XML)
+    - **QueryDeepObject**: Accepts a deepObject-style query string (e.g., `filter[State][op]=EQ`)
 
 .PARAMETER Route
-	Hashtable array representing one or more Pode route objects to which the async operation will be attached.
-	This parameter is mandatory and supports pipeline input.
+    One or more Pode route hashtables. This is the target for attaching the async operation endpoint.
+    Supports pipeline input and is mandatory.
 
 .PARAMETER Get
-	Switch. Configures the route for async status retrieval (typically GET requests).
-	Mandatory for the 'Get' parameter set.
+    Switch. Creates a status retrieval endpoint for async tasks (usually GET).
+    Required for the 'Get' parameter set.
 
 .PARAMETER Stop
-	Switch. Configures the route for stopping (aborting) async tasks (typically DELETE requests).
-	Mandatory for the 'Stop' parameter set.
+    Switch. Creates an endpoint to stop async tasks (usually DELETE).
+    Required for the 'Stop' parameter set.
 
 .PARAMETER Query
-	Switch. Configures the route for advanced querying of async tasks (typically POST requests).
-	Mandatory for the 'Query' parameter set.
+    Switch. Creates a query endpoint for async tasks.
+    Required for either 'QueryJson' or 'QueryDeepObject' parameter sets.
+
+.PARAMETER DeepObject
+    Switch. Used only with the 'QueryDeepObject' parameter set to indicate the query uses deepObject-style parameters.
 
 .PARAMETER ResponseContentType
-	Array of content types (e.g., 'application/json', 'application/xml', 'application/yaml') to return from the route.
-	Defaults to 'application/json'.
+    An array of response content types (e.g., 'application/json', 'application/yaml').
+    Defaults to `'application/json'`.
 
 .PARAMETER In
-	Specifies where to retrieve the task Id from for Get/Stop endpoints. Valid values: 'Cookie', 'Header', 'Path', 'Query'.
-	Defaults to 'Query'.
+    For Get/Stop operations, specifies where to read the task Id from.
+    Acceptable values: `'Cookie'`, `'Header'`, `'Path'`, `'Query'`.
+    Defaults to `'Query'`.
 
 .PARAMETER QueryContentType
-	Array of content types for the query operation (used for the Query parameter set). Defaults to 'application/json'.
+    An array of accepted request content types for query operations.
+    Used for both `QueryJson` and `QueryDeepObject`. Defaults to `'application/json'`.
 
 .PARAMETER Payload
-	Specifies where the payload for the query is located. Acceptable values: 'Body', 'Header', 'Query'. Defaults to 'Body'.
+    Where the query input should come from. Only valid for `QueryJson`.
+    Values: `'Body'`, `'Header'`, `'Query'`. Defaults to `'Body'`.
 
 .PARAMETER AllowNonStandardBody
-	Switch. For the Query parameter set, allows non-standard request body on non-POST methods (advanced use).
+    Allows POST-style bodies on non-POST routes (advanced use case). Only used with `QueryJson`.
 
 .PARAMETER PassThru
-	Switch. If specified, returns the new Pode route(s) after applying the operation.
+    If specified, returns the modified route(s) after applying the operation.
 
 .EXAMPLE
     Add-PodeRoute -Method Post -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
-        Set-PodeAsyncRouteOperation -Query -ResponseContentType 'application/json', 'application/yaml' -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
-        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
+        Set-PodeAsyncRouteOperation -Query -QueryContentType 'application/json' -ResponseContentType 'application/json', 'application/yaml' -Payload Body -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info (Body)'
 
-    This example creates a POST route at '/tasks' that supports advanced querying of async tasks.
-    It uses both JSON and YAML as accepted content types for the request and response bodies.
+    Creates a POST route at `/tasks` for querying async tasks using structured JSON body.
+
+.EXAMPLE
+    Add-PodeRoute -Method Get -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -ResponseContentType 'application/json' -DeepObject -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info (DeepObject)'
+
+    Creates a GET route at `/tasks` using `filter[Field][op]=...&filter[Field][value]=...` query syntax.
 
 .EXAMPLE
     Add-PodeRoute -Method Get -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
-        Set-PodeAsyncRouteOperation -Get -ResponseContentType 'application/json', 'application/yaml' -In Path -PassThru |
-        Set-PodeOARouteInfo -Summary 'Get Async Route Task Info'
-
-    This example creates a GET route at '/task' for retrieving the status of an async task.
-    The task Id is expected in the URL path and both JSON and YAML are supported as response types.
+        Set-PodeAsyncRouteOperation -Get -In Path -ResponseContentType 'application/json' -PassThru |
+        Set-PodeOARouteInfo -Summary 'Get Async Task Info'
 
 .EXAMPLE
     Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
-        Set-PodeAsyncRouteOperation -Stop -ResponseContentType 'application/json', 'application/yaml' -In Query -PassThru |
-        Set-PodeOARouteInfo -Summary 'Stop Async Route Task'
-
-    This example creates a DELETE route at '/task' that allows stopping an async task.
-    The task Id is retrieved from the query string and supports both JSON and YAML responses.
+        Set-PodeAsyncRouteOperation -Stop -In Query -ResponseContentType 'application/json' -PassThru |
+        Set-PodeOARouteInfo -Summary 'Stop Async Task'
 #>
+
 function Set-PodeAsyncRouteOperation {
     [CmdletBinding()]
     [OutputType([hashtable[]])]
@@ -84,10 +97,10 @@ function Set-PodeAsyncRouteOperation {
         [switch]
         $Stop,
 
-        [Parameter(Mandatory = $true, ParameterSetName = 'Query')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'QueryJson')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'QueryDeepObject')]
         [switch]
         $Query,
-
 
         [Parameter()]
         [string[]]
@@ -100,18 +113,21 @@ function Set-PodeAsyncRouteOperation {
         [string]
         $In = 'Query',
 
-
-        [Parameter(ParameterSetName = 'Query')]
+        [Parameter(ParameterSetName = 'QueryJson')]
         [string[]]
         [ValidateSet('application/json' , 'application/xml', 'application/yaml')]
         $QueryContentType = 'application/json',
 
-        [Parameter(ParameterSetName = 'Query')]
+        [Parameter(ParameterSetName = 'QueryDeepObject')]
+        [switch]
+        $DeepObject,
+
+        [Parameter(ParameterSetName = 'QueryJson')]
         [string]
         [ValidateSet('Body', 'Header', 'Query' )]
         $Payload = 'Body',
 
-        [Parameter(ParameterSetName = 'Query')]
+        [Parameter(ParameterSetName = 'QueryJson')]
         [switch]
         $AllowNonStandardBody,
 
@@ -196,16 +212,29 @@ function Set-PodeAsyncRouteOperation {
                         PassThru         = $true
                     }
                 }
-                'Query' {
+                'QueryJson' {
                     if ($r.Method -ne 'Post' -and $Payload -eq 'Body' -and (! $AllowNonStandardBody)) {
                         throw ($PodeLocale.getRequestBodyNotAllowedExceptionMessage -f $r.Method )
                     }
+
                     # Define the parameters for the route
                     $param = @{
                         Method           = $r.Method
                         Path             = $r.Path
                         ScriptBlock      = Get-PodeAsyncRouteQueryScriptBlock
                         ArgumentList     = @($Payload, $r.OpenAPI.DefinitionTag)
+                        ErrorContentType = $ResponseContentType[0]
+                        ContentType      = $QueryContentType[0]
+                        PassThru         = $true
+                    }
+                }
+                'QueryDeepObject' {
+                    # Define the parameters for the route
+                    $param = @{
+                        Method           = $r.Method
+                        Path             = $r.Path
+                        ScriptBlock      = Get-PodeAsyncRouteQueryScriptBlock
+                        ArgumentList     = @('QueryDeepObject', $r.OpenAPI.DefinitionTag)
                         ErrorContentType = $ResponseContentType[0]
                         ContentType      = $QueryContentType[0]
                         PassThru         = $true
@@ -283,7 +312,7 @@ function Set-PodeAsyncRouteOperation {
                             )
                     }
                 }
-                'Query' {
+                'QueryJson' {
                     # Add OpenAPI documentation postponed script
                     $newRoute.OpenApi.Postponed = {
                         param($param)

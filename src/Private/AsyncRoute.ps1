@@ -1226,18 +1226,23 @@ function Export-PodeAsyncRouteInfo {
 function Get-PodeAsyncRouteQueryScriptBlock {
     return [scriptblock] {
         param($Payload, $DefinitionTag)
-
-        # Determine the source of the query based on the payload parameter
-        switch ($Payload) {
-            'Body' { $query = $WebEvent.Data }                          # Retrieve the query from the body
-            'Query' { $query = $WebEvent.Query['query'] }                 # Retrieve the query from query parameters
-            'Header' { $query = $WebEvent.Request.Headers['query'] }    # Retrieve the query from headers
-        }
-
-        # Get the 'Accept' header from the request to determine the response format
-        $responseMediaType = Get-PodeHeader -Name 'Accept'
-        $response = @()  # Initialize an empty array to hold the response
         try {
+    
+            # Determine the source of the query based on the payload parameter
+            switch ($Payload) {
+                'Body' { $query = $WebEvent.Data }                          # Retrieve the query from the body
+                'Query' { $query = $WebEvent.Query['query'] }                 # Retrieve the query from query parameters
+                'Header' { $query = $WebEvent.Request.Headers['query'] }    # Retrieve the query from headers
+                'QueryDeepObject' {
+                    write-podehost $WebEvent.Raw.Query
+                    $query = ConvertFrom-PodeSerializedString -SerializedInput $WebEvent.Raw.Query -Style DeepObject -Explode -ParameterName $PodeContext.Server.OpenApi.Definitions[$DefinitionTag].hiddenComponents.AsyncRoute.QueryDeepObjectName
+                }
+            }
+            write-podehost $query -explode
+            # Get the 'Accept' header from the request to determine the response format
+            $responseMediaType = Get-PodeHeader -Name 'Accept'
+            $response = @()  # Initialize an empty array to hold the response
+
             if ($PodeContext.Server.OpenAPI.Definitions[$DefinitionTag].hiddenComponents.schemaValidation) {
                 $validation = Test-PodeOAJsonSchemaCompliance -Json $query -SchemaReference `
                     $PodeContext.Server.OpenApi.Definitions[$DefinitionTag].hiddenComponents.AsyncRoute.QueryRequestName
@@ -1345,6 +1350,11 @@ function Get-PodeAsyncRouteOAName {
                 throw ($PodeLocale.openApiDefinitionsMismatchExceptionMessage -f 'TaskIdName')
             }
 
+            if ($PodeContext.Server.OpenApi.Definitions[$DefinitionTag[0]].hiddenComponents.AsyncRoute.QueryDeepObjectName -ne $PodeContext.Server.OpenApi.Definitions[$DefinitionTag[$i]].hiddenComponents.AsyncRoute.QueryDeepObjectName) {
+                # varies between different OpenAPI definitions.
+                throw ($PodeLocale.openApiDefinitionsMismatchExceptionMessage -f 'QueryDeepObjectName')
+            }
+
         }
 
         return $PodeContext.Server.OpenApi.Definitions[$DefinitionTag[0]].hiddenComponents.AsyncRoute
@@ -1375,6 +1385,9 @@ function Get-PodeAsyncRouteOAName {
 
 .PARAMETER QueryParameterName
     The name of the query parameter in the OpenAPI schema. Defaults to 'AsyncRouteTaskQueryParameter'.
+
+.PARAMETER QueryDeepObjectName
+    The name of the deep object query parameter in the OpenAPI schema. Defaults to 'filter'.
 #>
 function Get-PodeAsyncRouteOASchemaNameInternal {
     param (
@@ -1391,17 +1404,23 @@ function Get-PodeAsyncRouteOASchemaNameInternal {
 
         [Parameter()]
         [string]
-        $QueryParameterName = 'AsyncRouteTaskQueryParameter'
+        $QueryParameterName = 'AsyncRouteTaskQueryParameter',
+
+        [Parameter()]
+        [string]
+        $QueryDeepObjectName = 'filter'
     )
     return @{
         # Store the OATypeName name
-        OATypeName         = $OATypeName
+        OATypeName          = $OATypeName
         # Store the TaskIdName name
-        TaskIdName         = $TaskIdName
+        TaskIdName          = $TaskIdName
         # Store the QueryRequestName name
-        QueryRequestName   = $QueryRequestName
+        QueryRequestName    = $QueryRequestName
         # Store the QueryParameterName name
-        QueryParameterName = $QueryParameterName
+        QueryParameterName  = $QueryParameterName
+        # Store the QueryDeepObjectName name
+        QueryDeepObjectName = $QueryDeepObjectName
     }
 }
 
