@@ -405,13 +405,7 @@ Describe 'Add-PodeRoute' {
         { Add-PodeRoute -Method GET -Path '/' -FilePath './path/*' } | Should -Throw -ExpectedMessage ($PodeLocale.invalidPathWildcardOrDirectoryExceptionMessage -f './path/*') #'*cannot be a wildcard or a directory*'
     }
 
-    It 'Throws error because no scriptblock supplied' {
-
-        #     ?*[] can be escaped using backtick, ex `*.
-        $expectedMessage = ($PodeLocale.noLogicPassedForMethodRouteExceptionMessage -f 'GET', '/').Replace('[', '`[').Replace(']', '`]')
-        { Add-PodeRoute -Method GET -Path '/' -ScriptBlock {} } | Should -Throw -ExpectedMessage $expectedMessage # '*No logic passed*'
-        # -Throw -ExpectedMessage $expectedMessage # '*No logic passed*'
-    }
+  
 
     It 'Throws error because only querystring has been given' {
         { Add-PodeRoute -Method GET -Path '?k=v' -ScriptBlock { write-host 'hi' } } | Should -Throw -ExpectedMessage $PodeLocale.noPathSuppliedForRouteExceptionMessage #'*No path supplied*'

@@ -1699,7 +1699,7 @@ function Set-PodeOARouteInfo {
                 }
             }
 
-            if ($r.Async -and !$r.OpenApi.Swagger) {
+            if ($r.IsAsync -and !$r.OpenApi.Swagger) {
                 $oaName = Get-PodeAsyncRouteOAName -Tag $r.OpenApi.DefinitionTag -ForEachOADefinition
                 foreach ($key in $oaName.Keys) {
                     Add-PodeAsyncRouteComponentSchema -Name $oaName[$key].oATypeName -DefinitionTag $key
