@@ -113,10 +113,10 @@ function Add-PodeRoute {
     [CmdletBinding(DefaultParameterSetName = 'Script')]
     [OutputType([System.Object[]])]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [ValidateSet('Connect', 'Delete', 'Get', 'Head', 'Merge', 'Options', 'Patch', 'Post', 'Put', 'Trace', '*')]
         [string[]]
-        $Method,
+        $Method = 'Get',
 
         [Parameter(Mandatory = $true)]
         [string]
@@ -128,7 +128,7 @@ function Add-PodeRoute {
 
         [Parameter(ParameterSetName = 'Script')]
         [scriptblock]
-        $ScriptBlock,
+        $ScriptBlock = {},
 
         [Parameter( )]
         [AllowNull()]
@@ -302,10 +302,10 @@ function Add-PodeRoute {
     }
 
     # if middleware, scriptblock and file path are all null/empty, error
-    if ((Test-PodeIsEmpty $Middleware) -and (Test-PodeIsEmpty $ScriptBlock) -and (Test-PodeIsEmpty $FilePath) -and (Test-PodeIsEmpty $Authentication)) {
-        # [Method] Path: No logic passed
-        throw ($PodeLocale.noLogicPassedForMethodRouteExceptionMessage -f ($Method -join ','), $Path)
-    }
+    #   if ((Test-PodeIsEmpty $Middleware) -and (Test-PodeIsEmpty $ScriptBlock) -and (Test-PodeIsEmpty $FilePath) -and (Test-PodeIsEmpty $Authentication)) {
+    # [Method] Path: No logic passed
+    #      throw ($PodeLocale.noLogicPassedForMethodRouteExceptionMessage -f ($Method -join ','), $Path)
+    # }
 
     # if we have a file path supplied, load that path as a scriptblock
     if ($PSCmdlet.ParameterSetName -ieq 'file') {
@@ -316,7 +316,7 @@ function Add-PodeRoute {
     $ScriptBlock, $usingVars = Convert-PodeScopedVariables -ScriptBlock $ScriptBlock -PSSession $PSCmdlet.SessionState
 
     # convert any middleware into valid hashtables
-    $Middleware = @(ConvertTo-PodeMiddleware -Middleware $Middleware -PSSession $PSCmdlet.SessionState)
+    $realMiddleware = @(ConvertTo-PodeMiddleware -Middleware $Middleware -PSSession $PSCmdlet.SessionState)
 
     # if an access name was supplied, setup access as middleware first to it's after auth middleware
     if (![string]::IsNullOrWhiteSpace($Access)) {
@@ -334,7 +334,7 @@ function Add-PodeRoute {
             Name = $Access
         }
 
-        $Middleware = (@(Get-PodeAccessMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $Middleware)
+        $realMiddleware = (@(Get-PodeAccessMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $realMiddleware)
     }
 
     # if an auth name was supplied, setup the auth as the first middleware
@@ -352,10 +352,10 @@ function Add-PodeRoute {
             Name   = $Authentication
             Login  = $Login
             Logout = $Logout
-            Anon   = $AllowAnon
+            Anon   = $AllowAnon.IsPresent
         }
 
-        $Middleware = (@(Get-PodeAuthMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $Middleware)
+        $realMiddleware = (@(Get-PodeAuthMiddlewareScript | New-PodeMiddleware -ArgumentList $options) + $realMiddleware)
     }
 
     # custom access
@@ -413,7 +413,14 @@ function Add-PodeRoute {
                 @{
                     Logic            = $ScriptBlock
                     UsingVariables   = $usingVars
-                    Middleware       = $Middleware
+                    Middleware       = $realMiddleware
+                    MiddlewareMeta   = @{
+                        Name       = $Authentication
+                        Login      = $Login
+                        Logout     = $Logout
+                        Anon       = $AllowAnon.IsPresent
+                        Middleware = $Middleware
+                    }
                     Authentication   = $Authentication
                     Access           = $Access
                     AccessMeta       = @{
@@ -434,6 +441,8 @@ function Add-PodeRoute {
                     Arguments        = $ArgumentList
                     Method           = $_method
                     Path             = $Path
+                    IsAsync          = $false
+                    Async            = @{}
                     OpenApi          = @{
                         Path               = $OpenApiPath
                         Responses          = $DefaultResponse
@@ -883,8 +892,8 @@ function Add-PodeStaticRoute {
                 OpenApi           = @{
                     Path           = $OpenApiPath
                     Responses      = @{}
-                    Parameters     = $null
-                    RequestBody    = $null
+                    Parameters     = [ordered]@{}
+                    RequestBody    = [ordered]@{}
                     CallBacks      = @{}
                     Authentication = @()
                     Servers        = @()
@@ -1652,6 +1661,7 @@ function Add-PodeSignalRouteGroup {
     $null = Invoke-PodeScriptBlock -ScriptBlock $Routes -UsingVariables $usingVars -Splat -NoNewClosure
 }
 
+
 <#
 .SYNOPSIS
 Remove a specific Route.
@@ -1715,6 +1725,19 @@ function Remove-PodeRoute {
                 if ($tag -and ($PodeContext.Server.OpenAPI.Definitions[$tag].hiddenComponents.operationId -ccontains $route.OpenAPI.OperationId)) {
                     $PodeContext.Server.OpenAPI.Definitions[$tag].hiddenComponents.operationId = $PodeContext.Server.OpenAPI.Definitions[$tag].hiddenComponents.operationId | Where-Object { $_ -ne $route.OpenAPI.OperationId }
                 }
+            }
+        }
+        # remove the runspace
+        if ($r.IsAsync) {
+            $asyncRouteId = $r.Async.AsyncRouteId
+            if ( $asyncRouteId -and $PodeContext.RunspacePools.ContainsKey($asyncRouteId)) {
+                $PodeContext.Threads.AsyncRoutes -= $r.Async.MaxRunspaces
+                if ( ! $PodeContext.RunspacePools[$asyncRouteId].Pool.IsDisposed) {
+                    $PodeContext.RunspacePools[$asyncRouteId].Pool.BeginClose($null, $null)
+                    Close-PodeDisposable -Disposable ($PodeContext.RunspacePools[$asyncRouteId].Pool)
+                }
+                $v = ''
+                $null = $PodeContext.RunspacePools.TryRemove($asyncRouteId, [ref]$v)
             }
         }
     }
