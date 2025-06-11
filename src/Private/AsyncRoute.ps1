@@ -442,7 +442,7 @@ function Search-PodeAsyncRouteTask {
             # Iterate through each query condition
             foreach ($key in $Query.Keys) {
                 # Check the variable name
-                if (! (('Id', 'AsyncRouteId', 'StartingTime', 'CreationTime', 'CompletedTime', 'ExpireTime', 'State', 'Error', 'CallbackSettings', 'Cancellable', 'User', 'Url', 'Method', 'Progress') -contains $key)) {
+                if (! (('Id', 'AsyncRouteId', 'StartingTime', 'CreationTime', 'CompletedTime', 'ExpireTime', 'State', 'Error', 'CallbackSettings', 'SseEnabled', 'Cancellable', 'SseGroup', 'User', 'Url', 'Method', 'Progress') -contains $key)) {
                     # The query provided is invalid.{0} is not a valid element for a query.
                     throw ($PodeLocale.invalidQueryElementExceptionMessage -f $key)
                 }
@@ -1227,18 +1227,27 @@ function Get-PodeAsyncRouteQueryScriptBlock {
     return [scriptblock] {
         param($Payload, $DefinitionTag)
         try {
-    
+
             # Determine the source of the query based on the payload parameter
             switch ($Payload) {
                 'Body' { $query = $WebEvent.Data }                          # Retrieve the query from the body
                 'Query' { $query = $WebEvent.Query['query'] }                 # Retrieve the query from query parameters
                 'Header' { $query = $WebEvent.Request.Headers['query'] }    # Retrieve the query from headers
                 'QueryDeepObject' {
-                    write-podehost $WebEvent.Raw.Query
                     $query = ConvertFrom-PodeSerializedString -SerializedInput $WebEvent.Raw.Query -Style DeepObject -Explode -ParameterName $PodeContext.Server.OpenApi.Definitions[$DefinitionTag].hiddenComponents.AsyncRoute.QueryDeepObjectName
                 }
+                'SimpleQuery' {
+                    $deserialize = ConvertFrom-PodeSerializedString -SerializedInput $WebEvent.Raw.Query -Style Simple -Explode
+                    $query = @{}
+                    foreach ($key in $deserialize.Keys) {
+                        $query[$key] = @{
+                            'op'    = 'EQ'
+                            'value' = $deserialize[$key]
+                        }
+                    }
+                }
             }
-            write-podehost $query -explode
+            write-podehost $query -explode -ShowType
             # Get the 'Accept' header from the request to determine the response format
             $responseMediaType = Get-PodeHeader -Name 'Accept'
             $response = @()  # Initialize an empty array to hold the response
@@ -1576,5 +1585,55 @@ function Close-PodeAsyncRouteInternal {
     # remove the process
     if (!$Keep) {
         $null = $PodeContext.AsyncRoutes.Processes.TryRemove($Process.Id, [ref]$null)
+    }
+}
+
+
+
+function New-PodeOAAsyncRouteQueryRequestSchema {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]
+        $OAName
+    )
+    if (!(Test-PodeOAComponent -Field schemas -Name $OAName.QueryRequestName )) {
+
+        New-PodeOAStringProperty -Name 'op' -Enum 'GT', 'LT', 'GE', 'LE', 'EQ', 'NE', 'LIKE', 'NOTLIKE' -Required |
+            New-PodeOAStringProperty -Name 'value' -Description 'The value to compare against' -Required |
+            New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "String$($OAName.QueryParameterName)"
+
+
+        New-PodeOAStringProperty -Name 'op' -Enum   'EQ', 'NE'  -Required |
+            New-PodeOABoolProperty -Name 'value' -Description 'The value to compare against' -Required |
+            New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "Boolean$($OAName.QueryParameterName)"
+
+        New-PodeOAStringProperty -Name 'op' -Enum 'GT', 'LT', 'GE', 'LE', 'EQ', 'NE'  -Required |
+            New-PodeOAStringProperty -Name 'value' -format Date-Time -Description 'The value to compare against' -Required |
+            New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "DateTime$($OAName.QueryParameterName)"
+
+
+        New-PodeOAStringProperty -Name 'op' -Enum 'GT', 'LT', 'GE', 'LE', 'EQ', 'NE'  -Required |
+            New-PodeOANumberProperty -Name 'value' -Description 'The value to compare against' -Required |
+            New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "Number$($OAName.QueryParameterName)"
+
+        # Define AsyncTaskQueryRequest using pipelining
+        New-PodeOASchemaProperty -Name 'Id' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'AsyncRouteId' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'StartingTime' -Reference "DateTime$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'CreationTime' -Reference "DateTime$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'CompletedTime' -Reference "DateTime$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'ExpireTime' -Reference "DateTime$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'State' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'Error' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'CallbackSettings' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'Cancellable' -Reference "Boolean$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'SseEnabled' -Reference "Boolean$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'SseGroup' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'User' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'Url' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'Method' -Reference "String$($OAName.QueryParameterName)" |
+            New-PodeOASchemaProperty -Name 'Progress' -Reference "Number$($OAName.QueryParameterName)" |
+            New-PodeOAObjectProperty |
+            Add-PodeOAComponentSchema -Name $OAName.QueryRequestName
     }
 }

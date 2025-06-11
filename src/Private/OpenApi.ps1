@@ -1947,13 +1947,13 @@ function New-PodeOAComponentCallBackInternal {
     }
 
     # Add request body to the callback if it is specified for the given definition tag
-    if ($Params.RequestBody.ContainsKey($DefinitionTag)) {
-        $callBack."'$($Params.Path)'".$_method.requestBody = $Params.RequestBody[$DefinitionTag]
+    if ($Params.RequestBody.Keys  -Contains $DefinitionTag) {
+        $callBack."'$($Params.Path)'".$_method.requestBody = $Params.RequestBody[$DefinitionTag.ToLower()]
     }
 
     # Add responses to the callback if they are specified for the given definition tag
-    if ($Params.Responses.ContainsKey($DefinitionTag)) {
-        $callBack."'$($Params.Path)'".$_method.responses = $Params.Responses[$DefinitionTag]
+    if ($Params.Responses.Keys -Contains $DefinitionTag){
+        $callBack."'$($Params.Path)'".$_method.responses = $Params.Responses[$DefinitionTag.ToLower()]
     }
 
     # Return the constructed callback object

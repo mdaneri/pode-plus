@@ -385,10 +385,14 @@ Start-PodeServer -Threads 1 -Daemon:$Daemon -ScriptBlock {
         Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -Payload Body -QueryContentType 'application/json', 'application/yaml' -PassThru |
         Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
 
-        Add-PodeRoute -Method Get -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+    Add-PodeRoute -Method Get -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
         Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -DeepObject -PassThru |
         Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
 
+
+    Add-PodeRoute -Method Get -Path '/tasks_simple' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -ResponseContentType  'application/json', 'application/yaml'  -Simple -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info'
 
 
     Add-PodeRoute -PassThru -Method Post -path '/receive/callback' -ScriptBlock {

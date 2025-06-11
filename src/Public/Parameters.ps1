@@ -930,6 +930,8 @@ function ConvertFrom-PodeSerializedString {
         if ($UrlDecode) {
             $SerializedInput = [System.Web.HttpUtility]::UrlDecode($SerializedInput)
         }
+        # Remove the leading question mark(?) from the serialized string
+        $SerializedInput = $SerializedInput.TrimStart('?')
         # Main deserialization logic based on style
         switch ($Style) {
             'Simple' {
@@ -1270,9 +1272,6 @@ function ConvertFrom-PodeSerializedString {
 
             'SpaceDelimited' {
                 if ($Explode) {
-                    # Remove the leading semicolon (;) prefix from the serialized string
-                    $SerializedInput = $SerializedInput.TrimStart('?')
-
                     # For explode=true, split by '&' to treat each value as a separate occurrence
                     $segments = $SerializedInput -split '&'
 

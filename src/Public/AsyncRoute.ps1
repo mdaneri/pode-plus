@@ -4,14 +4,15 @@
 
 .DESCRIPTION
     The `Set-PodeAsyncRouteOperation` function centralizes the setup of common asynchronous endpoints for Pode routes.
-    It supports three operation modes:
+    It supports three operation types:
     - **Get**: Retrieves async task status (typically via GET)
     - **Stop**: Aborts async tasks (typically via DELETE)
-    - **Query**: Enables advanced filtering of async tasks (typically via POST)
+    - **Query**: Enables advanced querying of async tasks
 
-    For the Query mode, the function supports two styles:
-    - **QueryJson**: Accepts a structured request body (JSON/YAML/XML)
-    - **QueryDeepObject**: Accepts a deepObject-style query string (e.g., `filter[State][op]=EQ`)
+    The Query mode supports three formats:
+    - **QueryJson**: Accepts a structured request body (JSON/YAML/XML) using POST
+    - **QueryDeepObject**: Accepts a deepObject-style query string like `filter[State][op]=EQ`
+    - **SimpleQuery**: Accepts flat key=value query strings like `?State=Completed,Cancellable=True`
 
 .PARAMETER Route
     One or more Pode route hashtables. This is the target for attaching the async operation endpoint.
@@ -26,11 +27,16 @@
     Required for the 'Stop' parameter set.
 
 .PARAMETER Query
-    Switch. Creates a query endpoint for async tasks.
-    Required for either 'QueryJson' or 'QueryDeepObject' parameter sets.
+    Switch. Enables a query endpoint for async tasks.
+    Required for the 'QueryJson', 'QueryDeepObject', or 'SimpleQuery' parameter sets.
 
 .PARAMETER DeepObject
-    Switch. Used only with the 'QueryDeepObject' parameter set to indicate the query uses deepObject-style parameters.
+    Switch. Used only with the 'QueryDeepObject' parameter set to indicate the query uses deepObject-style query parameters.
+
+.PARAMETER Simple
+    Switch. Used only with the 'SimpleQuery' parameter set to indicate the query uses flat key=value parameters like `?State=Completed`.
+    This simple query mode supports only equality comparisons (EQ).
+    It does not support advanced operators like GT, LT, LIKE, etc.
 
 .PARAMETER ResponseContentType
     An array of response content types (e.g., 'application/json', 'application/yaml').
@@ -43,39 +49,48 @@
 
 .PARAMETER QueryContentType
     An array of accepted request content types for query operations.
-    Used for both `QueryJson` and `QueryDeepObject`. Defaults to `'application/json'`.
+    Only applicable to the 'QueryJson' and 'QueryDeepObject' modes. Defaults to `'application/json'`.
 
 .PARAMETER Payload
     Where the query input should come from. Only valid for `QueryJson`.
-    Values: `'Body'`, `'Header'`, `'Query'`. Defaults to `'Body'`.
+    Acceptable values: `'Body'`, `'Header'`, `'Query'`. Defaults to `'Body'`.
 
 .PARAMETER AllowNonStandardBody
-    Allows POST-style bodies on non-POST routes (advanced use case). Only used with `QueryJson`.
+    Allows POST-style request bodies on non-POST methods. Only used with `QueryJson`.
 
 .PARAMETER PassThru
     If specified, returns the modified route(s) after applying the operation.
 
 .EXAMPLE
-    Add-PodeRoute -Method Post -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
-        Set-PodeAsyncRouteOperation -Query -QueryContentType 'application/json' -ResponseContentType 'application/json', 'application/yaml' -Payload Body -PassThru |
-        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info (Body)'
+    Add-PodeRoute -Method Post -Path '/tasks' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -QueryContentType 'application/json' -ResponseContentType 'application/json' -Payload Body -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info (JSON Body)'
 
-    Creates a POST route at `/tasks` for querying async tasks using structured JSON body.
+    Creates a POST route at `/tasks` that accepts a JSON request body for querying async tasks.
 
 .EXAMPLE
-    Add-PodeRoute -Method Get -Path '/tasks' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
-        Set-PodeAsyncRouteOperation -Query -ResponseContentType 'application/json' -DeepObject -PassThru |
+    Add-PodeRoute -Method Get -Path '/tasks' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -DeepObject -ResponseContentType 'application/json' -PassThru |
         Set-PodeOARouteInfo -Summary 'Query Async Route Task Info (DeepObject)'
 
-    Creates a GET route at `/tasks` using `filter[Field][op]=...&filter[Field][value]=...` query syntax.
+    Creates a GET route at `/tasks` that accepts deepObject-style query parameters, e.g.:
+    `/tasks?filter[State][op]=EQ&filter[State][value]=Completed`
 
 .EXAMPLE
-    Add-PodeRoute -Method Get -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+    Add-PodeRoute -Method Get -Path '/tasks' -PassThru |
+        Set-PodeAsyncRouteOperation -Query -Simple -ResponseContentType 'application/json' -PassThru |
+        Set-PodeOARouteInfo -Summary 'Query Async Route Task Info (Simple Query)'
+
+    Creates a GET route at `/tasks` that supports flat query strings, e.g.:
+    `/tasks?State=Completed,Cancellable=True`
+
+.EXAMPLE
+    Add-PodeRoute -Method Get -Path '/task' -PassThru |
         Set-PodeAsyncRouteOperation -Get -In Path -ResponseContentType 'application/json' -PassThru |
         Set-PodeOARouteInfo -Summary 'Get Async Task Info'
 
 .EXAMPLE
-    Add-PodeRoute -Method Delete -Path '/task' -Authentication 'MergedAuth' -Access 'MergedAccess' -Group 'Software' -PassThru |
+    Add-PodeRoute -Method Delete -Path '/task' -PassThru |
         Set-PodeAsyncRouteOperation -Stop -In Query -ResponseContentType 'application/json' -PassThru |
         Set-PodeOARouteInfo -Summary 'Stop Async Task'
 #>
@@ -99,6 +114,7 @@ function Set-PodeAsyncRouteOperation {
 
         [Parameter(Mandatory = $true, ParameterSetName = 'QueryJson')]
         [Parameter(Mandatory = $true, ParameterSetName = 'QueryDeepObject')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'SimpleQuery')]
         [switch]
         $Query,
 
@@ -121,6 +137,10 @@ function Set-PodeAsyncRouteOperation {
         [Parameter(ParameterSetName = 'QueryDeepObject')]
         [switch]
         $DeepObject,
+
+        [Parameter(ParameterSetName = 'SimpleQuery')]
+        [switch]
+        $Simple,
 
         [Parameter(ParameterSetName = 'QueryJson')]
         [string]
@@ -240,6 +260,18 @@ function Set-PodeAsyncRouteOperation {
                         PassThru         = $true
                     }
                 }
+                'SimpleQuery' {
+                    # Define the parameters for the route
+                    $param = @{
+                        Method           = $r.Method
+                        Path             = $r.Path
+                        ScriptBlock      = Get-PodeAsyncRouteQueryScriptBlock
+                        ArgumentList     = @('SimpleQuery', $r.OpenAPI.DefinitionTag)
+                        ErrorContentType = $ResponseContentType[0]
+                        ContentType      = $QueryContentType[0]
+                        PassThru         = $true
+                    }
+                }
             }
 
 
@@ -316,46 +348,7 @@ function Set-PodeAsyncRouteOperation {
                     # Add OpenAPI documentation postponed script
                     $newRoute.OpenApi.Postponed = {
                         param($param)
-                        if (!(Test-PodeOAComponent -Field schemas -Name $param.OAName.QueryRequestName )) {
-
-                            New-PodeOAStringProperty -Name 'op' -Enum 'GT', 'LT', 'GE', 'LE', 'EQ', 'NE', 'LIKE', 'NOTLIKE' -Required |
-                                New-PodeOAStringProperty -Name 'value' -Description 'The value to compare against' -Required |
-                                New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "String$($param.OAName.QueryParameterName)"
-
-
-                            New-PodeOAStringProperty -Name 'op' -Enum   'EQ', 'NE'  -Required |
-                                New-PodeOAStringProperty -Name 'value' -Description 'The value to compare against' -Required |
-                                New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "Boolean$($param.OAName.QueryParameterName)"
-
-                            New-PodeOAStringProperty -Name 'op' -Enum 'GT', 'LT', 'GE', 'LE', 'EQ', 'NE'  -Required |
-                                New-PodeOAStringProperty -Name 'value' -format Date-Time -Description 'The value to compare against' -Required |
-                                New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "DateTime$($param.OAName.QueryParameterName)"
-
-
-                            New-PodeOAStringProperty -Name 'op' -Enum 'GT', 'LT', 'GE', 'LE', 'EQ', 'NE'  -Required |
-                                New-PodeOANumberProperty -Name 'value' -Description 'The value to compare against' -Required |
-                                New-PodeOAObjectProperty | Add-PodeOAComponentSchema -Name "Number$($param.OAName.QueryParameterName)"
-
-                            # Define AsyncTaskQueryRequest using pipelining
-                            New-PodeOASchemaProperty -Name 'Id' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'AsyncRouteId' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'StartingTime' -Reference "DateTime$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'CreationTime' -Reference "DateTime$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'CompletedTime' -Reference "DateTime$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'ExpireTime' -Reference "DateTime$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'State' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'Error' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'CallbackSettings' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'Cancellable' -Reference "Boolean$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'SseEnabled' -Reference "Boolean$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'SseGroup' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'User' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'Url' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'Method' -Reference "String$($param.OAName.QueryParameterName)" |
-                                New-PodeOASchemaProperty -Name 'Progress' -Reference "Number$($param.OAName.QueryParameterName)" |
-                                New-PodeOAObjectProperty |
-                                Add-PodeOAComponentSchema -Name $param.OAName.QueryRequestName
-                        }
+                        New-PodeOAAsyncRouteQueryRequestSchema -OAName $param.OAName
 
                         # Define an example hashtable for the OpenAPI request
                         $exampleHashTable = @{
@@ -422,6 +415,104 @@ function Set-PodeAsyncRouteOperation {
                     }
 
                 }
+
+                'SimpleQuery' {
+                    # Add OpenAPI documentation postponed script
+                    $newRoute.OpenApi.Postponed = {
+                        param($param)
+                        New-PodeOAAsyncRouteQueryRequestSchema -OAName $param.OAName
+
+
+
+                        # Add OpenAPI route information and responses
+                        $param.Route |
+                            Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content (New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content $param.OAName.OATypeName -Array) -PassThru |
+                            Add-PodeOAResponse -StatusCode 400 -Description 'Invalid filter supplied' -Content (
+                                New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content (
+                                    New-PodeOAStringProperty -Name 'Error' -Required | New-PodeOAObjectProperty -XmlName "$($param.OAName.OATypeName)Error"
+                                )
+                            ) -PassThru | Add-PodeOAResponse -StatusCode 500 -Content (
+                                New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content (
+                                    New-PodeOAStringProperty -Name 'Error' -Required | New-PodeOAObjectProperty -XmlName "$($param.OAName.OATypeName)Error"
+                                )
+                            )
+
+
+                        $param.Route | Set-PodeOARequest -Parameters @(
+                                (New-PodeOAStringProperty -Name 'Id' -Description 'Filter by Id (EQ only)' -Example 'b143660f-ebeb-49d9-9f92-cd21f3ff559c' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'AsyncRouteId' -Description 'Filter by async route Id (EQ only)' -Example 'GetAsyncTask' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'State' -Description 'Filter by task state (EQ only)' -Example 'Completed' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'Error' -Description 'Filter by error message (EQ only)' -Example 'Timeout' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'CallbackSettings' -Description 'Filter by callback settings (EQ only)' -Example 'retry:3' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'SseGroup' -Description 'Filter by SSE group (EQ only)' -Example 'monitoring-group' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'User' -Description 'Filter by user (EQ only)' -Example 'admin' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'Url' -Description 'Filter by task URL (EQ only)' -Example '/api/v1/some-task' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'Method' -Description 'Filter by HTTP method (EQ only)' -Example 'POST' | ConvertTo-PodeOAParameter -In Query),
+
+                                (New-PodeOAStringProperty -Name 'StartingTime' -Format date-time -Description 'Filter by task start time (EQ only)' -Example '2024-07-05T20:00:00Z' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'CreationTime' -Format date-time -Description 'Filter by task creation time (EQ only)' -Example '2024-07-05T20:05:00Z' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'CompletedTime' -Format date-time -Description 'Filter by task completion time (EQ only)' -Example '2024-07-05T20:10:00Z' | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOAStringProperty -Name 'ExpireTime' -Format date-time -Description 'Filter by task expiry time (EQ only)' -Example '2024-07-06T20:00:00Z' | ConvertTo-PodeOAParameter -In Query),
+
+                                (New-PodeOABoolProperty -Name 'SseEnabled' -Description 'Filter by SSE enabled flag (EQ only)' -Example $true | ConvertTo-PodeOAParameter -In Query),
+                                (New-PodeOABoolProperty -Name 'Cancellable' -Description 'Filter by cancellable flag (EQ only)' -Example $false | ConvertTo-PodeOAParameter -In Query),
+
+                                (New-PodeOANumberProperty -Name 'Progress' -Description 'Filter by progress percentage (EQ only)' -Example 85 | ConvertTo-PodeOAParameter -In Query)
+                        )
+                    }
+                }
+
+                'QueryDeepObject' {
+                    # Add OpenAPI documentation postponed script
+                    $newRoute.OpenApi.Postponed = {
+                        param($param)
+                        New-PodeOAAsyncRouteQueryRequestSchema -OAName $param.OAName
+
+                        # Add OpenAPI route information and responses
+                        $param.Route |
+                            Add-PodeOAResponse -StatusCode 200 -Description 'Successful operation' -Content (New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content $param.OAName.OATypeName -Array) -PassThru |
+                            Add-PodeOAResponse -StatusCode 400 -Description 'Invalid filter supplied' -Content (
+                                New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content (
+                                    New-PodeOAStringProperty -Name 'Error' -Required | New-PodeOAObjectProperty -XmlName "$($param.OAName.OATypeName)Error"
+                                )
+                            ) -PassThru | Add-PodeOAResponse -StatusCode 500 -Content (
+                                New-PodeOAContentMediaType -MediaType $param.ResponseContentType -Content (
+                                    New-PodeOAStringProperty -Name 'Error' -Required | New-PodeOAObjectProperty -XmlName "$($param.OAName.OATypeName)Error"
+                                )
+                            )
+
+                               $exampleHashTable = @{
+                            'StartingTime' = @{
+                                op    = 'GT'
+                                value = (Get-Date '2024-07-05T20:20:00Z')
+                            }
+                            'CreationTime' = @{
+                                op    = 'LE'
+                                value = (Get-Date '2024-07-05T20:20:00Z')
+                            }
+                            'State'        = @{
+                                op    = 'EQ'
+                                value = 'Completed'
+                            }
+                            'AsyncRouteId' = @{
+                                op    = 'LIKE'
+                                value = 'Get'
+                            }
+                            'Id'           = @{
+                                op    = 'EQ'
+                                value = 'b143660f-ebeb-49d9-9f92-cd21f3ff559c'
+                            }
+                            'Cancellable'  = @{
+                                op    = 'EQ'
+                                value = $true
+                            }
+                        }
+                        $qpm = $param.OAName.QueryDeepObjectName
+
+                        $param.Route | Set-PodeOARequest -Parameters (ConvertTo-PodeOAParameter -In Query -Schema $param.OAName.QueryRequestName -Style DeepObject -Explode `
+                                -Example $exampleHashTable)
+                    }
+                }
             }
 
             # Attach argument metadata for OpenAPI and further processing.
@@ -435,7 +526,6 @@ function Set-PodeAsyncRouteOperation {
                 Route                = $newRoute
             }
 
-
             # Collect the created route for possible PassThru return.
             $newRoutes += $newRoute
         }
@@ -444,9 +534,7 @@ function Set-PodeAsyncRouteOperation {
         if ($PassThru) {
             return $newRoutes
         }
-
     }
-
 }
 
 <#
