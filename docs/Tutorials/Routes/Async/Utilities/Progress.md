@@ -1,27 +1,24 @@
 
-## Progress
+# Progress
 
 The Progress functions in Pode allow you to manage and retrieve the progress of asynchronous tasks within your routes. These functions provide real-time feedback on the status of your tasks, making it easier to track and monitor long-running operations.
 
 **Note**: These functions can only be used inside an AsyncRoute scriptblock. Using them outside of that context will generate an exception.
 
-### Set-PodeAsyncRouteProgress
+## Set-PodeAsyncRouteProgress
 
 The `Set-PodeAsyncRouteProgress` function manages the progress of an asynchronous task within Pode routes. It allows you to update the progress of a running asynchronous task in various ways, providing real-time feedback on the task's status.
 
-#### Key Features
+### Key Features
 
 - **Start and End Progress with Ticks**: Define a starting and ending progress value, with optional steps to increment progress. Use ticks to advance the progress in this scenario.
 - **Time-based Progress**: Automatically increment progress over a specified duration with interval-based ticks.
 - **Set Specific Progress Value**: Directly set the progress to a specific value.
 - **SSE Integration**: If `Server-Sent Events (Sse)` is configured for the route, a 'pode.progress' event is automatically sent to the web client, providing real-time updates on the task's progress.
 
+### Example Usage
 
-#### Example Usage
-
-
-
-##### Start and End Progress with Ticks
+#### Start and End Progress with Ticks
 
 ```powershell
 Add-PodeRoute -PassThru -Method Post -Path '/process-data' -ScriptBlock {
@@ -39,9 +36,10 @@ Add-PodeRoute -PassThru -Method Post -Path '/process-data' -ScriptBlock {
 ```
 
 In this example:
+
 - An async route processes data and sends progress updates using `Set-PodeAsyncRouteProgress`.
 
-##### Multiple Start and End Progress with Ticks
+#### Multiple Start and End Progress with Ticks
 
 ```powershell
 Add-PodeRoute -PassThru -Method Get -Path '/SumOfSquareRoot' -ScriptBlock {
@@ -67,12 +65,11 @@ Add-PodeRoute -PassThru -Method Get -Path '/SumOfSquareRoot' -ScriptBlock {
 ```
 
 In this example:
+
 - The first progress runs from 0 to 80 with a default step of 1, representing progress as a decimal number.
 - The second progress runs from 80 to 100 with a step of 4, also representing progress as a decimal number.
 
-
-
-##### Time-based Progress
+#### Time-based Progress
 
 ```powershell
 Add-PodeRoute -PassThru -Method Put -Path 'asyncProgressByTimer' -ScriptBlock {
@@ -84,9 +81,10 @@ Add-PodeRoute -PassThru -Method Put -Path 'asyncProgressByTimer' -ScriptBlock {
 ```
 
 In this example:
+
 - The progress is automatically incremented over a duration of 30 seconds, with updates every second.
 
-##### Set Specific Progress Value
+#### Set Specific Progress Value
 
 ```powershell
 Set-PodeAsyncRouteProgress -Value 75

@@ -1,8 +1,8 @@
-## Server-Sent Events (SSE)
+# Server-Sent Events (SSE)
 
 Server-Sent Events (SSE) can be integrated with asynchronous routes to enable real-time updates to the client. This feature is especially useful for long-running tasks, where clients can receive continuous feedback without needing to poll the server.
 
-### Key Features
+## Key Features
 
 - **Real-time Server Push**: Sends updates from the server to the client in real-time, keeping the client informed about the progress or completion of asynchronous tasks.
 - **Progress and Task Completion Events**: Automatically trigger events like `pode.taskCompleted` to notify clients when a task finishes, with the option to include result data or error details.
@@ -35,6 +35,7 @@ Add-PodeRoute -PassThru -Method Post -Path '/process-data' -ScriptBlock {
 ```
 
 In this example:
+
 - An async route processes data and sends progress updates using `Set-PodeAsyncRouteProgress`.
 - The route is enabled for SSE, pushing real-time progress events to clients grouped under 'DataProcess'.
 
@@ -80,6 +81,7 @@ Add-PodeRoute -PassThru -Method Get -Path '/sse' -ScriptBlock {
 ```
 
 In this example:
+
 - Custom SSE events are sent to the client at specific intervals with messages that include the current time.
 - After a delay, a final SSE event is sent, and the client receives a JSON response once the task is complete.
 
