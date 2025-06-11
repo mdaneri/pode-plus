@@ -92,6 +92,9 @@ Add-PodeRoute -Method Post -Path '/user' -ContentType 'application/json' -Script
 Add-PodeRoute -Method Post -Path '/user' -ContentType 'application/json' -TransferEncoding gzip -ScriptBlock { /* logic */ }
 
 .EXAMPLE
+Add-PodeRoute -Method Post -Path '/user' -ContentType 'application/json' -FilePath '/route.ps1'
+
+.EXAMPLE
 Add-PodeRoute -Method Get -Path '/api/cpu' -ErrorContentType 'application/json' -ScriptBlock { /* logic */ }
 
 .EXAMPLE
@@ -128,7 +131,7 @@ function Add-PodeRoute {
 
         [Parameter(ParameterSetName = 'Script')]
         [scriptblock]
-        $ScriptBlock = {},
+        $ScriptBlock,
 
         [Parameter( )]
         [AllowNull()]
@@ -301,11 +304,10 @@ function Add-PodeRoute {
         $IfExists = Get-PodeRouteIfExistsPreference
     }
 
-    # if middleware, scriptblock and file path are all null/empty, error
-    #   if ((Test-PodeIsEmpty $Middleware) -and (Test-PodeIsEmpty $ScriptBlock) -and (Test-PodeIsEmpty $FilePath) -and (Test-PodeIsEmpty $Authentication)) {
-    # [Method] Path: No logic passed
-    #      throw ($PodeLocale.noLogicPassedForMethodRouteExceptionMessage -f ($Method -join ','), $Path)
-    # }
+    # if middleware, scriptblock and file path are all null/empty, create an empty scriptblock
+    if ((Test-PodeIsEmpty $Middleware) -and (Test-PodeIsEmpty $ScriptBlock) -and (Test-PodeIsEmpty $FilePath) -and (Test-PodeIsEmpty $Authentication)) {
+        $ScriptBlock = {}
+    }
 
     # if we have a file path supplied, load that path as a scriptblock
     if ($PSCmdlet.ParameterSetName -ieq 'file') {
@@ -1071,74 +1073,92 @@ function Add-PodeSignalRoute {
 
 <#
 .SYNOPSIS
-Add a Route Group for multiple Routes.
+Adds a Route Group for organizing and sharing configuration across multiple routes.
 
 .DESCRIPTION
-Add a Route Group for sharing values between multiple Routes.
+Adds a Route Group, enabling multiple routes to share common values such as base path, middleware, authentication, and other configuration.
+You can define the group's routes inline via a ScriptBlock using `-Routes`, or load them from an external `.ps1` file using `-FilePath`.
 
 .PARAMETER Path
-The URI path to use as a base for the Routes, that should be prepended.
+The URI path to use as a base for the Routes, which is prepended to all routes in the group.
 
 .PARAMETER Routes
-A ScriptBlock for adding Routes.
+A ScriptBlock for adding routes within the group. All routes defined here will inherit the group's shared configuration.
+
+.PARAMETER FilePath
+A literal or relative path to a `.ps1` file that contains route definitions. The file will be executed in the context of the group,
+and all routes defined within will inherit the group's shared configuration. Cannot be used together with `-Routes`.
 
 .PARAMETER Middleware
-An array of ScriptBlocks for optional Middleware to give each Route.
+An array of ScriptBlocks for middleware to be applied to each route in the group.
 
 .PARAMETER EndpointName
-The EndpointName of an Endpoint(s) to use for the Routes.
+The EndpointName(s) to use for the routes in the group.
 
 .PARAMETER ContentType
-The content type to use for the Routes, when parsing any payloads.
+The default content type to use for the group's routes when parsing payloads.
 
 .PARAMETER TransferEncoding
-The transfer encoding to use for the Routes, when parsing any payloads.
+The transfer encoding to use for the group's routes, when parsing payloads.
 
 .PARAMETER ErrorContentType
-The content type of any error pages that may get returned.
+The content type of any error pages returned by the group's routes.
 
 .PARAMETER Authentication
-The name of an Authentication method which should be used as middleware on the Routes.
+The name of an authentication method to require on the group's routes.
 
 .PARAMETER Access
-The name of an Access method which should be used as middleware on this Route.
+The name of an access method to require on the group's routes.
 
 .PARAMETER IfExists
-Specifies what action to take when a Route already exists. (Default: Default)
+Specifies what action to take if a route already exists. (Default: Default)
 
 .PARAMETER Role
-One or more optional Roles that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional roles that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER Group
-One or more optional Groups that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional groups that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER Scope
-One or more optional Scopes that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional scopes that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER User
-One or more optional Users that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional users that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER AllowAnon
-If supplied, the Routes will allow anonymous access for non-authenticated users.
+If supplied, allows anonymous (non-authenticated) access to the group's routes.
 
 .PARAMETER OADefinitionTag
-An Array of strings representing the unique tag for the API specification.
-This tag helps in distinguishing between different versions or types of API specifications within the application.
-You can use this tag to reference the specific API documentation, schema, or version that your function interacts with.
+An array of strings representing unique tags for the OpenAPI specification.
+Helps distinguish between different versions or types of API specifications within the application.
 
 .EXAMPLE
-Add-PodeRouteGroup -Path '/api' -Routes { Add-PodeRoute -Path '/route1' -Etc }
+Add-PodeRouteGroup -Path '/api' -Routes {
+    Add-PodeRoute -Method Get -Path '/one' -ScriptBlock { Write-PodeJsonResponse -Value @{ Msg = "One" } }
+    Add-PodeRoute -Method Get -Path '/two' -ScriptBlock { Write-PodeJsonResponse -Value @{ Msg = "Two" } }
+}
+
+This creates two routes `/api/one` and `/api/two` sharing the `/api` path.
+
+.EXAMPLE
+Add-PodeRouteGroup -Path '/api' -FilePath './routes/api-routes.ps1'
+
+This loads route definitions from the external file `api-routes.ps1` and applies the group settings to them.
 #>
 function Add-PodeRouteGroup {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Routes')]
     param(
         [Parameter()]
         [string]
         $Path,
 
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Routes')]
         [scriptblock]
         $Routes,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'File')]
+        [string]
+        $FilePath,
 
         [Parameter()]
         [object[]]
@@ -1197,6 +1217,10 @@ function Add-PodeRouteGroup {
         [string[]]
         $OADefinitionTag
     )
+
+    if ($PSCmdlet.ParameterSetName -ieq 'File') {
+        $Routes = Convert-PodeFileToScriptBlock -FilePath $FilePath
+    }
 
     if (Test-PodeIsEmpty $Routes) {
         # The Route parameter needs a valid, not empty, scriptblock
@@ -1305,76 +1329,95 @@ function Add-PodeRouteGroup {
 
 <#
 .SYNOPSIS
-Add a Static Route Group for multiple Static Routes.
+Adds a Static Route Group for organizing and sharing configuration across multiple static routes.
 
 .DESCRIPTION
-Add a Static Route Group for sharing values between multiple Static Routes.
+Adds a Static Route Group, enabling multiple static routes to share common values such as base path, static source, middleware, authentication, and other configuration.
+You can define the group's static routes inline via a ScriptBlock using `-Routes`, or load them from an external `.ps1` file using `-FilePath`.
 
 .PARAMETER Path
-The URI path to use as a base for the Static Routes.
+The URI path to use as a base for the static routes, which is prepended to all routes in the group.
 
 .PARAMETER Source
-A literal, or relative, base path to the directory that contains the static content, that should be prepended.
+A literal or relative base path to the directory that contains the static content to be served.
 
 .PARAMETER Routes
-A ScriptBlock for adding Static Routes.
+A ScriptBlock for adding static routes within the group. All routes defined here will inherit the group's shared configuration.
+
+.PARAMETER FilePath
+A literal or relative path to a `.ps1` file that contains static route definitions. The file will be executed in the context of the group,
+and all static routes defined within will inherit the group's shared configuration. Cannot be used together with `-Routes`.
 
 .PARAMETER Middleware
-An array of ScriptBlocks for optional Middleware to give each Static Route.
+An array of ScriptBlocks for middleware to be applied to each static route in the group.
 
 .PARAMETER EndpointName
-The EndpointName of an Endpoint(s) to use for the Static Routes.
+The EndpointName(s) to use for the static routes in the group.
 
 .PARAMETER ContentType
-The content type to use for the Static Routes, when parsing any payloads.
+The default content type to use for the group's static routes when serving files.
 
 .PARAMETER TransferEncoding
-The transfer encoding to use for the Static Routes, when parsing any payloads.
+The transfer encoding to use for the group's static routes.
 
 .PARAMETER Defaults
-An array of default pages to display, such as 'index.html', for each Static Route.
+An array of default pages to display (such as 'index.html') for each static route.
 
 .PARAMETER ErrorContentType
-The content type of any error pages that may get returned.
+The content type of any error pages returned by the group's static routes.
 
 .PARAMETER Authentication
-The name of an Authentication method which should be used as middleware on the Static Routes.
+The name of an authentication method to require on the group's static routes.
 
 .PARAMETER Access
-The name of an Access method which should be used as middleware on this Route.
+The name of an access method to require on the group's static routes.
 
 .PARAMETER IfExists
-Specifies what action to take when a Static Route already exists. (Default: Default)
+Specifies what action to take if a static route already exists. (Default: Default)
 
 .PARAMETER AllowAnon
-If supplied, the Static Routes will allow anonymous access for non-authenticated users.
+If supplied, allows anonymous (non-authenticated) access to the group's static routes.
 
 .PARAMETER FileBrowser
-When supplied, If the path is a folder, instead of returning 404, will return A browsable content of the directory.
+If supplied, and the path is a folder, returns a browsable listing of the directory instead of 404.
 
 .PARAMETER DownloadOnly
-When supplied, all static content on the Routes will be attached as downloads - rather than rendered.
+If supplied, all static content on the routes will be sent as file downloads rather than rendered.
 
 .PARAMETER Role
-One or more optional Roles that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional roles that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER Group
-One or more optional Groups that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional groups that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER Scope
-One or more optional Scopes that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional scopes that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER User
-One or more optional Users that will be authorised to access this Route, when using Authentication with an Access method.
+One or more optional users that will be authorized to access these routes (when using authentication and access).
 
 .PARAMETER RedirectToDefault
-If supplied, the user will be redirected to the default page if found instead of the page being rendered as the folder path.
+If supplied, users will be redirected to the default page if found instead of rendering the folder path.
 
 .EXAMPLE
-Add-PodeStaticRouteGroup -Path '/static' -Routes { Add-PodeStaticRoute -Path '/images' -Etc }
+Add-PodeStaticRouteGroup -Path '/static' -Routes {
+    Add-PodeStaticRoute -Path '/images' -Source '/images'
+    Add-PodeStaticRoute -Path '/docs' -Source '/docs'
+}
+
+This creates two static routes at `/static/images` and `/static/docs`, serving files from the corresponding subdirectories.
+
+.EXAMPLE
+Add-PodeStaticRouteGroup -Path '/static' -Source './content/static' -FilePath './routes/static-routes.ps1'
+
+This loads static route definitions from `static-routes.ps1` and applies the group settings to them.
+
+.NOTES
+- Either `-Routes` or `-FilePath` **must** be supplied, but not both.
+- Static routes defined via `-FilePath` are executed in the context of the route group and inherit all shared configuration.
 #>
 function Add-PodeStaticRouteGroup {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Routes')]
     param(
         [Parameter()]
         [string]
@@ -1384,9 +1427,13 @@ function Add-PodeStaticRouteGroup {
         [string]
         $Source,
 
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Routes')]
         [scriptblock]
         $Routes,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'File')]
+        [string]
+        $FilePath,
 
         [Parameter()]
         [object[]]
@@ -1455,6 +1502,9 @@ function Add-PodeStaticRouteGroup {
         [switch]
         $RedirectToDefault
     )
+    if ($PSCmdlet.ParameterSetName -ieq 'File') {
+        $Routes = Convert-PodeFileToScriptBlock -FilePath $FilePath
+    }
 
     if (Test-PodeIsEmpty $Routes) {
         # The Route parameter needs a valid, not empty, scriptblock
@@ -1580,39 +1630,62 @@ function Add-PodeStaticRouteGroup {
     $null = Invoke-PodeScriptBlock -ScriptBlock $Routes -UsingVariables $usingVars -Splat -NoNewClosure
 }
 
-
 <#
 .SYNOPSIS
-Adds a Signal Route Group for multiple WebSockets.
+Adds a Signal Route Group for organizing and sharing configuration across multiple WebSocket (Signal) routes.
 
 .DESCRIPTION
-Adds a Signal Route Group for sharing values between multiple WebSockets.
+Adds a Signal Route Group, enabling multiple Signal (WebSocket) routes to share common values such as base path and endpoint configuration.
+You can define the group's signal routes inline via a ScriptBlock using `-Routes`, or load them from an external `.ps1` file using `-FilePath`.
 
 .PARAMETER Path
-The URI path to use as a base for the Signal Routes, that should be prepended.
+The URI path to use as a base for the Signal routes, which is prepended to all signal routes in the group.
 
 .PARAMETER Routes
-A ScriptBlock for adding Signal Routes.
+A ScriptBlock for adding signal routes within the group. All routes defined here will inherit the group's shared configuration.
+
+.PARAMETER FilePath
+A literal or relative path to a `.ps1` file that contains signal route definitions. The file will be executed in the context of the group,
+and all signal routes defined within will inherit the group's shared configuration. Cannot be used together with `-Routes`.
 
 .PARAMETER EndpointName
-The EndpointName of an Endpoint(s) to use for the Signal Routes.
+The EndpointName(s) to use for the signal routes in the group.
 
 .PARAMETER IfExists
-Specifies what action to take when a Signal Route already exists. (Default: Default)
+Specifies what action to take if a signal route already exists. (Default: Default)
 
 .EXAMPLE
-Add-PodeSignalRouteGroup -Path '/signals' -Routes { Add-PodeSignalRoute -Path '/signal1' -Etc }
+Add-PodeSignalRouteGroup -Path '/signals' -Routes {
+    Add-PodeSignalRoute -Path '/chat' -ScriptBlock { Send-PodeSignal -Value "hello" }
+    Add-PodeSignalRoute -Path '/broadcast' -ScriptBlock { Send-PodeSignal -Value "world" }
+}
+
+This creates two signal routes at `/signals/chat` and `/signals/broadcast` that share the `/signals` path.
+
+.EXAMPLE
+Add-PodeSignalRouteGroup -Path '/api' -FilePath './routes/signals.ps1'
+
+This loads signal route definitions from `signals.ps1` and applies the group settings to them.
+
+.NOTES
+- Either `-Routes` or `-FilePath` **must** be supplied, but not both.
+- Signal routes defined via `-FilePath` are executed in the context of the route group and inherit all shared configuration.
 #>
+
 function Add-PodeSignalRouteGroup {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Routes')]
     param(
         [Parameter()]
         [string]
         $Path,
 
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Routes' )]
         [scriptblock]
         $Routes,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'File')]
+        [string]
+        $FilePath,
 
         [Parameter()]
         [string[]]
@@ -1623,6 +1696,9 @@ function Add-PodeSignalRouteGroup {
         [string]
         $IfExists = 'Default'
     )
+    if ($PSCmdlet.ParameterSetName -ieq 'File') {
+        $Routes = Convert-PodeFileToScriptBlock -FilePath $FilePath
+    }
 
     if (Test-PodeIsEmpty $Routes) {
         # The Route parameter needs a valid, not empty, scriptblock
