@@ -37,6 +37,10 @@ Describe 'REST API Requests' {
         $Port = 8043
         $Endpoint = "https://127.0.0.1:$($Port)"
 
+        # Ensure the port is free
+        Wait-ForWebServer -Protocol https -Port $Port -Offline
+
+        # Start the Pode server in a job
         Start-Job -Name 'Pode' -ErrorAction Stop -ScriptBlock {
             Import-Module -Name "$($using:PSScriptRoot)\..\..\src\Pode.psm1"
 

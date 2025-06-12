@@ -9,6 +9,10 @@ Describe 'Web Page Requests' {
         $Port = 8080
         $Endpoint = "http://127.0.0.1:$($Port)"
 
+        # Ensure the port is free
+        Wait-ForWebServer -Port $Port -Offline
+        
+        # Start the Pode server in a job
         Start-Job -Name 'Pode' -ErrorAction Stop -ScriptBlock {
             Import-Module -Name "$($using:PSScriptRoot)\..\..\src\Pode.psm1"
 

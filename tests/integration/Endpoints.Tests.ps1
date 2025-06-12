@@ -6,13 +6,18 @@ Describe 'Endpoint Requests' {
     BeforeAll {
         $helperPath = (Split-Path -Parent -Path $PSCommandPath) -ireplace 'integration', 'shared'
         . "$helperPath/TestHelper.ps1"
-        
+
         $Port1 = 8080
         $Endpoint1 = "http://127.0.0.1:$($Port1)"
 
         $Port2 = 8081
         $Endpoint2 = "http://127.0.0.1:$($Port2)"
-
+        # Ensure the port is free
+        Wait-ForWebServer -Port $Port1 -Offline
+        # Ensure the port is free
+        Wait-ForWebServer -Port $Port2 -Offline
+        
+        # Start the Pode server in a job
         Start-Job -Name 'Pode' -ErrorAction Stop -ScriptBlock {
             Import-Module -Name "$($using:PSScriptRoot)\..\..\src\Pode.psm1"
 
