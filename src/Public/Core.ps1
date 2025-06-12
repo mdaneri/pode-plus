@@ -231,9 +231,6 @@ function Start-PodeServer {
         }
 
         # Store the name of the current runspace
-        }
-
-        # Store the name of the current runspace
         $previousRunspaceName = Get-PodeCurrentRunspaceName
 
         if ([string]::IsNullOrEmpty($ApplicationName)) {
