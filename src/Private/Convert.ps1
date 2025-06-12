@@ -411,7 +411,10 @@ function Convert-PsCustomObjectToOrderedHashtable {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [PSCustomObject]$InputObject,
+        [PSCustomObject]
+        $InputObject,
+        
+        [Parameter()]
         [switch]
         $Ordered
     )
