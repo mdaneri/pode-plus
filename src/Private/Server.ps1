@@ -46,6 +46,9 @@ function Start-PodeInternalServer {
         # run start event hooks
         Invoke-PodeEvent -Type Starting
 
+        # Indicating that the Watchdog client is starting
+        Set-PodeWatchdogHearthbeatStatus -Status 'Starting'
+
         # setup temp drives for internal dirs
         Add-PodePSInbuiltDrive
 
@@ -68,6 +71,7 @@ function Start-PodeInternalServer {
         }
 
         $_script = Convert-PodeScopedVariables -ScriptBlock $_script -Exclude Session, Using
+
         $null = Invoke-PodeScriptBlock -ScriptBlock $_script -NoNewClosure -Splat
 
         #Validate OpenAPI definitions
@@ -183,7 +187,9 @@ function Start-PodeInternalServer {
             }
         }
 
-
+        # Start Watchdog heartbeat if enabled
+        Start-PodeWatchdog
+        
         # set the start time of the server (start and after restart)
         $PodeContext.Metrics.Server.StartTime = [datetime]::UtcNow
 
@@ -194,6 +200,12 @@ function Start-PodeInternalServer {
 
         # run running event hooks
         Invoke-PodeEvent -Type Running
+
+        # Displays startup information for the Pode Watchdog service.
+        Write-PodeWatchdogStartupMessage
+
+        # Marking the Watchdog client as 'Running' now that the process is stable
+        Set-PodeWatchdogHearthbeatStatus -Status 'Running'
 
 
         # Start Service Monitor
@@ -231,13 +243,21 @@ function Restart-PodeInternalServer {
         # Restarting server...
         Show-PodeConsoleInfo
 
+        # Setting the Watchdog status to 'Restarting' as part of the process recovery
+        Set-PodeWatchdogHearthbeatStatus -Status 'Restarting'
+
         # run restarting event hooks
         Invoke-PodeEvent -Type Restarting
 
         # cancel the session token
         Close-PodeCancellationTokenRequest -Type Cancellation, Terminate
 
+        # stop the watchdog if it's running
+        Write-Verbose 'Stopping watchdog'
+        Stop-PodeWatchdog
+
         # close all current runspaces
+        Write-Verbose 'Closing runspaces'
         Close-PodeRunspace -ClosePool
 
         # remove all of the pode temp drives
@@ -649,23 +669,24 @@ function Test-PodeServerIsEnabled {
 
 <#
 .SYNOPSIS
-    Gracefully shuts down internal Pode server resources.
+    Closes and cleans up all resources associated with the internal Pode server context.
 
 .DESCRIPTION
-    The `Close-PodeServerInternal` function performs cleanup of internal Pode server resources.
-    It cancels active tokens, closes runspaces, stops file monitors, disposes synchronization objects,
-    and removes internal PowerShell drives.
+    This function performs a full cleanup of the internal Pode server state. It cancels running tokens, stops background monitoring processes,
+    closes active runspaces, disposes of mutexes and semaphores, and removes internal PowerShell drives. This function is meant for internal use
+    within the Pode server lifecycle and should be called when the server is shutting down or restarting.
 
-    It is intended for internal use within the Pode framework to ensure a clean server shutdown.
+.PARAMETER None
+    This internal function does not take any parameters.
 
-.NOTES
-    This function is for internal framework use and is not intended to be called directly by users.
+.OUTPUTS
+    None
 
 .EXAMPLE
     Close-PodeServerInternal
 
-    Gracefully closes all active internal Pode server resources.
-
+.NOTES
+    This is an internal Pode function and is subject to change.
 #>
 function Close-PodeServerInternal {
     # PodeContext doesn't exist return
@@ -674,6 +695,10 @@ function Close-PodeServerInternal {
         # ensure the token is cancelled
         Write-Verbose 'Cancelling main cancellation token'
         Close-PodeCancellationTokenRequest -Type Cancellation, Terminate
+
+        # stop the watchdog if it's running
+        Write-Verbose 'Stopping watchdog'
+        Stop-PodeWatchdog
 
         # stop all current runspaces
         Write-Verbose 'Closing runspaces'
