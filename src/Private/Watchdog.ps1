@@ -801,7 +801,7 @@ function Write-PodeWatchdogLog {
     [CmdletBinding(DefaultParameterSetName = 'Message')]
     param(
         [Parameter(Mandatory = $true)]
-        [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]
+        [System.Collections.Concurrent.ConcurrentDictionary[string, object]]
         $Watchdog,
 
         [Parameter(Mandatory = $true, ValueFromPipeline = $true, ParameterSetName = 'Exception')]

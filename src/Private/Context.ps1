@@ -55,7 +55,7 @@ function New-PodeContext {
         [string]
         $ConfigFile,
 
-        [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]
+        [System.Collections.Concurrent.ConcurrentDictionary[string, object]]
         $Watchdog,
 
         [string]
@@ -193,7 +193,7 @@ function New-PodeContext {
         AsyncRoutes = 0
         Timers      = 1
         Service     = 0
-        Watchers   = 0
+        Watchers    = 0
     }
 
     # set socket details for pode server
@@ -549,7 +549,7 @@ function New-PodeContext {
     $ctx.RunspacePools['Files'] = $null
     $ctx.RunspacePools['Timers'] = $null
     $ctx.RunspacePools['Service'] = $null
-     $ctx.RunspacePools['Watchdog'] = $null
+    $ctx.RunspacePools['Watchdog'] = $null
 
     # threading locks, etc.
     $ctx.Threading.Lockables = @{

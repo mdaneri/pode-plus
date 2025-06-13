@@ -187,7 +187,9 @@ function Start-PodeInternalServer {
             }
         }
 
-
+        # Start Watchdog heartbeat if enabled
+        Start-PodeWatchdog
+        
         # set the start time of the server (start and after restart)
         $PodeContext.Metrics.Server.StartTime = [datetime]::UtcNow
 

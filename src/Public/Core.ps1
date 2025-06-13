@@ -268,7 +268,7 @@ function Start-PodeServer {
                     ConfigFile          = $PodeService.ConfigFile
                     IgnoreServerConfig  = $PodeService.IgnoreServerConfig
                 }
-                Write-PodeHost $PodeService -Explode -Force            }
+            }
         }
 
         # check if podeWatchdog is configured
@@ -282,7 +282,7 @@ function Start-PodeServer {
                     $watchdogClient = ConvertTo-PodeConcurrentStructure -InputObject $PodeWatchdog
                 }
                 else {
-                    $watchdogClient = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+                    $watchdogClient = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                     $PodeWatchdog | Get-Member -MemberType Properties | ForEach-Object {
                         $watchdogClient[$_.Name] = $PodeWatchdog.$($_.Name) }
                 }

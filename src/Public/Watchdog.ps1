@@ -212,7 +212,7 @@ function Enable-PodeWatchdog {
     $escapedJsonConfig = ($PodeWatchdog | ConvertTo-Json -Compress).Replace('"', '\"')
 
     # Initialize Watchdog context with parameters
-    $watchdog = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+    $watchdog = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $watchdog['Name'] = $Name
     $watchdog['Shell'] = (Get-Process -Id $PID).Path
     $watchdog['Arguments'] = "$arguments  '$escapedJsonConfig'"
@@ -222,7 +222,7 @@ function Enable-PodeWatchdog {
     $watchdog['Enabled'] = $true
     $watchdog['FilePath'] = $FilePath
     $watchdog['RestartCount'] = -1
-    $watchdog['AutoRestart'] = [System.Collections.Concurrent.ConcurrentDictionary[string, PSObject]]::new()
+    $watchdog['AutoRestart'] =  [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $watchdog.AutoRestart['Enabled'] = ! $NoAutostart.IsPresent
     $watchdog.AutoRestart['RestartServiceAfter'] = $RestartServiceAfter
     $watchdog.AutoRestart['MaxNumberOfRestarts'] = $MaxNumberOfRestarts
@@ -360,8 +360,7 @@ function Get-PodeWatchdogProcessMetric {
 
     # Check if the specified Watchdog service is active and managing a process
     if ((Test-PodeWatchdog -Name $Name)) {
-        $watchdog = $PodeContext.Server.Watchdog.Server[$Name]
-
+        $watchdog = $PodeContext.Server.Watchdog.Server[$Name] 
         # Ensure that process information is available for the monitored process
         if ($null -ne $watchdog.ProcessInfo) {
             $processInfo = $watchdog.ProcessInfo
