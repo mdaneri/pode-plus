@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -12,6 +13,9 @@ namespace Pode
     public class PodeResponse : IDisposable
     {
         protected const int MAX_FRAME_SIZE = 8192;
+
+        // “Small” files up to 64 MiB get buffered in-memory; anything larger is streamed.
+        private const long MAX_IN_MEMORY_FILE_SIZE = 64L * 1024 * 1024;
 
         public PodeResponseHeaders Headers { get; private set; }
         public int StatusCode = 200;
@@ -86,7 +90,7 @@ namespace Pode
             OutputStream = new MemoryStream();
             Context = context;
         }
-        
+
         //Clone constructor
         public PodeResponse(PodeResponse other)
         {
@@ -432,27 +436,81 @@ namespace Pode
             }
         }
 
-        public void WriteFile(string path)
+        public async Task WriteFile(string path)
         {
-            WriteFile(new FileInfo(path));
+            await WriteFile(new FileInfo(path)).ConfigureAwait(false);
         }
 
-        public void WriteFile(FileSystemInfo file)
+        public async Task WriteFile(FileSystemInfo file)
+        {
+            if (!(file is FileInfo fi) || !fi.Exists)
+                throw new FileNotFoundException($"File not found: {file.FullName}");
+
+            // If the file is small enough, keep the existing behaviour.
+            if (fi.Length <= MAX_IN_MEMORY_FILE_SIZE)
+            {
+                ContentLength64 = fi.Length;
+                using (var fs = fi.OpenRead())
+                {
+                    fs.CopyTo(OutputStream);   // original logic
+                }
+                return;
+            }
+
+            // Bigger than 2 GB – stream it
+            await WriteLargeFile(fi).ConfigureAwait(false);
+        }
+
+        public async Task WriteLargeFile(FileInfo fileInfo)
         {
             if (IsDisposed)
             {
                 return;
             }
 
-            if (!(file is FileInfo fileInfo) || !fileInfo.Exists)
+            if (!fileInfo.Exists)
             {
-                throw new FileNotFoundException($"File not found: {file.FullName}");
+                throw new FileNotFoundException($"File not found: {fileInfo.FullName}");
             }
 
             ContentLength64 = fileInfo.Length;
-            using (var fileStream = fileInfo.OpenRead())
+            await SendHeaders(false).ConfigureAwait(false);
+
+            const int BufferSize = 64 * 1024;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+
+            try
             {
-                fileStream.CopyTo(OutputStream);
+                using (var fs = fileInfo.OpenRead())
+                {
+#if NETCOREAPP2_1_OR_GREATER
+                    int read;
+                    while ((read = await fs
+                                 .ReadAsync(buffer.AsMemory(0, BufferSize), Context.Listener.CancellationToken)
+                                 .ConfigureAwait(false)) > 0)
+                    {
+                        await Request.InputStream
+                                    .WriteAsync(buffer.AsMemory(0, read), Context.Listener.CancellationToken)
+                                    .ConfigureAwait(false);
+                    }
+#else
+            int read;
+            while ((read = await fs
+                         .ReadAsync(buffer, 0, buffer.Length, Context.Listener.CancellationToken)
+                         .ConfigureAwait(false)) > 0)
+            {
+                await Request.InputStream
+                            .WriteAsync(buffer, 0, read, Context.Listener.CancellationToken)
+                            .ConfigureAwait(false);
+            }
+#endif
+                }
+
+                SentBody = true;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
 
@@ -534,20 +592,30 @@ namespace Pode
 
         public void Dispose()
         {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
             if (IsDisposed)
-            {
                 return;
-            }
 
-            IsDisposed = true;
-
-            if (OutputStream != default(MemoryStream))
+            if (disposing)
             {
-                OutputStream.Dispose();
-                OutputStream = default;
+                // free managed resources
+                if (OutputStream != null)
+                {
+                    OutputStream.Dispose();
+                    OutputStream = null;
+                }
             }
+
+            // no unmanaged resources to free
 
             PodeHelpers.WriteErrorMessage($"Response disposed", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            IsDisposed = true;
         }
+
     }
 }
