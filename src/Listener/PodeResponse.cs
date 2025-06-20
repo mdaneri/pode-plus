@@ -23,7 +23,7 @@ namespace Pode
         public MemoryStream OutputStream { get; private set; }
         public bool IsDisposed { get; private set; }
 
-        private PodeContext Context;
+        private readonly PodeContext Context;
         private PodeRequest Request { get => Context.Request; }
 
         public PodeSseScope SseScope { get; private set; } = PodeSseScope.None;
@@ -549,9 +549,9 @@ namespace Pode
         /// </summary>
         /// <param name="path">The file path.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task WriteFile(string path)
+        public async Task WriteFileAsync(string path)
         {
-            await WriteFile(new FileInfo(path)).ConfigureAwait(false);
+            await WriteFileAsync(new FileInfo(path)).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -561,7 +561,7 @@ namespace Pode
         /// </summary>
         /// <param name="file">File system object representing the file.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task WriteFile(FileSystemInfo file)
+        public async Task WriteFileAsync(FileSystemInfo file)
         {
             if (!(file is FileInfo fi) || !fi.Exists)
                 throw new FileNotFoundException($"File not found: {file.FullName}");
@@ -579,6 +579,26 @@ namespace Pode
 
             // Bigger than 2 GB – stream it
             await WriteLargeFile(fi).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
+        /// </summary>
+        /// <param name="file">File system object representing the file.</param>
+        public void WriteFile(FileSystemInfo file)
+        {
+            WriteFileAsync(file).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
+        /// </summary>
+        /// <param name="path">The file path.</param>
+        public void WriteFile(string path)
+        {
+            WriteFileAsync(new FileInfo(path)).GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -610,25 +630,33 @@ namespace Pode
             {
                 using (var fs = fileInfo.OpenRead())
                 {
-#if NETCOREAPP2_1_OR_GREATER
                     int read;
+#if NETCOREAPP2_1_OR_GREATER
                     while ((read = await fs
                                  .ReadAsync(buffer.AsMemory(0, BufferSize), Context.Listener.CancellationToken)
                                  .ConfigureAwait(false)) > 0)
                     {
                         await Request.InputStream
-                                    .WriteAsync(buffer.AsMemory(0, read), Context.Listener.CancellationToken)
-                                    .ConfigureAwait(false);
+                            .WriteAsync(buffer.AsMemory(0, read), Context.Listener.CancellationToken)
+                            .ConfigureAwait(false);
+
+                        // Periodically flush to keep connection alive
+                        await Request.InputStream
+                            .FlushAsync(Context.Listener.CancellationToken)
+                            .ConfigureAwait(false);
                     }
 #else
-            int read;
             while ((read = await fs
                          .ReadAsync(buffer, 0, buffer.Length, Context.Listener.CancellationToken)
                          .ConfigureAwait(false)) > 0)
             {
                 await Request.InputStream
-                            .WriteAsync(buffer, 0, read, Context.Listener.CancellationToken)
-                            .ConfigureAwait(false);
+                    .WriteAsync(buffer, 0, read, Context.Listener.CancellationToken)
+                    .ConfigureAwait(false);
+
+                await Request.InputStream
+                    .FlushAsync(Context.Listener.CancellationToken)
+                    .ConfigureAwait(false);
             }
 #endif
                 }

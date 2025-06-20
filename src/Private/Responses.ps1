@@ -449,14 +449,21 @@ function Write-PodeAttachmentResponseInternal {
 
         [Parameter()]
         [string]
-        $ContentType,
+        $ContentType = 'application/octet-stream',
 
         [Parameter()]
         [switch]
         $FileBrowser,
 
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [switch]
+        $Cache,
+
+        [Parameter()]
+        [int]
+        $MaxAge = 3600
     )
 
     # if the file info isn't supplied, get it from the path
@@ -480,6 +487,13 @@ function Write-PodeAttachmentResponseInternal {
     if ([string]::IsNullOrEmpty($ContentType)) {
         $ContentType = Get-PodeContentType -Extension $FileInfo.Extension
     }
+
+    # set a cache value
+    if ($Cache) {
+        Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
+        Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
+    }
+
 
     $WebEvent.Response.ContentType = $ContentType
     Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=$($FileInfo.Name)"
