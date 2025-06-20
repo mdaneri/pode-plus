@@ -504,9 +504,18 @@ function Write-PodeAttachmentResponseInternal {
         return
     }
 
-    # else if normal, stream the content back
-    $WebEvent.Response.SendChunked = $false
 
-    # set file as an attachment on the response
-    $WebEvent.Response.WriteFile($FileInfo)
+
+    if ($WebEvent.Method -eq 'Get') {
+        # set file as an attachment on the response
+        if ($null -eq $WebEvent.Ranges) {
+            # else if normal, stream the content back
+            $WebEvent.Response.SendChunked = $false
+            $WebEvent.Response.WriteFile($FileInfo)
+        }
+        else { 
+            $WebEvent.Response.SendChunked = $true
+            $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges)
+        }
+    }
 }

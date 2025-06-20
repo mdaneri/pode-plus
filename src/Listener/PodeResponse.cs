@@ -542,16 +542,19 @@ namespace Pode
             }
         }
 
+        #region File Writing
+
         /// <summary>
         /// Writes a file from a given path to the response.
         /// This method checks if the file exists and if it is small enough to be buffered in memory.
         /// If the file is larger than the defined maximum size, it streams the file directly to the response.
         /// </summary>
         /// <param name="path">The file path.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task WriteFileAsync(string path)
+        public async Task WriteFileAsync(string path, IList<Hashtable> ranges = null)
         {
-            await WriteFileAsync(new FileInfo(path)).ConfigureAwait(false);
+            await WriteFileAsync(new FileInfo(path), ranges).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -560,8 +563,9 @@ namespace Pode
         /// If the file is smaller than or equal to 64 MiB, it reads the file into a memory stream and writes it to the output stream.
         /// </summary>
         /// <param name="file">File system object representing the file.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task WriteFileAsync(FileSystemInfo file)
+        public async Task WriteFileAsync(FileSystemInfo file, IList<Hashtable> ranges = null)
         {
             if (!(file is FileInfo fi) || !fi.Exists)
                 throw new FileNotFoundException($"File not found: {file.FullName}");
@@ -578,7 +582,18 @@ namespace Pode
             }
 
             // Bigger than 2 GB – stream it
-            await WriteLargeFile(fi).ConfigureAwait(false);
+            await WriteLargeFile(fi, ranges).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
+        /// </summary>
+        /// <param name="file">File system object representing the file.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        public void WriteFile(FileSystemInfo file, IList<Hashtable> ranges = null)
+        {
+            WriteFileAsync(file, ranges).GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -591,84 +606,164 @@ namespace Pode
             WriteFileAsync(file).GetAwaiter().GetResult();
         }
 
+
+
+
+        public void WriteFile(FileSystemInfo file, Hashtable range = null)
+        {
+            var ranges = new List<Hashtable>
+            {
+                range
+            };
+            WriteFileAsync(file, ranges).GetAwaiter().GetResult();
+        }
         /// <summary>
         /// Synchronous façade for PowerShell callers that don’t use 'await'.
         /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
         /// </summary>
         /// <param name="path">The file path.</param>
-        public void WriteFile(string path)
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        public void WriteFile(string path, IList<Hashtable> ranges = null)
         {
-            WriteFileAsync(new FileInfo(path)).GetAwaiter().GetResult();
+            WriteFileAsync(new FileInfo(path), ranges).GetAwaiter().GetResult();
         }
 
+
+
         /// <summary>
-        /// Streams a large file (>64 MiB) directly to the client response.
-        /// This method reads the file in chunks and writes it to the response stream.
-        /// It is designed to handle large files efficiently without loading the entire file into memory.
+        /// Streams a large file (or specified byte ranges) to the client.
+        /// If <paramref name="ranges"/> is <c>null</c> or empty the entire file is sent (200 OK).
+        /// If one valid range is supplied, a single‑range 206 response is returned.
+        /// If multiple valid ranges are supplied, a multipart/byteranges 206 response is returned.
         /// </summary>
-        /// <param name="fileInfo">Information about the file to stream.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task WriteLargeFile(FileInfo fileInfo)
+        /// <param name="fileInfo">File to stream.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        public async Task WriteLargeFile(FileInfo fileInfo, IList<Hashtable> ranges = null)
         {
-            if (IsDisposed)
+            if (IsDisposed) return;
+            if (!fileInfo.Exists)
+                throw new FileNotFoundException($"File not found: {fileInfo.FullName}");
+            // Disable Pode request timeout for long transfers
+            Context.CancelTimeout();
+            // Parse ranges (if provided)
+            var parsed = new List<(long Start, long End)>();
+            if (ranges != null)
             {
+                foreach (Hashtable ht in ranges)
+                {
+                    if (!ht.ContainsKey("Start") || !ht.ContainsKey("End"))
+                        continue;
+
+                    long start = Convert.ToInt64(ht["Start"]);
+                    long end = Convert.ToInt64(ht["End"]);
+                    if (start < 0 || end < start || end >= fileInfo.Length)
+                        continue; // skip invalid
+
+                    parsed.Add((start, end));
+                }
+            }
+
+            // === Full file ===
+            if (parsed.Count == 0)
+            {
+                if (ranges == null)
+                {
+                    ContentLength64 = fileInfo.Length;
+                    await SendHeaders(false).ConfigureAwait(false);
+                    await StreamSectionAsync(fileInfo, 0, fileInfo.Length - 1).ConfigureAwait(false);
+                    SentBody = true;
+                    return;
+                }
+                else
+                {
+                    // Ranges provided but all invalid — return 416
+                    StatusCode = 416;
+                    Headers.Set("Content-Range", $"bytes */{fileInfo.Length}");
+                    ContentLength64 = 0;
+                    await SendHeaders(false).ConfigureAwait(false);
+                    SentBody = true;
+                    return;
+                }
+            }
+
+            // === Single range ===
+            if (parsed.Count == 1)
+            {
+                var r = parsed[0];
+                StatusCode = 206;
+                Headers.Set("Content-Range", $"bytes {r.Start}-{r.End}/{fileInfo.Length}");
+                ContentLength64 = r.End - r.Start + 1;
+                await SendHeaders(false).ConfigureAwait(false);
+                await StreamSectionAsync(fileInfo, r.Start, r.End).ConfigureAwait(false);
+                SentBody = true;
                 return;
             }
 
-            if (!fileInfo.Exists)
-            {
-                throw new FileNotFoundException($"File not found: {fileInfo.FullName}");
-            }
-
-            ContentLength64 = fileInfo.Length;
+            // === Multiple ranges ===
+            string boundary = "pode_" + Guid.NewGuid().ToString("N");
+            StatusCode = 206;
+            ContentType = $"multipart/byteranges; boundary={boundary}";
+            Headers.Remove("Content-Length");
             await SendHeaders(false).ConfigureAwait(false);
 
-            const int BufferSize = 64 * 1024;
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+            foreach (var r in parsed)
+            {
+                string headerPart = string.Concat(
+                    "--", boundary, PodeHelpers.NEW_LINE,
+                    "Content-Type: application/octet-stream", PodeHelpers.NEW_LINE,
+                    $"Content-Range: bytes {r.Start}-{r.End}/{fileInfo.Length}", PodeHelpers.NEW_LINE,
+                    PodeHelpers.NEW_LINE);
 
+                await Write(System.Text.Encoding.ASCII.GetBytes(headerPart)).ConfigureAwait(false);
+                await StreamSectionAsync(fileInfo, r.Start, r.End).ConfigureAwait(false);
+                await Write(System.Text.Encoding.ASCII.GetBytes(PodeHelpers.NEW_LINE)).ConfigureAwait(false);
+            }
+
+            string footer = string.Concat("--", boundary, "--", PodeHelpers.NEW_LINE);
+            await Write(System.Text.Encoding.ASCII.GetBytes(footer), flush: true).ConfigureAwait(false);
+            SentBody = true;
+        }
+
+        /// <summary>
+        /// Streams a contiguous byte section of <paramref name="fileInfo"/> from <paramref name="start"/> to <paramref name="end"/>.
+        /// </summary>
+        private async Task StreamSectionAsync(FileInfo fileInfo, long start, long end)
+        {
+            const int BufSize = 64 * 1024;
+            byte[] buf = ArrayPool<byte>.Shared.Rent(BufSize);
             try
             {
                 using (var fs = fileInfo.OpenRead())
                 {
-                    int read;
-#if NETCOREAPP2_1_OR_GREATER
-                    while ((read = await fs
-                                 .ReadAsync(buffer.AsMemory(0, BufferSize), Context.Listener.CancellationToken)
-                                 .ConfigureAwait(false)) > 0)
+                    fs.Seek(start, SeekOrigin.Begin);
+                    long remaining = end - start + 1;
+
+                    while (remaining > 0)
                     {
-                        await Request.InputStream
-                            .WriteAsync(buffer.AsMemory(0, read), Context.Listener.CancellationToken)
-                            .ConfigureAwait(false);
-
-                        // Periodically flush to keep connection alive
-                        await Request.InputStream
-                            .FlushAsync(Context.Listener.CancellationToken)
-                            .ConfigureAwait(false);
-                    }
+                        int toRead = (int)Math.Min(BufSize, remaining);
+#if NETCOREAPP2_1_OR_GREATER
+                        int read = await fs.ReadAsync(buf.AsMemory(0, toRead), Context.Listener.CancellationToken).ConfigureAwait(false);
+                        if (read == 0) break;
+                        remaining -= read;
+                        await Request.InputStream.WriteAsync(buf.AsMemory(0, read), Context.Listener.CancellationToken).ConfigureAwait(false);
 #else
-            while ((read = await fs
-                         .ReadAsync(buffer, 0, buffer.Length, Context.Listener.CancellationToken)
-                         .ConfigureAwait(false)) > 0)
-            {
-                await Request.InputStream
-                    .WriteAsync(buffer, 0, read, Context.Listener.CancellationToken)
-                    .ConfigureAwait(false);
-
-                await Request.InputStream
-                    .FlushAsync(Context.Listener.CancellationToken)
-                    .ConfigureAwait(false);
-            }
+                        int read = await fs.ReadAsync(buf, 0, toRead, Context.Listener.CancellationToken).ConfigureAwait(false);
+                        if (read == 0) break;
+                        remaining -= read;
+                        await Request.InputStream.WriteAsync(buf, 0, read, Context.Listener.CancellationToken).ConfigureAwait(false);
 #endif
-                }
 
-                SentBody = true;
+                        await Request.InputStream.FlushAsync(Context.Listener.CancellationToken).ConfigureAwait(false);
+                    }
+                }
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(buffer);
+                ArrayPool<byte>.Shared.Return(buf);
             }
         }
 
+        #endregion
         /// <summary>
         /// Sets default headers for the HTTP response.
         /// This method ensures that the response has the necessary headers such as Content-Length, Date, Server, and X-Pode-ContextId.
