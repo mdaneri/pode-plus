@@ -84,6 +84,11 @@ namespace Pode
 
         private static readonly UTF8Encoding Encoding = new UTF8Encoding();
 
+        /// <summary>
+        /// PodeResponse class represents an HTTP response in the Pode framework.
+        /// It encapsulates the response headers, status code, output stream, and methods to send the response.
+        /// </summary>
+        /// <param name="context"></param>
         public PodeResponse(PodeContext context)
         {
             Headers = new PodeResponseHeaders();
@@ -91,7 +96,11 @@ namespace Pode
             Context = context;
         }
 
-        //Clone constructor
+        /// <summary>
+        /// Creates a new PodeResponse instance by copying the properties from another PodeResponse instance.
+        /// This is useful for creating a response that is similar to an existing one, such as in a middleware scenario.
+        /// </summary>
+        /// <param name="other"></param>
         public PodeResponse(PodeResponse other)
         {
             // Copy the status code and other scalar values
@@ -119,6 +128,10 @@ namespace Pode
         }
 
 
+        /// <summary>
+        /// Sends the complete HTTP response, including headers and body, to the client.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Send()
         {
             if (Sent || IsDisposed || (SentHeaders && SseEnabled))
@@ -151,6 +164,10 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Sends a timeout (408) response when the client times out.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendTimeout()
         {
             if (SentHeaders || IsDisposed)
@@ -183,6 +200,12 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Sends the HTTP headers to the client.
+        /// If `timeout` is true, it clears existing headers and sets default headers.
+        /// </summary>
+        /// <param name="timeout"></param>
+        /// <returns></returns>
         private async Task SendHeaders(bool timeout)
         {
             if (SentHeaders || !Request.InputStream.CanWrite)
@@ -221,6 +244,13 @@ namespace Pode
             SentBody = true;
         }
 
+        /// <summary>
+        /// Flushes the response stream to the client.
+        /// This method ensures that any buffered data is sent to the client immediately.
+        /// It checks if the input stream can be written to before attempting to flush.
+        /// If the input stream is not writable, it does nothing.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Flush()
         {
             if (Request.InputStream.CanWrite)
@@ -229,6 +259,19 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Establishes an SSE (Server-Sent Events) connection with appropriate headers.
+        /// This method sets the SSE scope, client ID, name, group, retry interval, and allows cross-origin requests if specified.
+        /// It sends the initial headers and an open event to the client, and caches the connection if the scope is global.
+        /// </summary>
+        /// <param name="scope">Scope of the SSE (Local/Global).</param>
+        /// <param name="clientId">Optional SSE client ID.</param>
+        /// <param name="name">Name of the connection.</param>
+        /// <param name="group">Group the SSE connection belongs to.</param>
+        /// <param name="retry">Reconnect retry interval (ms).</param>
+        /// <param name="allowAllOrigins">Allow cross-origin requests.</param>
+        /// <param name="asyncRouteTaskId">Async route task ID (optional).</param>
+        /// <returns>The client ID used for the SSE connection.</returns>
         public async Task<string> SetSseConnection(PodeSseScope scope, string clientId, string name, string group, int retry, bool allowAllOrigins, string asyncRouteTaskId = null)
         {
             // do nothing for no scope
@@ -285,11 +328,27 @@ namespace Pode
             return clientId;
         }
 
+        /// <summary>
+        /// Sends a "close" SSE event to the client to terminate the connection.
+        /// This method is typically used to gracefully close an SSE connection.
+        /// It sends an event with the type "pode.close" and no data, indicating that the server is closing the connection.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task CloseSseConnection()
         {
             await SendSseEvent("pode.close", string.Empty).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Sends a named SSE event with optional ID.
+        /// This method allows sending custom events to the SSE client, which can be used for real-time updates or notifications.
+        /// It constructs the event with a type, data, and an optional ID, and writes it to the response stream.
+        /// The event type can be used to differentiate between different kinds of events on the client side.
+        /// </summary>
+        /// <param name="eventType">Event type name.</param>
+        /// <param name="data">Event data string.</param>
+        /// <param name="id">Optional event ID.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendSseEvent(string eventType, string data, string id = null)
         {
             if (!string.IsNullOrEmpty(id))
@@ -305,6 +364,13 @@ namespace Pode
             await WriteLine($"data: {data}{PodeHelpers.NEW_LINE}", true).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Sends a retry interval directive to the SSE client.
+        /// This method is used to inform the client how long it should wait before attempting to reconnect after a disconnection.
+        /// The retry interval is specified in milliseconds, and this directive helps manage the reconnection attempts in a controlled manner.
+        /// </summary>
+        /// <param name="retry">Retry interval in milliseconds.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendSseRetry(int retry)
         {
             if (retry <= 0)
@@ -315,6 +381,13 @@ namespace Pode
             await WriteLine($"retry: {retry}", true).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Sends a raw signal string through the response stream.
+        /// This method is typically used to send server signals or messages that do not require any specific formatting.
+        /// It writes the signal value directly to the response stream, allowing for immediate communication with the client.
+        /// </summary>
+        /// <param name="signal">The signal object to send.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendSignal(PodeServerSignal signal)
         {
             if (!string.IsNullOrEmpty(signal.Value))
@@ -323,6 +396,14 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a string message to the response, either directly or over a WebSocket.
+        /// This method checks if the context is a WebSocket connection and writes the message accordingly.
+        /// If the context is not a WebSocket, it encodes the message to bytes and writes it directly to the response stream.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Write(string message, bool flush = false)
         {
             // simple messages
@@ -338,6 +419,15 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a WebSocket frame message to the response stream.
+        /// This method handles the framing of the message according to the WebSocket protocol, including setting the FIN bit, operation code, and payload length.
+        /// It supports both text and binary messages, and can handle large messages by splitting them into smaller frames.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
+        /// <param name="opCode">WebSocket operation code.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteFrame(string message, PodeWsOpCode opCode = PodeWsOpCode.Text, bool flush = false)
         {
             if (IsDisposed)
@@ -397,12 +487,28 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a line of text to the response, followed by a newline.
+        /// This method encodes the message to bytes and writes it to the response stream.
+        /// It is typically used for sending log messages or simple text responses.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteLine(string message, bool flush = false)
         {
             await Write(Encoding.GetBytes($"{message}{PodeHelpers.NEW_LINE}"), flush).ConfigureAwait(false);
         }
 
         // write a byte array to the actual client stream
+        /// <summary>
+        /// Writes a byte array to the response stream.
+        /// This method checks if the request input stream is writable before attempting to write.
+        /// If the request is disposed or the input stream cannot be written to, it does nothing.
+        /// </summary>
+        /// <param name="buffer">Buffer of bytes to send.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Write(byte[] buffer, bool flush = false)
         {
             if (Request.IsDisposed || !Request.InputStream.CanWrite)
@@ -436,11 +542,25 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a file from a given path to the response.
+        /// This method checks if the file exists and if it is small enough to be buffered in memory.
+        /// If the file is larger than the defined maximum size, it streams the file directly to the response.
+        /// </summary>
+        /// <param name="path">The file path.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteFile(string path)
         {
             await WriteFile(new FileInfo(path)).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Writes a file to the response, buffering small files and streaming large files.
+        /// This method checks if the file exists and is a valid FileInfo object.
+        /// If the file is smaller than or equal to 64 MiB, it reads the file into a memory stream and writes it to the output stream.
+        /// </summary>
+        /// <param name="file">File system object representing the file.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteFile(FileSystemInfo file)
         {
             if (!(file is FileInfo fi) || !fi.Exists)
@@ -461,6 +581,13 @@ namespace Pode
             await WriteLargeFile(fi).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Streams a large file (>64 MiB) directly to the client response.
+        /// This method reads the file in chunks and writes it to the response stream.
+        /// It is designed to handle large files efficiently without loading the entire file into memory.
+        /// </summary>
+        /// <param name="fileInfo">Information about the file to stream.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteLargeFile(FileInfo fileInfo)
         {
             if (IsDisposed)
@@ -514,6 +641,10 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Sets default headers for the HTTP response.
+        /// This method ensures that the response has the necessary headers such as Content-Length, Date, Server, and X-Pode-ContextId.
+        /// </summary>
         private void SetDefaultHeaders()
         {
             // ensure content length (remove for 1xx responses, ensure added otherwise)
@@ -573,6 +704,12 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Builds the HTTP response headers as a string.
+        /// This method constructs the response headers from the PodeResponseHeaders object,
+        /// </summary>
+        /// <param name="headers"></param>
+        /// <returns></returns>
         private string BuildHeaders(PodeResponseHeaders headers)
         {
             var builder = new StringBuilder();
@@ -590,12 +727,23 @@ namespace Pode
             return builder.ToString();
         }
 
+        /// <summary>
+        /// Disposes the response object and releases its resources.
+        /// This method is called to clean up the response when it is no longer needed.
+        /// It ensures that any managed resources, such as the output stream, are properly disposed of.
+        /// </summary>
         public void Dispose()
         {
             Dispose(true);
             GC.SuppressFinalize(this);
         }
 
+        /// <summary>
+        /// Disposes managed and optionally unmanaged resources.
+        /// This method is called by the Dispose method and can be overridden in derived classes to release additional resources.
+        /// It checks if the object has already been disposed to avoid multiple disposals.
+        /// </summary>
+        /// <param name="disposing">Whether managed resources should be disposed.</param>
         protected virtual void Dispose(bool disposing)
         {
             if (IsDisposed)
