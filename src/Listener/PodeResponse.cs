@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -13,13 +14,16 @@ namespace Pode
     {
         protected const int MAX_FRAME_SIZE = 8192;
 
+        // “Small” files up to 64 MiB get buffered in-memory; anything larger is streamed.
+        private const long MAX_IN_MEMORY_FILE_SIZE = 64L * 1024 * 1024;
+
         public PodeResponseHeaders Headers { get; private set; }
         public int StatusCode = 200;
         public bool SendChunked = false;
         public MemoryStream OutputStream { get; private set; }
         public bool IsDisposed { get; private set; }
 
-        private PodeContext Context;
+        private readonly PodeContext Context;
         private PodeRequest Request { get => Context.Request; }
 
         public PodeSseScope SseScope { get; private set; } = PodeSseScope.None;
@@ -80,14 +84,23 @@ namespace Pode
 
         private static readonly UTF8Encoding Encoding = new UTF8Encoding();
 
+        /// <summary>
+        /// PodeResponse class represents an HTTP response in the Pode framework.
+        /// It encapsulates the response headers, status code, output stream, and methods to send the response.
+        /// </summary>
+        /// <param name="context"></param>
         public PodeResponse(PodeContext context)
         {
             Headers = new PodeResponseHeaders();
             OutputStream = new MemoryStream();
             Context = context;
         }
-        
-        //Clone constructor
+
+        /// <summary>
+        /// Creates a new PodeResponse instance by copying the properties from another PodeResponse instance.
+        /// This is useful for creating a response that is similar to an existing one, such as in a middleware scenario.
+        /// </summary>
+        /// <param name="other"></param>
         public PodeResponse(PodeResponse other)
         {
             // Copy the status code and other scalar values
@@ -115,6 +128,10 @@ namespace Pode
         }
 
 
+        /// <summary>
+        /// Sends the complete HTTP response, including headers and body, to the client.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Send()
         {
             if (Sent || IsDisposed || (SentHeaders && SseEnabled))
@@ -147,6 +164,10 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Sends a timeout (408) response when the client times out.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendTimeout()
         {
             if (SentHeaders || IsDisposed)
@@ -179,6 +200,12 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Sends the HTTP headers to the client.
+        /// If `timeout` is true, it clears existing headers and sets default headers.
+        /// </summary>
+        /// <param name="timeout"></param>
+        /// <returns></returns>
         private async Task SendHeaders(bool timeout)
         {
             if (SentHeaders || !Request.InputStream.CanWrite)
@@ -217,6 +244,13 @@ namespace Pode
             SentBody = true;
         }
 
+        /// <summary>
+        /// Flushes the response stream to the client.
+        /// This method ensures that any buffered data is sent to the client immediately.
+        /// It checks if the input stream can be written to before attempting to flush.
+        /// If the input stream is not writable, it does nothing.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Flush()
         {
             if (Request.InputStream.CanWrite)
@@ -225,6 +259,19 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Establishes an SSE (Server-Sent Events) connection with appropriate headers.
+        /// This method sets the SSE scope, client ID, name, group, retry interval, and allows cross-origin requests if specified.
+        /// It sends the initial headers and an open event to the client, and caches the connection if the scope is global.
+        /// </summary>
+        /// <param name="scope">Scope of the SSE (Local/Global).</param>
+        /// <param name="clientId">Optional SSE client ID.</param>
+        /// <param name="name">Name of the connection.</param>
+        /// <param name="group">Group the SSE connection belongs to.</param>
+        /// <param name="retry">Reconnect retry interval (ms).</param>
+        /// <param name="allowAllOrigins">Allow cross-origin requests.</param>
+        /// <param name="asyncRouteTaskId">Async route task ID (optional).</param>
+        /// <returns>The client ID used for the SSE connection.</returns>
         public async Task<string> SetSseConnection(PodeSseScope scope, string clientId, string name, string group, int retry, bool allowAllOrigins, string asyncRouteTaskId = null)
         {
             // do nothing for no scope
@@ -281,11 +328,27 @@ namespace Pode
             return clientId;
         }
 
+        /// <summary>
+        /// Sends a "close" SSE event to the client to terminate the connection.
+        /// This method is typically used to gracefully close an SSE connection.
+        /// It sends an event with the type "pode.close" and no data, indicating that the server is closing the connection.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task CloseSseConnection()
         {
             await SendSseEvent("pode.close", string.Empty).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Sends a named SSE event with optional ID.
+        /// This method allows sending custom events to the SSE client, which can be used for real-time updates or notifications.
+        /// It constructs the event with a type, data, and an optional ID, and writes it to the response stream.
+        /// The event type can be used to differentiate between different kinds of events on the client side.
+        /// </summary>
+        /// <param name="eventType">Event type name.</param>
+        /// <param name="data">Event data string.</param>
+        /// <param name="id">Optional event ID.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendSseEvent(string eventType, string data, string id = null)
         {
             if (!string.IsNullOrEmpty(id))
@@ -301,6 +364,13 @@ namespace Pode
             await WriteLine($"data: {data}{PodeHelpers.NEW_LINE}", true).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Sends a retry interval directive to the SSE client.
+        /// This method is used to inform the client how long it should wait before attempting to reconnect after a disconnection.
+        /// The retry interval is specified in milliseconds, and this directive helps manage the reconnection attempts in a controlled manner.
+        /// </summary>
+        /// <param name="retry">Retry interval in milliseconds.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendSseRetry(int retry)
         {
             if (retry <= 0)
@@ -311,6 +381,13 @@ namespace Pode
             await WriteLine($"retry: {retry}", true).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Sends a raw signal string through the response stream.
+        /// This method is typically used to send server signals or messages that do not require any specific formatting.
+        /// It writes the signal value directly to the response stream, allowing for immediate communication with the client.
+        /// </summary>
+        /// <param name="signal">The signal object to send.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task SendSignal(PodeServerSignal signal)
         {
             if (!string.IsNullOrEmpty(signal.Value))
@@ -319,6 +396,14 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a string message to the response, either directly or over a WebSocket.
+        /// This method checks if the context is a WebSocket connection and writes the message accordingly.
+        /// If the context is not a WebSocket, it encodes the message to bytes and writes it directly to the response stream.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Write(string message, bool flush = false)
         {
             // simple messages
@@ -334,6 +419,15 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a WebSocket frame message to the response stream.
+        /// This method handles the framing of the message according to the WebSocket protocol, including setting the FIN bit, operation code, and payload length.
+        /// It supports both text and binary messages, and can handle large messages by splitting them into smaller frames.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
+        /// <param name="opCode">WebSocket operation code.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteFrame(string message, PodeWsOpCode opCode = PodeWsOpCode.Text, bool flush = false)
         {
             if (IsDisposed)
@@ -393,12 +487,28 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Writes a line of text to the response, followed by a newline.
+        /// This method encodes the message to bytes and writes it to the response stream.
+        /// It is typically used for sending log messages or simple text responses.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task WriteLine(string message, bool flush = false)
         {
             await Write(Encoding.GetBytes($"{message}{PodeHelpers.NEW_LINE}"), flush).ConfigureAwait(false);
         }
 
         // write a byte array to the actual client stream
+        /// <summary>
+        /// Writes a byte array to the response stream.
+        /// This method checks if the request input stream is writable before attempting to write.
+        /// If the request is disposed or the input stream cannot be written to, it does nothing.
+        /// </summary>
+        /// <param name="buffer">Buffer of bytes to send.</param>
+        /// <param name="flush">Whether to flush immediately after writing.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task Write(byte[] buffer, bool flush = false)
         {
             if (Request.IsDisposed || !Request.InputStream.CanWrite)
@@ -432,30 +542,232 @@ namespace Pode
             }
         }
 
-        public void WriteFile(string path)
+        #region File Writing
+
+        /// <summary>
+        /// Writes a file from a given path to the response.
+        /// This method checks if the file exists and if it is small enough to be buffered in memory.
+        /// If the file is larger than the defined maximum size, it streams the file directly to the response.
+        /// </summary>
+        /// <param name="path">The file path.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        public async Task WriteFileAsync(string path, IList<Hashtable> ranges = null)
         {
-            WriteFile(new FileInfo(path));
+            await WriteFileAsync(new FileInfo(path), ranges).ConfigureAwait(false);
         }
 
-        public void WriteFile(FileSystemInfo file)
+        /// <summary>
+        /// Writes a file to the response, buffering small files and streaming large files.
+        /// This method checks if the file exists and is a valid FileInfo object.
+        /// If the file is smaller than or equal to 64 MiB, it reads the file into a memory stream and writes it to the output stream.
+        /// </summary>
+        /// <param name="file">File system object representing the file.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        public async Task WriteFileAsync(FileSystemInfo file, IList<Hashtable> ranges = null)
         {
-            if (IsDisposed)
+            if (!(file is FileInfo fi) || !fi.Exists)
+                throw new FileNotFoundException($"File not found: {file.FullName}");
+
+            // If the file is small enough, keep the existing behaviour.
+            if (fi.Length <= MAX_IN_MEMORY_FILE_SIZE)
             {
+                ContentLength64 = fi.Length;
+                using (var fs = fi.OpenRead())
+                {
+                    fs.CopyTo(OutputStream);   // original logic
+                }
                 return;
             }
 
-            if (!(file is FileInfo fileInfo) || !fileInfo.Exists)
+            // Bigger than 2 GB – stream it
+            await WriteLargeFile(fi, ranges).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
+        /// </summary>
+        /// <param name="file">File system object representing the file.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        public void WriteFile(FileSystemInfo file, IList<Hashtable> ranges = null)
+        {
+            WriteFileAsync(file, ranges).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
+        /// </summary>
+        /// <param name="file">File system object representing the file.</param>
+        public void WriteFile(FileSystemInfo file)
+        {
+            WriteFileAsync(file).GetAwaiter().GetResult();
+        }
+
+
+
+
+        public void WriteFile(FileSystemInfo file, Hashtable range = null)
+        {
+            var ranges = new List<Hashtable>
             {
-                throw new FileNotFoundException($"File not found: {file.FullName}");
+                range
+            };
+            WriteFileAsync(file, ranges).GetAwaiter().GetResult();
+        }
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
+        /// </summary>
+        /// <param name="path">The file path.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        public void WriteFile(string path, IList<Hashtable> ranges = null)
+        {
+            WriteFileAsync(new FileInfo(path), ranges).GetAwaiter().GetResult();
+        }
+
+
+
+        /// <summary>
+        /// Streams a large file (or specified byte ranges) to the client.
+        /// If <paramref name="ranges"/> is <c>null</c> or empty the entire file is sent (200 OK).
+        /// If one valid range is supplied, a single‑range 206 response is returned.
+        /// If multiple valid ranges are supplied, a multipart/byteranges 206 response is returned.
+        /// </summary>
+        /// <param name="fileInfo">File to stream.</param>
+        /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        public async Task WriteLargeFile(FileInfo fileInfo, IList<Hashtable> ranges = null)
+        {
+            if (IsDisposed) return;
+            if (!fileInfo.Exists)
+                throw new FileNotFoundException($"File not found: {fileInfo.FullName}");
+            // Disable Pode request timeout for long transfers
+            Context.CancelTimeout();
+            // Parse ranges (if provided)
+            var parsed = new List<(long Start, long End)>();
+            if (ranges != null)
+            {
+                foreach (Hashtable ht in ranges)
+                {
+                    if (!ht.ContainsKey("Start") || !ht.ContainsKey("End"))
+                        continue;
+
+                    long start = Convert.ToInt64(ht["Start"]);
+                    long end = Convert.ToInt64(ht["End"]);
+                    if (start < 0 || end < start || end >= fileInfo.Length)
+                        continue; // skip invalid
+
+                    parsed.Add((start, end));
+                }
             }
 
-            ContentLength64 = fileInfo.Length;
-            using (var fileStream = fileInfo.OpenRead())
+            // === Full file ===
+            if (parsed.Count == 0)
             {
-                fileStream.CopyTo(OutputStream);
+                if (ranges == null)
+                {
+                    ContentLength64 = fileInfo.Length;
+                    await SendHeaders(false).ConfigureAwait(false);
+                    await StreamSectionAsync(fileInfo, 0, fileInfo.Length - 1).ConfigureAwait(false);
+                    SentBody = true;
+                    return;
+                }
+                else
+                {
+                    // Ranges provided but all invalid — return 416
+                    StatusCode = 416;
+                    Headers.Set("Content-Range", $"bytes */{fileInfo.Length}");
+                    ContentLength64 = 0;
+                    await SendHeaders(false).ConfigureAwait(false);
+                    SentBody = true;
+                    return;
+                }
+            }
+
+            // === Single range ===
+            if (parsed.Count == 1)
+            {
+                var r = parsed[0];
+                StatusCode = 206;
+                Headers.Set("Content-Range", $"bytes {r.Start}-{r.End}/{fileInfo.Length}");
+                ContentLength64 = r.End - r.Start + 1;
+                await SendHeaders(false).ConfigureAwait(false);
+                await StreamSectionAsync(fileInfo, r.Start, r.End).ConfigureAwait(false);
+                SentBody = true;
+                return;
+            }
+
+            // === Multiple ranges ===
+            string boundary = "pode_" + Guid.NewGuid().ToString("N");
+            StatusCode = 206;
+            ContentType = $"multipart/byteranges; boundary={boundary}";
+            Headers.Remove("Content-Length");
+            await SendHeaders(false).ConfigureAwait(false);
+
+            foreach (var r in parsed)
+            {
+                string headerPart = string.Concat(
+                    "--", boundary, PodeHelpers.NEW_LINE,
+                    "Content-Type: application/octet-stream", PodeHelpers.NEW_LINE,
+                    $"Content-Range: bytes {r.Start}-{r.End}/{fileInfo.Length}", PodeHelpers.NEW_LINE,
+                    PodeHelpers.NEW_LINE);
+
+                await Write(System.Text.Encoding.ASCII.GetBytes(headerPart)).ConfigureAwait(false);
+                await StreamSectionAsync(fileInfo, r.Start, r.End).ConfigureAwait(false);
+                await Write(System.Text.Encoding.ASCII.GetBytes(PodeHelpers.NEW_LINE)).ConfigureAwait(false);
+            }
+
+            string footer = string.Concat("--", boundary, "--", PodeHelpers.NEW_LINE);
+            await Write(System.Text.Encoding.ASCII.GetBytes(footer), flush: true).ConfigureAwait(false);
+            SentBody = true;
+        }
+
+        /// <summary>
+        /// Streams a contiguous byte section of <paramref name="fileInfo"/> from <paramref name="start"/> to <paramref name="end"/>.
+        /// </summary>
+        private async Task StreamSectionAsync(FileInfo fileInfo, long start, long end)
+        {
+            const int BufSize = 64 * 1024;
+            byte[] buf = ArrayPool<byte>.Shared.Rent(BufSize);
+            try
+            {
+                using (var fs = fileInfo.OpenRead())
+                {
+                    fs.Seek(start, SeekOrigin.Begin);
+                    long remaining = end - start + 1;
+
+                    while (remaining > 0)
+                    {
+                        int toRead = (int)Math.Min(BufSize, remaining);
+#if NETCOREAPP2_1_OR_GREATER
+                        int read = await fs.ReadAsync(buf.AsMemory(0, toRead), Context.Listener.CancellationToken).ConfigureAwait(false);
+                        if (read == 0) break;
+                        remaining -= read;
+                        await Request.InputStream.WriteAsync(buf.AsMemory(0, read), Context.Listener.CancellationToken).ConfigureAwait(false);
+#else
+                        int read = await fs.ReadAsync(buf, 0, toRead, Context.Listener.CancellationToken).ConfigureAwait(false);
+                        if (read == 0) break;
+                        remaining -= read;
+                        await Request.InputStream.WriteAsync(buf, 0, read, Context.Listener.CancellationToken).ConfigureAwait(false);
+#endif
+
+                        await Request.InputStream.FlushAsync(Context.Listener.CancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buf);
             }
         }
 
+        #endregion
+        /// <summary>
+        /// Sets default headers for the HTTP response.
+        /// This method ensures that the response has the necessary headers such as Content-Length, Date, Server, and X-Pode-ContextId.
+        /// </summary>
         private void SetDefaultHeaders()
         {
             // ensure content length (remove for 1xx responses, ensure added otherwise)
@@ -515,6 +827,12 @@ namespace Pode
             }
         }
 
+        /// <summary>
+        /// Builds the HTTP response headers as a string.
+        /// This method constructs the response headers from the PodeResponseHeaders object,
+        /// </summary>
+        /// <param name="headers"></param>
+        /// <returns></returns>
         private string BuildHeaders(PodeResponseHeaders headers)
         {
             var builder = new StringBuilder();
@@ -532,22 +850,43 @@ namespace Pode
             return builder.ToString();
         }
 
+        /// <summary>
+        /// Disposes the response object and releases its resources.
+        /// This method is called to clean up the response when it is no longer needed.
+        /// It ensures that any managed resources, such as the output stream, are properly disposed of.
+        /// </summary>
         public void Dispose()
         {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Disposes managed and optionally unmanaged resources.
+        /// This method is called by the Dispose method and can be overridden in derived classes to release additional resources.
+        /// It checks if the object has already been disposed to avoid multiple disposals.
+        /// </summary>
+        /// <param name="disposing">Whether managed resources should be disposed.</param>
+        protected virtual void Dispose(bool disposing)
+        {
             if (IsDisposed)
-            {
                 return;
-            }
 
-            IsDisposed = true;
-
-            if (OutputStream != default(MemoryStream))
+            if (disposing)
             {
-                OutputStream.Dispose();
-                OutputStream = default;
+                // free managed resources
+                if (OutputStream != null)
+                {
+                    OutputStream.Dispose();
+                    OutputStream = null;
+                }
             }
+
+            // no unmanaged resources to free
 
             PodeHelpers.WriteErrorMessage($"Response disposed", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            IsDisposed = true;
         }
+
     }
 }
