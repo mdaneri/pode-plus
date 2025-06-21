@@ -483,39 +483,70 @@ function Write-PodeAttachmentResponseInternal {
         return
     }
 
-    # setup the content type and disposition
-    if ([string]::IsNullOrEmpty($ContentType)) {
-        $ContentType = Get-PodeContentType -Extension $FileInfo.Extension
-    }
+    # are we dealing with a dynamic file for the view engine? (ignore html)
+    # Determine if the file is dynamic and should be processed by the view engine
+    $mainExt = $FileInfo.Extension.TrimStart('.')
 
-    # set a cache value
-    if ($Cache) {
-        Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
-        Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
-    }
+    # generate dynamic content
+    if (![string]::IsNullOrEmpty($mainExt) -and (
+            ($mainExt -ieq 'pode') -or
+            ($mainExt -ieq $PodeContext.Server.ViewEngine.Extension -and $PodeContext.Server.ViewEngine.IsDynamic)
+        )
+    ) {
+        # Process dynamic content with the view engine
+        $content = Get-PodeFileContentUsingViewEngine -FileInfo $FileInfo -Data $Data
 
+        # Determine the correct content type for the response
+        # get the sub-file extension, if empty, use original
+        $subExt = [System.IO.Path]::GetExtension($FileInfo.BaseName).TrimStart('.')
+        $subExt = Protect-PodeValue -Value $subExt -Default $mainExt
+        $ContentType = Protect-PodeValue -Value $ContentType -Default (Get-PodeContentType -Extension $subExt)
 
-    $WebEvent.Response.ContentType = $ContentType
-    Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=$($FileInfo.Name)"
-
-    # if serverless, get the content raw and return
-    if (!$WebEvent.Streamed) {
-        $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
+        # Write the processed content as the HTTP response
+        Write-PodeTextResponse -Value $content -ContentType $ContentType -StatusCode $StatusCode
         return
     }
 
+    # Determine and set the content type for static files
+    $ContentType = Protect-PodeValue -Value $ContentType -Default (Get-PodeContentType -Extension $mainExt -AddCharset)
 
+    # this is a static file
+    try {
+        $WebEvent.Response.ContentType = $ContentType
+        Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=$($FileInfo.Name)"
 
-    if ($WebEvent.Method -eq 'Get') {
-        # set file as an attachment on the response
-        if ($null -eq $WebEvent.Ranges) {
-            # else if normal, stream the content back
-            $WebEvent.Response.SendChunked = $false
-            $WebEvent.Response.WriteFile($FileInfo)
+        if ($Cache) {
+            Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
+            Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
         }
-        else { 
-            $WebEvent.Response.SendChunked = $true
-            $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges)
+
+        # if serverless, get the content raw and return
+        if (!$WebEvent.Streamed) {
+            $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
+            return
         }
+        # Write-PodeTextResponse -Bytes $content -ContentType $ContentType -MaxAge $MaxAge -StatusCode $StatusCode -Cache:$Cache
+        if ($WebEvent.Method -eq 'Get') {
+            # set file as an attachment on the response
+            if ($null -eq $WebEvent.Ranges) {
+                # else if normal, stream the content back
+                $WebEvent.Response.SendChunked = $false
+                $WebEvent.Response.WriteFile($FileInfo)
+            }
+            else {
+                $WebEvent.Response.SendChunked = $true
+                $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges)
+            }
+        }
+        return
     }
+    catch [System.UnauthorizedAccessException] {
+        $statusCode = 401
+    }
+    catch {
+        $statusCode = 400
+    }
+
+    # If the file does not exist, set the HTTP response status code appropriately
+    Set-PodeResponseStatus -Code $StatusCode
 }
