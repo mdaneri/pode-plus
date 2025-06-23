@@ -517,10 +517,6 @@ function New-PodeContext {
     $ctx.Server.Middleware = @()
     $ctx.Server.BodyParsers = @{}
 
-    # common support values
- #   $ctx.Server.Compression = @{
- #       Encodings = $(if ($PSVersionTable.PSEdition -eq 'Core') { @('gzip', 'deflate', 'br', 'x-gzip') } else { @('gzip', 'deflate', 'br') })
-  #  }
 
     # endware that needs to run
     $ctx.Server.Endware = @()
@@ -1021,7 +1017,7 @@ function Set-PodeWebConfiguration {
             Routes              = @{}
         }
         ContentType      = @{
-            Default = $false
+            Default = $Configuration.ContentType.Default
             Routes  = @{}
         }
         TransferEncoding = @{

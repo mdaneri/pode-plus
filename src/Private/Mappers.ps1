@@ -11,8 +11,7 @@ function Get-PodeContentType {
         $AddCharset
     )
 
-    $r = [Pode.MimeTypeMap]::GetExtension($Extension, $DefaultIsNull, $AddCharset)
-    write-podehost "Content-Type for '$Extension' is '$r'"
+    $r = [Pode.MimeTypeMap]::GetExtension($Extension, $DefaultIsNull, $AddCharset) 
     return $r
 }
 

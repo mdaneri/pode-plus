@@ -219,12 +219,7 @@ function Complete-PodeAsyncRouteOperation {
         if ($AsyncProcess['CallbackSettings']) {
 
             # Resolve the callback URL, method, content type, and headers
-            write-podehost "Processing callback for async route:"
-            write-podehost $AsyncProcess['CallbackSettings'] -explode
-
-            write-podehost  $WebEvent.Data -explode -showtype -Label 'WebEvent Data'
             $callbackUrl = (Convert-PodeAsyncRouteCallBackRuntimeExpression -Variable $AsyncProcess['CallbackSettings'].UrlField).Value
-              write-podehost  "callbackUrl= $callbackUrl"
             if (!($callbackUrl -match '^(https?)://[^\s/$.?#].[^\s]*$')) {
                 throw ($PodeLocale.invalidCallbackUrlSchemeExceptionMessage -f $callbackUrl)
             }
@@ -1252,7 +1247,6 @@ function Get-PodeAsyncRouteQueryScriptBlock {
                     }
                 }
             }
-            write-podehost $query -explode -ShowType
             # Get the 'Accept' header from the request to determine the response format
             $responseMediaType = Get-PodeHeader -Name 'Accept'
             $response = @()  # Initialize an empty array to hold the response

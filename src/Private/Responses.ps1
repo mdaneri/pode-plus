@@ -391,7 +391,7 @@ function Write-PodeFileResponseInternal {
     # Determine and set the content type for static files
     $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.MimeTypeMap]::GetExtension($mainExt ))
     $testualMimeType = [Pode.MimetypeMap]::IsTextualMimeType($ContentType)
-    Write-podehost "testualMimeType=$testualMimeType"
+
     if ($testualMimeType) {
         if ($Download) {
             # If the content type is binary, set it to application/octet-stream
