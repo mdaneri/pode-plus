@@ -195,6 +195,7 @@ function Start-PodeWebServer {
                                     Sse              = $null
                                     Metadata         = @{}
                                     Async            = $false
+                                    Cache            = $null
                                 }
 
                                 # if iis, and we have an app path, alter it
@@ -243,6 +244,10 @@ function Start-PodeWebServer {
                                     if ($Request.IsAborted) {
                                         throw $Request.Error
                                     }
+                                    if ($null -ne $WebEvent.Route) {
+                                        # set the cache settings for the web event
+                                        $WebEvent.Cache = $WebEvent.Route.Cache
+                                    }
 
                                     if ((Invoke-PodeMiddleware -Middleware $WebEvent.Route.Middleware)) {
                                         # has the request been aborted
@@ -254,16 +259,14 @@ function Start-PodeWebServer {
                                         if ($null -ne $WebEvent.StaticContent) {
                                             if ( ('Get', 'Head') -contains $WebEvent.Method) {
                                                 $fileBrowser = $WebEvent.Route.FileBrowser
-                                                if ($WebEvent.StaticContent.IsDownload) {
-                                                    Write-PodeAttachmentResponseInternal -FileInfo $WebEvent.StaticContent.FileInfo -FileBrowser:$fileBrowser
-                                                }
-                                                elseif ($WebEvent.StaticContent.RedirectToDefault) {
+                                                if ($WebEvent.StaticContent.RedirectToDefault) {
                                                     $file = [System.IO.Path]::GetFileName($WebEvent.StaticContent.Source)
                                                     Move-PodeResponseUrl -Url "$($WebEvent.Path)/$($file)"
                                                 }
                                                 else {
-                                                    $cachable = $WebEvent.StaticContent.IsCachable
-                                                    Write-PodeFileResponseInternal -FileInfo $WebEvent.StaticContent.FileInfo -MaxAge $PodeContext.Server.Web.Static.Cache.MaxAge -Cache:$cachable -FileBrowser:$fileBrowser
+                                                    Write-PodeFileResponseInternal -FileInfo $WebEvent.StaticContent.FileInfo `
+                                                        -FileBrowser:$fileBrowser -Download:$WebEvent.StaticContent.IsDownload
+                                                    #-MaxAge $PodeContext.Server.Web.Static.Cache.MaxAge -Cache:$WebEvent.StaticContent.IsCachable
                                                 }
                                             }
                                             else {

@@ -41,13 +41,16 @@ catch { throw }
 
 $directoryPath = $podePath
 # Start Pode server
-Start-PodeServer -ConfigFile '..\Server.psd1' -ScriptBlock {
+#Start-PodeServer -ConfigFile '..\Server.psd1' -ScriptBlock {
+Start-PodeServer -ScriptBlock {
 
     Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http -Default
 
     New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
     New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
+    Set-PodeServerSetting -Compression -Enable -Encoding 'gzip'
 
+    #Set-PodeServerSetting -Cache -Enable
     # setup basic auth (base64> username:password in header)
     New-PodeAuthScheme -Basic -Realm 'Pode Static Page' | Add-PodeAuth -Name 'Validate' -Sessionless -ScriptBlock {
         param($username, $password)
@@ -76,8 +79,8 @@ Nothing to report :D
     }
     Add-PodeStaticRouteGroup -FileBrowser -Routes {
 
-        Add-PodeStaticRoute -Path '/' -Source $using:directoryPath
-        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly
+        Add-PodeStaticRoute -Path '/' -Source $using:directoryPath -PassThru |Add-PodeRouteCache -Enable -MaxAge 3600 -Visibility public -ETagMode mtime -Immutable
+        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  -TransferEncoding  gzip
         Add-PodeStaticRoute -Path '/nodownload' -Source $using:directoryPath
         Add-PodeStaticRoute -Path '/any/*/test' -Source $using:directoryPath
         Add-PodeStaticRoute -Path '/auth' -Source $using:directoryPath   -Authentication 'Validate'

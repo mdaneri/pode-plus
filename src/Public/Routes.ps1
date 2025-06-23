@@ -143,7 +143,7 @@ function Add-PodeRoute {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'gzip', 'deflate')]
+        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -463,6 +463,10 @@ function Add-PodeRoute {
                             StatusCodes = @{}
                         }
                     }
+                    Cache            = @{
+                        Enabled = $false
+                        MaxAge  = 60
+                    }
                 }
             })
 
@@ -607,7 +611,7 @@ function Add-PodeStaticRoute {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'gzip', 'deflate')]
+        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -907,6 +911,10 @@ function Add-PodeStaticRoute {
                         StatusCodes = @{}
                     }
                 }
+                Cache             = @{
+                    Enabled = $PodeContext.Server.Web.Static.Cache.Enabled
+                    MaxAge  = $PodeContext.Server.Web.Static.Cache.MaxAge
+                }
             }
         })
 
@@ -1173,7 +1181,7 @@ function Add-PodeRouteGroup {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'gzip', 'deflate')]
+        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -1448,7 +1456,7 @@ function Add-PodeStaticRouteGroup {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'gzip', 'deflate')]
+        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -2913,4 +2921,152 @@ function Test-PodeSignalRoute {
 
     # check for routes
     return (Test-PodeRouteInternal -Method $Method -Path $Path -Protocol $endpoint.Protocol -Address $endpoint.Address)
+}
+
+<#
+.SYNOPSIS
+Adds cache settings to Pode route definitions via the pipeline.
+
+.DESCRIPTION
+The Add-PodeCache function allows you to apply HTTP caching behavior to Pode route hashtables. It supports enabling and disabling cache, as well as fine-grained control over directives such as Cache-Control visibility, max-age, ETag generation strategy, and immutability. It only applies caching to routes with GET, HEAD, or Static methods.
+
+.PARAMETER Route
+An array of route hashtables to which cache settings will be applied. These must include a 'Method' key with values like 'Get', 'Head', or 'Static'. Other methods are ignored.
+
+.PARAMETER Enable
+Enable caching for the provided route(s). Must be used with additional options in the 'Cache' parameter set.
+
+.PARAMETER Disable
+Disables all cache behavior for the provided route(s), overriding any other settings. Cannot be combined with other cache parameters.
+
+.PARAMETER Visibility
+Sets the visibility of the Cache-Control directive. Accepts: 'public', 'private', 'no-cache', 'no-store'.
+
+.PARAMETER MaxAge
+Specifies the `max-age` directive in seconds for Cache-Control.
+
+.PARAMETER SharedMaxAge
+Specifies the `s-maxage` directive in seconds for shared (proxy) caches.
+
+.PARAMETER MustRevalidate
+Adds the `must-revalidate` directive to Cache-Control.
+
+.PARAMETER Immutable
+Adds the `immutable` directive to Cache-Control to indicate that the resource will not change.
+
+.PARAMETER ETagMode
+Controls how the ETag should be generated. Valid values:
+- 'none': disables ETag
+- 'auto': chooses 'mtime' for static, 'hash' for dynamic routes
+- 'hash': generates ETag based on content hash
+- 'mtime': generates ETag based on file modification time
+
+.PARAMETER WeakValidation
+If specified, the ETag is returned in weak form (prefixed with W/).
+
+.PARAMETER PassThru
+If specified, the function outputs the modified route(s) back to the pipeline.
+
+.EXAMPLE
+$routes | Add-PodeCache -Enable -MaxAge 3600 -ETagMode auto -Visibility public -PassThru
+
+Enables caching with a max age of 1 hour, automatic ETag strategy, and public visibility for all GET/HEAD routes in the $routes array.
+
+.EXAMPLE
+$routes | Add-PodeCache -Disable
+
+Disables cache headers and ETag generation on all GET/HEAD routes.
+
+.NOTES
+This function is intended to be used during route configuration in Pode, and will be ignored for unsupported methods.
+#>
+
+function Add-PodeRouteCache {
+    [CmdletBinding(DefaultParameterSetName = 'Cache')]
+    [OutputType([hashtable[]])]
+    param(
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [ValidateNotNullOrEmpty()]
+        [hashtable[]]
+        $Route,
+
+        [Parameter(ParameterSetName = 'Cache', Mandatory = $true)]
+        [switch]
+        $Enable,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [ValidateSet('public', 'private', 'no-cache', 'no-store')]
+        [string]
+        $Visibility,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [int]
+        $MaxAge,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [int]
+        $SharedMaxAge,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [switch]
+        $MustRevalidate,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [switch]
+        $Immutable,
+
+        [Parameter(ParameterSetName = 'Disabled')]
+        [switch]
+        $Disable,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [ValidateSet('none', 'auto', 'hash', 'mtime')]
+        [string]
+        $ETagMode = 'none',
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [switch]
+        $WeakValidation,
+
+        [Parameter()]
+        [switch]
+        $PassThru
+    )
+
+    process {
+        foreach ($r in $Route) {
+            # Skip if Method is not GET or HEAD
+            if (  'Get', 'Static', 'Head' -notcontains $r.Method) {
+                if ($PassThru) { $r }
+                continue
+            }
+
+            # Apply cache settings
+            $cache = @{}
+
+            if ($Disable) {
+                $cache.Enabled = $false
+            }
+            elseif ($Enable) {
+                $cache.Enabled = $true
+                if ($Visibility) { $cache.Visibility = $Visibility }
+                if ($MaxAge -gt 0) { $cache.MaxAge = $MaxAge }
+                if ($SharedMaxAge -gt 0) { $cache.SharedMaxAge = $SharedMaxAge }
+                if ($MustRevalidate) { $cache.MustRevalidate = $true }
+                if ($Immutable) { $cache.Immutable = $true }
+                if ($ETagMode -ne 'none') {
+                    $cache.ETag = @{
+                        Mode = $ETagMode
+                        Weak = $WeakValidation.isPresent
+                    }
+                }
+            }
+
+            $r.Cache = $cache
+
+            if ($PassThru) {
+                $r
+            }
+        }
+    }
 }

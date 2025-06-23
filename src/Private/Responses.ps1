@@ -86,155 +86,6 @@ function Show-PodeErrorPage {
 
 <#
 .SYNOPSIS
-Serves files as HTTP responses in a Pode web server, handling both dynamic and static content.
-
-.DESCRIPTION
-This function serves files from the server to the client, supporting both static files and files that are dynamically processed by a view engine.
-For dynamic content, it uses the server's configured view engine to process the file and returns the rendered content.
-For static content, it simply returns the file's content. The function allows for specifying content type, cache control, and HTTP status code.
-
-.PARAMETER Path
-The relative path to the file to be served. This path is resolved against the server's root directory.
-
-.PARAMETER FileInfo
-A FileSystemInfo object to use instead of the path.
-
-.PARAMETER Data
-A hashtable of data that can be passed to the view engine for dynamic files.
-
-.PARAMETER ContentType
-The MIME type of the response. If not provided, it is inferred from the file extension.
-
-.PARAMETER MaxAge
-The maximum age (in seconds) for which the response can be cached by the client. Applies only to static content.
-
-.PARAMETER StatusCode
-The HTTP status code to accompany the response. Defaults to 200 (OK).
-
-.PARAMETER Cache
-A switch to indicate whether the response should include HTTP caching headers. Applies only to static content.
-
-.PARAMETER NoEscape
-If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
-
-.EXAMPLE
-Write-PodeFileResponseInternal -Path 'index.pode' -Data @{ Title = 'Home Page' } -ContentType 'text/html'
-
-Serves the 'index.pode' file as an HTTP response, processing it with the view engine and passing in a title for dynamic content rendering.
-
-.EXAMPLE
-Write-PodeFileResponseInternal -Path 'logo.png' -ContentType 'image/png' -Cache
-
-Serves the 'logo.png' file as a static file with the specified content type and caching enabled.
-
-.OUTPUTS
-None. The function writes directly to the HTTP response stream.
-
-.NOTES
-This is an internal function and may change in future releases of Pode.
-#>
-function Write-PodeFileResponseInternal {
-    [CmdletBinding(DefaultParameterSetName = 'Path')]
-    param(
-        [Parameter(Mandatory = $true, ParameterSetName = 'Path')]
-        [string]
-        $Path,
-
-        [Parameter(Mandatory = $true, ParameterSetName = 'FileInfo')]
-        [System.IO.FileSystemInfo]
-        $FileInfo,
-
-        [Parameter()]
-        $Data = @{},
-
-        [Parameter()]
-        [string]
-        $ContentType = $null,
-
-        [Parameter()]
-        [int]
-        $MaxAge = 3600,
-
-        [Parameter()]
-        [int]
-        $StatusCode = 200,
-
-        [switch]
-        $Cache,
-
-        [switch]
-        $FileBrowser,
-
-        [switch]
-        $NoEscape
-    )
-
-    # if the file info isn't supplied, get it from the path
-    if ($null -eq $FileInfo) {
-        $Path = Protect-PodePath -Path $Path -NoEscape:$NoEscape
-        $FileInfo = Test-PodePath -Path $Path -Force -ReturnItem -FailOnDirectory:(!$FileBrowser)
-    }
-
-    # if the file info is still null, return
-    if ($null -eq $FileInfo) {
-        return
-    }
-
-    # Check if the path is a directory, and if enabled, use the directory response function
-    if ($FileInfo.PSIsContainer) {
-        Write-PodeDirectoryResponseInternal -DirectoryInfo $FileInfo
-        return
-    }
-
-    # are we dealing with a dynamic file for the view engine? (ignore html)
-    # Determine if the file is dynamic and should be processed by the view engine
-    $mainExt = $FileInfo.Extension.TrimStart('.')
-
-    # generate dynamic content
-    if (![string]::IsNullOrEmpty($mainExt) -and (
-            ($mainExt -ieq 'pode') -or
-            ($mainExt -ieq $PodeContext.Server.ViewEngine.Extension -and $PodeContext.Server.ViewEngine.IsDynamic)
-        )
-    ) {
-        # Process dynamic content with the view engine
-        $content = Get-PodeFileContentUsingViewEngine -FileInfo $FileInfo -Data $Data
-
-        # Determine the correct content type for the response
-        # get the sub-file extension, if empty, use original
-        $subExt = [System.IO.Path]::GetExtension($FileInfo.BaseName).TrimStart('.')
-        $subExt = Protect-PodeValue -Value $subExt -Default $mainExt
-        $ContentType = Protect-PodeValue -Value $ContentType -Default (Get-PodeContentType -Extension $subExt)
-
-        # Write the processed content as the HTTP response
-        Write-PodeTextResponse -Value $content -ContentType $ContentType -StatusCode $StatusCode
-        return
-    }
-
-    # this is a static file
-    try {
-        # load the file content
-        $content = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
-
-        # Determine and set the content type for static files
-        $ContentType = Protect-PodeValue -Value $ContentType -Default (Get-PodeContentType -Extension $mainExt)
-
-        # Write the file content as the HTTP response
-        Write-PodeTextResponse -Bytes $content -ContentType $ContentType -MaxAge $MaxAge -StatusCode $StatusCode -Cache:$Cache
-        return
-    }
-    catch [System.UnauthorizedAccessException] {
-        $statusCode = 401
-    }
-    catch {
-        $statusCode = 400
-    }
-
-    # If the file does not exist, set the HTTP response status code appropriately
-    Set-PodeResponseStatus -Code $StatusCode
-}
-
-<#
-.SYNOPSIS
 Serves a directory listing as a web page.
 
 .DESCRIPTION
@@ -387,17 +238,16 @@ function Write-PodeDirectoryResponseInternal {
         $null = $htmlContent.AppendLine('</tr>')
     }
 
-    $Data = @{
+    $data = @{
         RootPath    = $RootPath
         Path        = $leaf.Replace('\', '/')
         WindowsMode = $windowsMode.ToString().ToLower()
         FileContent = $htmlContent.ToString() # Convert the StringBuilder content to a string
     }
 
-    $podeRoot = Get-PodeModuleMiscPath
+    $content = Get-PodeFileContentUsingViewEngine -Path ([System.IO.Path]::Combine((Get-PodeModuleMiscPath), 'default-file-browsing.html.pode')) -Data $data
+    Write-PodeTextResponse -Value $content -ContentType 'text/html' -StatusCode 200
 
-    # Write the response
-    Write-PodeFileResponseInternal -Path ([System.IO.Path]::Combine($podeRoot, 'default-file-browsing.html.pode')) -Data $Data -NoEscape
 }
 
 <#
@@ -405,7 +255,7 @@ function Write-PodeDirectoryResponseInternal {
 Sends a file as an attachment in the response, supporting both file streaming and directory browsing options.
 
 .DESCRIPTION
-The Write-PodeAttachmentResponseInternal function is designed to handle HTTP responses for file downloads or directory browsing within a Pode web server. It resolves the given file or directory path, sets the appropriate content type, and configures the response to either download the file as an attachment or list the directory contents if browsing is enabled. The function supports both PowerShell Core and Windows PowerShell environments for file content retrieval.
+The Write-PodeFileResponseInternal function is designed to handle HTTP responses for file downloads or directory browsing within a Pode web server. It resolves the given file or directory path, sets the appropriate content type, and configures the response to either download the file as an attachment or list the directory contents if browsing is enabled. The function supports both PowerShell Core and Windows PowerShell environments for file content retrieval.
 
 .PARAMETER Path
 The path to the file or directory. This parameter is mandatory and accepts pipeline input. The function resolves relative paths based on the server's root directory.
@@ -422,13 +272,28 @@ A switch parameter that, when present, enables directory browsing. If the path p
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
 
+.PARAMETER Data
+A hashtable of data that can be passed to the view engine for dynamic files.
+
+.PARAMETER ContentType
+The MIME type of the response. If not provided, it is inferred from the file extension.
+
+.PARAMETER MaxAge
+The maximum age (in seconds) for which the response can be cached by the client. Applies only to static content.
+
+.PARAMETER StatusCode
+The HTTP status code to accompany the response. Defaults to 200 (OK).
+
+.PARAMETER Cache
+A switch to indicate whether the response should include HTTP caching headers. Applies only to static content.
+
 .EXAMPLE
-Write-PodeAttachmentResponseInternal -Path './files/document.pdf' -ContentType 'application/pdf'
+Write-PodeFileResponseInternal -Path './files/document.pdf' -ContentType 'application/pdf'
 
 Serves the 'document.pdf' file with the 'application/pdf' MIME type as a downloadable attachment.
 
 .EXAMPLE
-Write-PodeAttachmentResponseInternal -Path './files' -FileBrowser
+Write-PodeFileResponseInternal -Path './files' -FileBrowser
 
 Lists the contents of the './files' directory if the FileBrowser switch is enabled; otherwise, returns a 404 error.
 
@@ -436,7 +301,8 @@ Lists the contents of the './files' directory if the FileBrowser switch is enabl
 - This function integrates with Pode's internal handling of HTTP responses, leveraging other Pode-specific functions like Get-PodeContentType and Set-PodeResponseStatus. It differentiates between streamed and serverless environments to optimize file delivery.
 - This is an internal function and may change in future releases of Pode.
 #>
-function Write-PodeAttachmentResponseInternal {
+function Write-PodeFileResponseInternal {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingBrokenHashAlgorithms', '')]
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     param(
         [Parameter(Mandatory = $true, ParameterSetName = 'Path')]
@@ -448,8 +314,11 @@ function Write-PodeAttachmentResponseInternal {
         $FileInfo,
 
         [Parameter()]
+        $Data,
+
+        [Parameter()]
         [string]
-        $ContentType = 'application/octet-stream',
+        $ContentType,
 
         [Parameter()]
         [switch]
@@ -463,7 +332,15 @@ function Write-PodeAttachmentResponseInternal {
 
         [Parameter()]
         [int]
-        $MaxAge = 3600
+        $MaxAge = 3600,
+
+        [Parameter()]
+        [switch]
+        $Download,
+
+        [Parameter()]
+        [int]
+        $StatusCode = 200
     )
 
     # if the file info isn't supplied, get it from the path
@@ -493,6 +370,9 @@ function Write-PodeAttachmentResponseInternal {
             ($mainExt -ieq $PodeContext.Server.ViewEngine.Extension -and $PodeContext.Server.ViewEngine.IsDynamic)
         )
     ) {
+        if ($null -eq $Data) {
+            $Data = @{}
+        }
         # Process dynamic content with the view engine
         $content = Get-PodeFileContentUsingViewEngine -FileInfo $FileInfo -Data $Data
 
@@ -500,7 +380,8 @@ function Write-PodeAttachmentResponseInternal {
         # get the sub-file extension, if empty, use original
         $subExt = [System.IO.Path]::GetExtension($FileInfo.BaseName).TrimStart('.')
         $subExt = Protect-PodeValue -Value $subExt -Default $mainExt
-        $ContentType = Protect-PodeValue -Value $ContentType -Default (Get-PodeContentType -Extension $subExt)
+
+        $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.MimeTypeMap]::GetExtension($subExt ))
 
         # Write the processed content as the HTTP response
         Write-PodeTextResponse -Value $content -ContentType $ContentType -StatusCode $StatusCode
@@ -508,36 +389,150 @@ function Write-PodeAttachmentResponseInternal {
     }
 
     # Determine and set the content type for static files
-    $ContentType = Protect-PodeValue -Value $ContentType -Default (Get-PodeContentType -Extension $mainExt -AddCharset)
+    $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.MimeTypeMap]::GetExtension($mainExt ))
+    $testualMimeType = [Pode.MimetypeMap]::IsTextualMimeType($ContentType)
+    Write-podehost "testualMimeType=$testualMimeType"
+    if ($testualMimeType) {
+        if ($Download) {
+            # If the content type is binary, set it to application/octet-stream
+            # This is useful for files that should be downloaded rather than displayed
+            $ContentType = 'application/octet-stream'
+        }
+        elseif ($ContentType -notcontains '; charset=') {
+            # If the content type is textual, ensure it has a charset
+            $ContentType += "; charset=$($PodeContext.Server.Encoding.WebName)"
+        }
+    }
 
     # this is a static file
     try {
+        if ($null -eq $WebEvent.Response) { return } #for testing purposes
         $WebEvent.Response.ContentType = $ContentType
-        Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=$($FileInfo.Name)"
+        if ($Download) {
+            # Set the content disposition to attachment for downloading
+            # This will prompt the browser to download the file instead of displaying it
+            # If Download is false, it will be treated as inline
+            Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileInfo.Name)"""
+        }
+        else {
+            # Set the content disposition to inline for viewing in the browser
+            # This is useful for images, PDFs, etc., that can be displayed directly
+            # If Download is true, it will be treated as an attachment
+            Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileInfo.Name)"""
+        }
 
         if ($Cache) {
             Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
             Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
         }
+        elseif ((Test-PodeRouteValidForCaching -Path $WebEvent.Path ) -and $webEvent.Cache.Enabled) {
+            Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($PodeContext.Server.Web.Static.Cache.MaxAge), must-revalidate"
+            Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($PodeContext.Server.Web.Static.Cache.MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
+        }
+        elseif ($webEvent.Cache.Enabled) {
+            $directives = @()
 
+            $ETagMode = if ($WebEvent.Cache.ETag.Mode -eq 'auto') {
+                if ($WebEvent.Route.IsStatic) {
+                    'mtime'
+                }
+                else {
+                    'hash'
+                }
+            }
+            else {
+                $WebEvent.Cache.ETag.Mode
+            }
+
+            switch ($ETagMode) {
+                'mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
+                'hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
+                default { $value = $null } #none
+            }
+            if ($value) {
+                $etag = if ($WebEvent.Cache.ETag.Weak) {
+                    'W/"{0}"' -f $value
+                }
+                else {
+                    '"{0}"' -f $value
+                }
+                if ($WebEvent.Request.Headers['If-None-Match'] -eq $etag) {
+                    $StatusCode = 304
+                    return
+                }
+                Set-PodeHeader -Name 'ETag' -Value $etag
+            }
+
+            # Cache visibility (public/private/no-cache/no-store)
+            if ($WebEvent.Cache.Visibility) {
+                $directives += $WebEvent.Cache.Visibility
+            }
+
+            # max-age and s-maxage
+            if ($WebEvent.Cache.MaxAge -gt 0) {
+                $directives += "max-age=$($WebEvent.Cache.MaxAge)"
+                Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($WebEvent.Cache.MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
+            }
+
+            if ($WebEvent.Cache.SMaxAge -gt 0) {
+                $directives += "s-maxage=$($WebEvent.Cache.SMaxAge)"
+            }
+
+            # Must-revalidate
+            if ($WebEvent.Cache.MustRevalidate) {
+                $directives += 'must-revalidate'
+            }
+
+            # Immutable
+            if ($WebEvent.Cache.Immutable) {
+                $directives += 'immutable'
+            }
+
+            # Build and apply Cache-Control
+            if ($directives.Count -gt 0) {
+                Set-PodeHeader -Name 'Cache-Control' -Value ($directives -join ', ')
+            }
+        }
+        else {
+            Set-PodeHeader -Name 'Cache-Control' -Value 'no-store, no-cache, must-revalidate'
+            Set-PodeHeader -Name 'Pragma' -Value 'no-cache'
+            Set-PodeHeader -Name 'Expires' -Value '0'
+        }
+
+        $compression = [pode.podecompressiontype]::None
+        if ($PodeContext.Server.Web.Compression.Enabled -and $testualMimeType -and !$Download -and
+        ($null -eq $WebEvent.Ranges) -and ![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding)) {
+            $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
+            switch ($encoding) {
+                'br' { $compression = [Pode.PodeCompressionType]::Brotli; break }
+                'brotli' { $compression = [Pode.PodeCompressionType]::Brotli; break }
+                'gzip' { $compression = [Pode.PodeCompressionType]::Gzip; break }
+                'gz' { $compression = [Pode.PodeCompressionType]::Gzip; break }
+                'deflate' { $compression = [Pode.PodeCompressionType]::Deflate; break }
+                default { $compression = [Pode.PodeCompressionType]::None }
+            }
+            if ($compression -ne [Pode.PodeCompressionType]::None) {
+                Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
+                Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
+            }
+        }
         # if serverless, get the content raw and return
         if (!$WebEvent.Streamed) {
             $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
             return
         }
-        # Write-PodeTextResponse -Bytes $content -ContentType $ContentType -MaxAge $MaxAge -StatusCode $StatusCode -Cache:$Cache
+
         if ($WebEvent.Method -eq 'Get') {
             # set file as an attachment on the response
             if ($null -eq $WebEvent.Ranges) {
                 # else if normal, stream the content back
-                $WebEvent.Response.SendChunked = $false
-                $WebEvent.Response.WriteFile($FileInfo)
+                $WebEvent.Response.WriteFile($FileInfo, $compression)
             }
             else {
-                $WebEvent.Response.SendChunked = $true
-                $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges)
+                $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges, $compression)
             }
         }
+        $StatusCode = 200
         return
     }
     catch [System.UnauthorizedAccessException] {
@@ -546,7 +541,8 @@ function Write-PodeAttachmentResponseInternal {
     catch {
         $statusCode = 400
     }
-
-    # If the file does not exist, set the HTTP response status code appropriately
-    Set-PodeResponseStatus -Code $StatusCode
+    finally {
+        # If the file does not exist, set the HTTP response status code appropriately
+        Set-PodeResponseStatus -Code $StatusCode
+    }
 }

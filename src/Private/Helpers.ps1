@@ -1088,7 +1088,7 @@ function Get-PodeAcceptEncoding {
 
     # build up supported and invalid
     foreach ($encoding in $encodings.Keys) {
-        if (($encoding -iin $PodeContext.Server.Compression.Encodings) -or ($encoding -iin $normal)) {
+        if (($encoding -iin $PodeContext.Server.Web.Compression.Encodings) -or ($encoding -iin $normal)) {
             $valid += @{
                 Name  = $encoding
                 Value = $encodings[$encoding]
@@ -1258,7 +1258,7 @@ function Get-PodeTransferEncoding {
 
     # if we see a supported one, return immediately. else build up invalid one
     foreach ($encoding in $encodings.Keys) {
-        if ($encoding -iin $PodeContext.Server.Compression.Encodings) {
+        if ($encoding -iin $PodeContext.Server.Web.Compression.Encodings) {
             if ($encoding -ieq 'x-gzip') {
                 return 'gzip'
             }
@@ -1455,7 +1455,7 @@ function ConvertFrom-PodeRequestContent {
         Data  = @{}
         Files = @{}
     }
-
+write-podehost "Body ContentType: $ContentType"
     # if there is no content-type then do nothing
     if ([string]::IsNullOrWhiteSpace($ContentType)) {
         return $Result

@@ -1622,4 +1622,247 @@ function Start-PodeSleep {
     }
 }
 
+<#
+.SYNOPSIS
+Configures web server settings for compression, text encoding, and static file caching in Pode.
 
+.DESCRIPTION
+This function sets configurable settings for the Pode server. You can configure:
+- Compression: Enable or disable response compression and specify supported encodings like gzip, br.
+- TextEncoding: Set the default charset (e.g., UTF-8) for textual response content.
+- Cache: Enable or disable caching for static files, and control cache duration and file filters.
+
+.PARAMETER Compression
+Indicates that compression-related settings should be configured. Use with -Enable or -Disable, and optionally -Encoding.
+
+.PARAMETER Enable
+Enables the feature specified (compression or cache), when used with -Compression or -Cache.
+
+.PARAMETER Disable
+Disables the feature specified (compression or cache), when used with -Compression or -Cache.
+
+.PARAMETER Encoding
+Specifies supported compression algorithms for the server. Accepts 'gzip', 'deflate', or 'br'. Only valid with -Compression.
+
+.PARAMETER TextEncoding
+Indicates that text encoding settings should be configured. Use with -Charset.
+
+.PARAMETER Charset
+Specifies the default character set for textual content in responses. Valid values: 'utf-8', 'utf-16', 'utf-16le', 'utf-16be', 'utf-32', 'us-ascii'. Only valid with -TextEncoding.
+
+.PARAMETER Cache
+Indicates that static file caching settings should be configured. Use with -Enable or -Disable, and optionally -MaxAge, -Include, -Exclude.
+
+.PARAMETER MaxAge
+Specifies the max-age in seconds for Cache-Control headers for static files. Only valid with -Cache.
+
+.PARAMETER Include
+A list of static file paths or patterns to include for caching. Only valid with -Cache.
+
+.PARAMETER Exclude
+A list of static file paths or patterns to exclude from caching. Only valid with -Cache.
+
+.EXAMPLE
+Set-PodeServerSetting -Compression -Enable -Encoding gzip,br
+
+Enables response compression and sets the supported encodings to gzip and Brotli.
+
+.EXAMPLE
+Set-PodeServerSetting -Compression -Disable
+
+Disables response compression.
+
+.EXAMPLE
+Set-PodeServerSetting -TextEncoding -Charset utf-8
+
+Sets the default charset for response content to UTF-8.
+
+.EXAMPLE
+Set-PodeServerSetting -Cache -Enable -MaxAge 3600 -Include '*.css','*.js'
+
+Enables static file caching for CSS and JS files with a max-age of 3600 seconds.
+
+.EXAMPLE
+Set-PodeServerSetting -Cache -Disable
+
+Disables static file caching.
+
+.NOTES
+Only one configuration type (Compression, TextEncoding, or Cache) can be modified per call due to parameter set constraints.
+#>
+function Set-PodeServerSetting {
+    [CmdletBinding(DefaultParameterSetName = 'None')]
+    param(
+        # Compression block
+        [Parameter(ParameterSetName = 'Compression', Mandatory = $true)]
+        [switch] $Compression,
+
+        [Parameter(ParameterSetName = 'Compression')]
+        [Parameter(ParameterSetName = 'Cache')]
+        [switch] $Enable,
+
+        [Parameter(ParameterSetName = 'Compression')]
+        [Parameter(ParameterSetName = 'Cache')]
+        [switch] $Disable,
+
+        [Parameter(ParameterSetName = 'Compression')]
+        [ValidateSet('gzip', 'deflate', 'br')]
+        [string[]] $Encoding,
+
+        # Text encoding block
+        [Parameter(ParameterSetName = 'TextEncoding', Mandatory = $true)]
+        [switch] $TextEncoding,
+
+        [Parameter(ParameterSetName = 'TextEncoding', Mandatory = $true)]
+        [ValidateSet('utf-8', 'utf-16', 'utf-16le', 'utf-16be', 'utf-32', 'us-ascii')]
+        [string] $Charset,
+
+        [Parameter(ParameterSetName = 'Cache', Mandatory = $true)]
+        [switch] $Cache,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [int]
+        $MaxAge,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [string[]] $Include,
+
+        [Parameter(ParameterSetName = 'Cache')]
+        [string[]] $Exclude
+
+    )
+
+    switch ($PSCmdlet.ParameterSetName) {
+        'Compression' {
+            if ($Enable) {
+                $PodeContext.Server.Web.Compression.Enabled = $true
+            }
+            elseif ($Disable) {
+                $PodeContext.Server.Web.Compression.Enabled = $false
+            }
+
+            if ($PSBoundParameters.ContainsKey('Encoding')) {
+                $PodeContext.Server.Web.Compression.Encodings = @($Encoding)
+            }
+        }
+        'Cache' {
+            if ($Enable) {
+                $PodeContext.Server.Web.Static.Cache.Enabled = $true
+            }
+            elseif ($Disable) {
+                $PodeContext.Server.Web.Static.Cache.Enabled = $false
+            }
+
+            if ($PSBoundParameters.ContainsKey('Include')) {
+                $PodeContext.Server.Web.Static.Cache.Include = @($Include)
+            }
+
+            if ($PSBoundParameters.ContainsKey('Exclude')) {
+                $PodeContext.Server.Web.Static.Cache.Exclude = @($Exclude)
+            }
+            if ($PSBoundParameters.ContainsKey('MaxAge')) {
+                $PodeContext.Server.Web.Static.Cache.MaxAge = $MaxAge
+            }
+        }
+        'TextEncoding' {
+                $PodeContext.Server.Encoding = switch ($Charset.ToLowerInvariant()) {
+                    'utf-8' { [System.Text.UTF8Encoding]::new($false) }
+                    'utf-16' { [System.Text.UnicodeEncoding]::new($false, $true) }
+                    'utf-16le' { [System.Text.UnicodeEncoding]::new($false, $true) }
+                    'utf-16be' { [System.Text.UnicodeEncoding]::new($true, $true) }
+                    'utf-32' { [System.Text.UTF32Encoding]::new($false, $true) }
+                    'us-ascii' { [System.Text.Encoding]::ASCII }
+                }
+
+                $PodeContext.Server.Web.Charset = $Charset
+
+        }
+
+       
+    }
+}
+
+<#
+.SYNOPSIS
+Retrieves current web server settings related to compression, text encoding, and static file caching in Pode.
+
+.DESCRIPTION
+This function returns a hashtable representing the current configuration of Pode's server settings, including compression, text encoding, and static file caching. You can query specific settings or retrieve all of them at once.
+
+.PARAMETER Compression
+Returns only the compression-related settings, including whether compression is enabled and the supported encodings.
+
+.PARAMETER TextEncoding
+Returns only the text encoding settings, including the charset used in responses and the .NET encoding name.
+
+.PARAMETER Cache
+Returns only the static file caching settings, including enabled state, included patterns, and excluded patterns.
+
+.OUTPUTS
+[hashtable]
+
+.EXAMPLE
+Get-PodeServerSetting -Compression
+
+Returns a hashtable with the current compression status and supported encodings.
+
+.EXAMPLE
+Get-PodeServerSetting -TextEncoding
+
+Returns a hashtable with the current charset and .NET encoding name.
+
+.EXAMPLE
+Get-PodeServerSetting -Cache
+
+Returns a hashtable with the current static file cache settings, including which files are included or excluded.
+
+.EXAMPLE
+Get-PodeServerSetting
+
+Returns a hashtable with compression, text encoding, and cache settings.
+
+.NOTES
+If no parameters are provided, all settings (compression, text encoding, and cache) will be returned.
+#>
+function Get-PodeServerSetting {
+    [CmdletBinding(DefaultParameterSetName = 'All')]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(ParameterSetName = 'Compression')]
+        [switch]
+        $Compression,
+
+        [Parameter(ParameterSetName = 'TextEncoding')]
+        [switch]
+        $TextEncoding,
+
+        [Parameter(ParameterSetName = 'Cache', Mandatory)]
+        [switch]
+        $Cache
+    )
+
+    $result = @{}
+
+    if ($PSCmdlet.ParameterSetName -eq 'Compression' -or $PSCmdlet.ParameterSetName -eq 'All') {
+        $result.Compression = @{
+            Enabled   = $PodeContext.Server.Web.Compression.Enabled
+            Encodings = @($PodeContext.Server.Web.Compression.Encodings)
+        }
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq 'TextEncoding' -or $PSCmdlet.ParameterSetName -eq 'All') {
+        $result.TextEncoding = @{
+            Charset  = $PodeContext.Server.Web.Charset
+            Encoding = $PodeContext.Server.Encoding.WebName
+        }
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq 'Cache' -or $PSCmdlet.ParameterSetName -eq 'All') {
+        $result.Cache = @{
+            Enabled = $PodeContext.Server.Web.Static.Cache.Enabled
+            Include = $PodeContext.Server.Web.Static.Cache.Include
+            Exclude = $PodeContext.Server.Web.Static.Cache.Exclude
+        }
+    }
+    return $result
+}

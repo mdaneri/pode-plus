@@ -303,7 +303,10 @@ namespace Pode
 
                 case PodeCompressionType.Deflate:
                     return new DeflateStream(stream, mode, leaveOpen);
-
+#if NETCOREAPP2_1_OR_GREATER
+                case PodeCompressionType.Brotli:
+                    return new BrotliStream(stream, mode, leaveOpen);
+#endif
                 default:
                     return stream;
             }

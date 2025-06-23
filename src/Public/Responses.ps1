@@ -99,7 +99,7 @@ function Set-PodeResponseAttachment {
         }
 
         # call internal Attachment function
-        Write-PodeAttachmentResponseInternal -Path $_path -ContentType $ContentType -FileBrowser:$fileBrowser -NoEscape
+        Write-PodeFileResponseInternal -Path $_path -ContentType $ContentType -FileBrowser:$fileBrowser -NoEscape -Download
     }
 }
 
@@ -432,7 +432,6 @@ function Write-PodeFileResponse {
             StatusCode  = $StatusCode
             Cache       = $Cache
             FileBrowser = $FileBrowser
-            NoEscape    = $NoEscape
         }
 
         # path or file info?

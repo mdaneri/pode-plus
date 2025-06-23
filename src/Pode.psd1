@@ -152,6 +152,8 @@
         'Set-PodeCurrentRunspaceName',
         'Invoke-PodeGC',
         'Start-PodeSleep',
+        'Set-PodeServerSetting',
+        'Get-PodeServerSetting',
 
         # routes
         'Add-PodeRoute',
@@ -176,6 +178,7 @@
         'Test-PodeRoute',
         'Test-PodeStaticRoute',
         'Test-PodeSignalRoute',
+        'Add-PodeRouteCache',
 
         #Async
         'Set-PodeAsyncRoute',

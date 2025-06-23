@@ -1372,8 +1372,7 @@ Describe 'Get-PodeAcceptEncoding' {
 
         $PodeContext = @{
             Server = @{
-                Web         = @{ Compression = @{ Enabled = $true } }
-                Compression = @{ Encodings = @('gzip', 'deflate', 'x-gzip') }
+                Web         = @{ Compression = @{ Enabled = $true ;Encodings = @('gzip', 'deflate','br', 'x-gzip') }}
             }
         }
     }
@@ -1399,17 +1398,17 @@ Describe 'Get-PodeAcceptEncoding' {
 
     It 'Returns empty if no encoding matches' {
         $PodeContext.Server.Web.Compression.Enabled = $true
-        Get-PodeAcceptEncoding -AcceptEncoding 'br,compress' | Should -Be ''
+        Get-PodeAcceptEncoding -AcceptEncoding 'br;q=0,compress' | Should -Be ''
     }
 
     It 'Returns empty if no encoding matches, and 1 encoding is disabled' {
         $PodeContext.Server.Web.Compression.Enabled = $true
-        Get-PodeAcceptEncoding -AcceptEncoding 'br,compress,gzip;q=0' | Should -Be ''
+        Get-PodeAcceptEncoding -AcceptEncoding 'br,compress,gzip;q=0' | Should -Be 'br'
     }
 
     It 'Returns encoding when no other encoding matches, and 1 encoding matches' {
         $PodeContext.Server.Web.Compression.Enabled = $true
-        Get-PodeAcceptEncoding -AcceptEncoding 'br,compress,gzip' | Should -Be 'gzip'
+        Get-PodeAcceptEncoding -AcceptEncoding 'br,compress,gzip' | Should -Be 'br'
     }
 
     It 'Returns highest encoding when weighted' {
@@ -1424,18 +1423,18 @@ Describe 'Get-PodeAcceptEncoding' {
 
     It 'Returns encoding even when none match, and identity disabled' {
         $PodeContext.Server.Web.Compression.Enabled = $true
-        Get-PodeAcceptEncoding -AcceptEncoding 'br,identity;q=0' | Should -Be ''
+        Get-PodeAcceptEncoding -AcceptEncoding 'rar,identity;q=0' | Should -Be ''
     }
 
     It 'Errors when no encoding matches, and identity disabled' {
         $PodeContext.Server.Web.Compression.Enabled = $true
-        { Get-PodeAcceptEncoding -AcceptEncoding 'br,identity;q=0' -ThrowError } | Should -Throw -ExceptionType 'System.Net.Http.HttpRequestException'
+        { Get-PodeAcceptEncoding -AcceptEncoding 'compress,identity;q=0' -ThrowError } | Should -Throw -ExceptionType 'System.Net.Http.HttpRequestException'
         Assert-MockCalled New-PodeRequestException -Scope It -Times 1
     }
 
     It 'Errors when no encoding matches, and wildcard disabled' {
         $PodeContext.Server.Web.Compression.Enabled = $true
-        { Get-PodeAcceptEncoding -AcceptEncoding 'br,*;q=0' -ThrowError } | Should -Throw -ExceptionType 'System.Net.Http.HttpRequestException'
+        { Get-PodeAcceptEncoding -AcceptEncoding 'compress,*;q=0' -ThrowError } | Should -Throw -ExceptionType 'System.Net.Http.HttpRequestException'
         Assert-MockCalled New-PodeRequestException -Scope It -Times 1
     }
 
@@ -1451,7 +1450,7 @@ Describe 'Get-PodeTransferEncoding' {
 
         $PodeContext = @{
             Server = @{
-                Compression = @{ Encodings = @('gzip', 'deflate', 'x-gzip') }
+                Compression = @{ Encodings = @('gzip', 'deflate','br', 'x-gzip') }
             }
         }
     }

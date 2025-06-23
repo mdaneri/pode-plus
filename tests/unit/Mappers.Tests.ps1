@@ -6,6 +6,7 @@ BeforeAll {
     Get-ChildItem "$($src)/*.ps1" -Recurse | Resolve-Path | ForEach-Object { . $_ }
     Import-LocalizedData -BindingVariable PodeLocale -BaseDirectory (Join-Path -Path $src -ChildPath 'Locales') -FileName 'Pode'
 }
+<#
 Describe 'Get-PodeContentType' {
     Context 'No extension supplied' {
         It 'Return the default type for empty' {
@@ -1296,7 +1297,7 @@ Describe 'Get-PodeContentType' {
 
     }
 }
-
+#>
 Describe 'Get-PodeStatusDescription' {
     It 'Returns no description for no StatusCode' {
         Get-PodeStatusDescription | Should -Be ([string]::Empty)

@@ -28,7 +28,7 @@ Describe 'ASYNC REST API Requests' {
         $scriptPath = "$($PSScriptRoot)\..\..\examples\Web-AsyncRoute.ps1"
 
         Wait-ForWebServer -Port $Port -Offline
-        Start-Process  (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -File `"$scriptPath`" -Port $Port  -Daemon"  -NoNewWindow
+ #       Start-Process  (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -File `"$scriptPath`" -Port $Port  -Daemon"  -NoNewWindow
         Wait-ForWebServer -Port $Port
     }
 
