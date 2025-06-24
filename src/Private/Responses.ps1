@@ -516,6 +516,7 @@ function Write-PodeFileResponseInternal {
                 Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
             }
         }
+
         # if serverless, get the content raw and return
         if (!$WebEvent.Streamed) {
             $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
@@ -531,6 +532,9 @@ function Write-PodeFileResponseInternal {
             else {
                 $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges, $compression)
             }
+        }
+        elseif ($WebEvent.Method -eq 'head') {
+            Set-PodeHeader -Name 'Content-Length' -Value $FileInfo.Length
         }
         $StatusCode = 200
         return

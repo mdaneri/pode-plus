@@ -477,3 +477,74 @@ function Get-SseEvent {
 
   return $events
 }
+
+
+# Quickly create a file of the desired size.
+# For binary we simply SetLength() – instant, sparse-file friendly.
+# For text we write a 1 KiB ASCII buffer repeatedly so the file is 100 % printable.
+function New-TestFile {
+  param(
+    [string]$Path,
+    [long]  $SizeBytes,
+    [ValidateSet('Text', 'Binary')]$Kind
+  )
+
+  if (Test-Path $Path) { Remove-Item $Path -Force }
+
+  $fs = [System.IO.File]::Open($Path, 'CreateNew')
+  try {
+    switch ($Kind) {
+      'Binary' { $fs.SetLength($SizeBytes) }
+      'Text' {
+        $chunkSz = 8KB
+        $chunk = [byte[]]::new($chunkSz)
+        $rand = [System.Random]::new()
+
+        for ($i = 0; $i -lt $chunkSz - 1; $i++) {
+          $chunk[$i] = [byte]($rand.Next(32, 127))   # any printable char
+        }
+        $chunk[$chunkSz - 1] = 0x0A                    # newline
+
+        # Pre-allocate to avoid fragmentation, then overwrite with data
+        $fs.SetLength($SizeBytes)
+        $fs.Position = 0
+
+        $remaining = $SizeBytes
+        while ($remaining -gt 0) {
+          $toWrite = [long][System.Math]::Min([long]$chunkSz, $remaining)
+          $fs.Write($chunk, 0, [int]$toWrite)        # Stream.Write wants Int32
+          $remaining -= $toWrite
+        }
+      }
+    }
+  }
+  finally { $fs.Dispose() }
+}
+
+# Download a file in 1 GiB ranges, join the parts, and return the path
+function Get-RangeFile {
+  param(
+    [string]$Url,
+    [string]$DownloadDir,
+    [long]  $RangeSize = 1GB
+  )
+  $resp = Invoke-WebRequest -Uri $Url -Method Head -ErrorAction Stop
+  $length = [int64]$resp.Headers['Content-Length'][0]
+  $parts = 0..[math]::Floor(($length - 1) / $RangeSize) | ForEach-Object {
+    $start = $_ * $RangeSize
+    $end = [math]::Min($length - 1, $start + $RangeSize - 1)
+    $part = Join-Path $DownloadDir "part$_.bin"
+    Invoke-WebRequest -Uri $Url -OutFile $part -Headers @{ Range = "bytes=$start-$end" } -ErrorAction Stop
+    $part
+  }
+
+  $joined = Join-Path $DownloadDir 'joined.tmp'
+  $out = [System.IO.File]::Create($joined)
+  foreach ($p in $parts) {
+    $bytes = [System.IO.File]::ReadAllBytes($p)
+    $out.Write($bytes, 0, $bytes.Length)
+    Remove-Item $p
+  }
+  $out.Dispose()
+  $joined
+}

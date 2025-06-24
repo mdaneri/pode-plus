@@ -712,9 +712,15 @@ namespace Pode
         /// If <paramref name="ranges"/> is <c>null</c> or empty the entire file is sent (200 OK).
         /// If one valid range is supplied, a single‑range 206 response is returned.
         /// If multiple valid ranges are supplied, a multipart/byteranges 206 response is returned.
+        /// If <paramref name="compression"/> is not <see cref="PodeCompressionType.None"/>
+        /// the file is compressed on-the-fly and sent with
+        /// <c>Transfer-Encoding: chunked</c>.
+        /// Compression + ranges is **not** supported (HTTP forbids it).
+        /// </summary>
         /// </summary>
         /// <param name="fileInfo">File to stream.</param>
         /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
+        /// param name="compression">Optional compression type for the file.</param>
         public async Task WriteLargeFile(FileInfo fileInfo, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.None)
         {
             if (IsDisposed) return;
@@ -722,6 +728,50 @@ namespace Pode
                 throw new FileNotFoundException($"File not found: {fileInfo.FullName}");
             // Disable Pode request timeout for long transfers
             Context.CancelTimeout();
+
+            // COMPRESSED (no ranges) – stream & compress on the fly
+            if (compression != PodeCompressionType.None)
+            {
+                if (ranges != null && ranges.Count > 0)
+                    throw new InvalidOperationException("Compression with Range is not supported.");
+
+                // use chunked so we don’t need to know the final size
+                SendChunked = true;
+                ContentLength64 = 0;      // defensive – will be stripped by SetDefaultHeaders
+
+                string _;         // headers set by caller
+                // add Content-Encoding, wrap the network stream
+                var cmpStream = WrapCompression(Request.InputStream, compression, out _);
+                //    Headers.Set("Content-Encoding", contentEncoding);
+
+                // send headers first, then copy the file through the compressor
+                await SendHeaders(false).ConfigureAwait(false);
+
+                try
+                {
+                    using (cmpStream) // leaves Request.InputStream open
+                    {
+                        using (FileStream src = fileInfo.OpenRead())
+                        {
+                            await src.CopyToAsync(
+                                cmpStream,
+                                MAX_FRAME_SIZE,
+                                Context.Listener.CancellationToken
+                            ).ConfigureAwait(false);
+                        }
+                    }
+                }
+                finally
+                {
+                    // make sure everything is flushed even on cancellation
+                    try { await Request.InputStream.FlushAsync(Context.Listener.CancellationToken); }
+                    catch { /* ignore */ }
+                }
+
+                SentBody = true;
+                return;
+            }
+
             // Parse ranges (if provided)
             var parsed = new List<(long Start, long End)>();
             if (ranges != null)

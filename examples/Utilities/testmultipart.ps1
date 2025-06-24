@@ -1,4 +1,4 @@
-$uri = 'http://localhost:8081/download/PROD/COMP/NSX_T_MANAGER/nsx-unified-appliance-9.0.0.0.24733065.ova'
+$uri = 'http://localhost:8081/bigfile.txt'
 $rangeSize = 1GB
 $tempDir = "$env:TEMP\pode-range-test"
 $fullPath = "$tempDir\full.ova"
