@@ -467,6 +467,10 @@ function Add-PodeRoute {
                         Enabled = $false
                         MaxAge  = 60
                     }
+                    Compression      = @{
+                        Enabled   = $PodeContext.Server.Web.Compression.Enabled
+                        Encodings = $PodeContext.Server.Web.Compression.Encodings
+                    }
                 }
             })
 
@@ -914,6 +918,10 @@ function Add-PodeStaticRoute {
                 Cache             = @{
                     Enabled = $PodeContext.Server.Web.Static.Cache.Enabled
                     MaxAge  = $PodeContext.Server.Web.Static.Cache.MaxAge
+                }
+                Compression       = @{
+                    Enabled   = $PodeContext.Server.Web.Compression.Enabled
+                    Encodings = $PodeContext.Server.Web.Compression.Encodings
                 }
             }
         })
@@ -3041,28 +3049,123 @@ function Add-PodeRouteCache {
                 continue
             }
 
-            # Apply cache settings
-            $cache = @{}
-
             if ($Disable) {
-                $cache.Enabled = $false
+                $r.cache.Enabled = $false
             }
             elseif ($Enable) {
-                $cache.Enabled = $true
-                if ($Visibility) { $cache.Visibility = $Visibility }
-                if ($MaxAge -gt 0) { $cache.MaxAge = $MaxAge }
-                if ($SharedMaxAge -gt 0) { $cache.SharedMaxAge = $SharedMaxAge }
-                if ($MustRevalidate) { $cache.MustRevalidate = $true }
-                if ($Immutable) { $cache.Immutable = $true }
+                $r.Cache.Enabled = $true
+                if ($Visibility) { $r.Cache.Visibility = $Visibility }
+                if ($MaxAge -gt 0) { $r.Cache.MaxAge = $MaxAge }
+                if ($SharedMaxAge -gt 0) { $r.Cache.SharedMaxAge = $SharedMaxAge }
+                if ($MustRevalidate) { $r.Cache.MustRevalidate = $true }
+                if ($Immutable) { $r.Cache.Immutable = $true }
                 if ($ETagMode -ne 'none') {
-                    $cache.ETag = @{
+                    $r.Cache.ETag = @{
                         Mode = $ETagMode
                         Weak = $WeakValidation.isPresent
                     }
                 }
             }
 
-            $r.Cache = $cache
+
+            if ($PassThru) {
+                $r
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Enables or disables response compression for one or more Pode route hashtables.
+
+.DESCRIPTION
+The Add-PodeRouteCompression function allows you to configure compression behavior on Pode routes.
+It modifies route hashtables passed through the pipeline by setting their `.Compression` property.
+
+You can enable or disable compression explicitly. When enabled, you may optionally specify the allowed encoding methods
+(e.g., gzip, deflate, br). This affects whether Pode compresses the response payload based on the client's Accept-Encoding
+and the route’s configuration.
+
+This function is intended for use during server setup when constructing or importing route configurations.
+
+.PARAMETER Route
+One or more route hashtables to modify. Must not be null or empty. Accepts pipeline input.
+
+.PARAMETER Enable
+Enables compression on the specified routes. Required when enabling compression.
+
+.PARAMETER Disable
+Disables compression on the specified routes. Required when disabling compression.
+
+.PARAMETER Encoding
+Specifies one or more compression algorithms to allow. Valid values are: 'gzip', 'deflate', and 'br'.
+This parameter is only valid when compression is being enabled.
+
+.PARAMETER PassThru
+Returns the updated route hashtables to the pipeline.
+
+.OUTPUTS
+System.Collections.Hashtable[]
+If -PassThru is specified, the modified route objects are returned.
+
+.EXAMPLE
+Add-PodeStaticRoute -Method Get -Path '/compress' -Source './' -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip,br
+
+Enables gzip and Brotli compression on the given route(s).
+
+.EXAMPLE
+$route | Add-PodeRouteCompression -Disable
+
+Disables response compression on the given route(s).
+
+.EXAMPLE
+$routes = Get-Routes | Add-PodeRouteCompression -Enable -Encoding gzip
+
+Enables gzip compression and captures the updated route hashtables.
+
+.NOTES
+This function is part of the Pode web framework.
+Compression decisions at runtime depend on request headers and server capabilities.
+#>
+
+
+function Add-PodeRouteCompression {
+    [CmdletBinding(DefaultParameterSetName = 'Enable')]
+    [OutputType([hashtable[]])]
+    param(
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [ValidateNotNullOrEmpty()]
+        [hashtable[]]
+        $Route,
+
+        [Parameter(ParameterSetName = 'Enable', Mandatory = $true)]
+        [switch]
+        $Enable,
+
+        [Parameter(ParameterSetName = 'Disabled')]
+        [switch]
+        $Disable,
+
+        [Parameter(ParameterSetName = 'Enable')]
+        [ValidateSet('gzip', 'deflate', 'br')]
+        [string[]]
+        $Encoding,
+
+        [Parameter()]
+        [switch]
+        $PassThru
+    )
+
+    process {
+        foreach ($r in $Route) {
+            if ($Disable) {
+                $r.Compression.Enabled = $false
+            }
+            elseif ($Enable) {
+                $r.Compression.Enabled = $true
+                if ($Encoding) { $r.Compression.Encoding = @($Encoding) }
+            }
 
             if ($PassThru) {
                 $r

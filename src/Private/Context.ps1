@@ -1027,7 +1027,6 @@ function Set-PodeWebConfiguration {
         Compression      = @{
             Enabled   = [bool]$Configuration.Compression.Enable
             Encodings = $(if ($PSVersionTable.PSEdition -eq 'Core') { @('gzip', 'deflate', 'br', 'x-gzip') } else { @('gzip', 'deflate', 'br') })
-
         }
         OpenApi          = @{
             DefaultDefinitionTag = [string](Protect-PodeValue -Value $Configuration.OpenApi.DefaultDefinitionTag -Default 'default')

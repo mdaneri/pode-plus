@@ -1062,6 +1062,10 @@ function Get-PodeAcceptEncoding {
         [string]
         $AcceptEncoding,
 
+        [Parameter()]
+        [Hashtable]
+        $Route,
+
         [switch]
         $ThrowError
     )
@@ -1072,7 +1076,7 @@ function Get-PodeAcceptEncoding {
     }
 
     # return empty if not compressing
-    if (!$PodeContext.Server.Web.Compression.Enabled) {
+    if (!$Route.compression.Enabled) {
         return [string]::Empty
     }
 
@@ -1088,7 +1092,7 @@ function Get-PodeAcceptEncoding {
 
     # build up supported and invalid
     foreach ($encoding in $encodings.Keys) {
-        if (($encoding -iin $PodeContext.Server.Web.Compression.Encodings) -or ($encoding -iin $normal)) {
+        if (($encoding -iin  $Route.compression.Encodings) -or ($encoding -iin $normal)) {
             $valid += @{
                 Name  = $encoding
                 Value = $encodings[$encoding]
@@ -1455,7 +1459,6 @@ function ConvertFrom-PodeRequestContent {
         Data  = @{}
         Files = @{}
     }
-write-podehost "Body ContentType: $ContentType"
     # if there is no content-type then do nothing
     if ([string]::IsNullOrWhiteSpace($ContentType)) {
         return $Result

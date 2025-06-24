@@ -1339,12 +1339,13 @@ namespace Pode
             // Common application types where charset makes sense
             switch (type.ToLowerInvariant())
             {
-                case "application/yaml":
                 case "application/json":
                 case "application/xml":
-                case "application/xhtml+xml":
                 case "application/javascript":
-                case "application/ecmascript":
+                case "application/xhtml+xml":
+                case "application/x-www-form-urlencoded":
+                case "application/yaml":
+                case "application/graphql":
                     return true;
             }
 

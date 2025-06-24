@@ -48,7 +48,7 @@ Start-PodeServer -ScriptBlock {
 
     New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
     New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
-    Set-PodeServerSetting -Compression -Enable -Encoding 'gzip'
+ #   Set-PodeServerSetting -Compression -Enable -Encoding 'gzip'
 
     #Set-PodeServerSetting -Cache -Enable
     # setup basic auth (base64> username:password in header)
@@ -79,8 +79,9 @@ Nothing to report :D
     }
     Add-PodeStaticRouteGroup -FileBrowser -Routes {
 
-        Add-PodeStaticRoute -Path '/' -Source $using:directoryPath -PassThru |Add-PodeRouteCache -Enable -MaxAge 3600 -Visibility public -ETagMode mtime -Immutable
-        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  -TransferEncoding  gzip
+        Add-PodeStaticRoute -Path '/' -Source $using:directoryPath -PassThru |Add-PodeRouteCache -Enable -MaxAge 3600 -Visibility public -ETagMode mtime -Immutable -PassThru |
+        Add-PodeRouteCompression -Enable -Encoding br
+        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
         Add-PodeStaticRoute -Path '/nodownload' -Source $using:directoryPath
         Add-PodeStaticRoute -Path '/any/*/test' -Source $using:directoryPath
         Add-PodeStaticRoute -Path '/auth' -Source $using:directoryPath   -Authentication 'Validate'

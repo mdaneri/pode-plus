@@ -498,25 +498,6 @@ function Write-PodeFileResponseInternal {
             Set-PodeHeader -Name 'Pragma' -Value 'no-cache'
             Set-PodeHeader -Name 'Expires' -Value '0'
         }
-
-        $compression = [pode.podecompressiontype]::None
-        if ($PodeContext.Server.Web.Compression.Enabled -and $testualMimeType -and !$Download -and
-        ($null -eq $WebEvent.Ranges) -and ![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding)) {
-            $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
-            switch ($encoding) {
-                'br' { $compression = [Pode.PodeCompressionType]::Brotli; break }
-                'brotli' { $compression = [Pode.PodeCompressionType]::Brotli; break }
-                'gzip' { $compression = [Pode.PodeCompressionType]::Gzip; break }
-                'gz' { $compression = [Pode.PodeCompressionType]::Gzip; break }
-                'deflate' { $compression = [Pode.PodeCompressionType]::Deflate; break }
-                default { $compression = [Pode.PodeCompressionType]::None }
-            }
-            if ($compression -ne [Pode.PodeCompressionType]::None) {
-                Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
-                Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
-            }
-        }
-
         # if serverless, get the content raw and return
         if (!$WebEvent.Streamed) {
             $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
@@ -524,6 +505,24 @@ function Write-PodeFileResponseInternal {
         }
 
         if ($WebEvent.Method -eq 'Get') {
+
+            $compression = [pode.podecompressiontype]::None
+            if (![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding) -and $testualMimeType -and ($null -eq $WebEvent.Ranges) -and ($FileInfo.Length -gt 512)) {
+                $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
+                switch ($encoding) {
+                    'br' { $compression = [Pode.PodeCompressionType]::Brotli; break }
+                    'brotli' { $compression = [Pode.PodeCompressionType]::Brotli; break }
+                    'gzip' { $compression = [Pode.PodeCompressionType]::Gzip; break }
+                    'gz' { $compression = [Pode.PodeCompressionType]::Gzip; break }
+                    'deflate' { $compression = [Pode.PodeCompressionType]::Deflate; break }
+                    default { $compression = [Pode.PodeCompressionType]::None }
+                }
+                if ($compression -ne [Pode.PodeCompressionType]::None) {
+                    Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
+                    Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
+                }
+            }
+
             # set file as an attachment on the response
             if ($null -eq $WebEvent.Ranges) {
                 # else if normal, stream the content back
