@@ -91,16 +91,17 @@ Describe 'Download endpoints' {
 
 
         It 'Creates test files <Tag><Ext>' -ForEach $TestCases {
-            New-TestFile -Path "$TestFolder\$Tag$Ext" `
-                -SizeBytes $Bytes -Kind $Kind
-            (Test-Path "$TestFolder\$Tag$Ext") | Should -Be $true
+            $dest = Join-Path -Path $TestFolder -ChildPath "$Tag$Ext"
+
+            New-TestFile -Path $dest -SizeBytes $Bytes -Kind $Kind
+            (Test-Path -Path $dest -PathType Leaf) | Should -Be $true
         }
         #
         # a) full download
         #
         It 'Full download matches for <Kind> <Label>' -ForEach $TestCases {
             $url = "$Endpoint/standard/$Tag$Ext"
-            $dest = (Join-Path $DownloadFolder "full-$Label$Ext")
+            $dest = (Join-Path -Path $DownloadFolder -ChildPath "full-$Label$Ext")
             $response = Invoke-CurlRequest $url -OutFile $dest  -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Pragma'] | Should -Be 'no-cache'
@@ -115,13 +116,13 @@ Describe 'Download endpoints' {
             (Get-FileHash $dest -Algo SHA256).Hash |
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
             Remove-Item $dest -Force
-            (Test-Path $dest) | Should -BeFalse
+            (Test-Path  -Path $dest) | Should -BeFalse
         }
 
         It 'Range download matches for <Kind> <Label>' -ForEach $TestCases {
             $url = "$Endpoint/standard/$Tag$Ext"
-            $dir = (Join-Path  $DownloadFolder "range-$Label")
-            if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+            $dir = (Join-Path -Path $DownloadFolder -ChildPath "range-$Label")
+            if (Test-Path -Path $dir) { Remove-Item $dir -Recurse -Force }
             New-Item $dir -ItemType Directory | Out-Null
             $joined = Get-RangeFile -Url $url -DownloadDir $dir
 

@@ -489,7 +489,7 @@ function New-TestFile {
     [ValidateSet('Text', 'Binary')]$Kind
   )
 
-  if (Test-Path $Path) { Remove-Item $Path -Force }
+  if (Test-Path -Path $Path -PathType Leaf) { Remove-Item $Path -Force }
 
   $fs = [System.IO.File]::Open($Path, 'CreateNew')
   try {
