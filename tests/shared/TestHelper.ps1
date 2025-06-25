@@ -594,8 +594,8 @@ function Invoke-CurlRequest {
   # ------------------------------------------------------------
   # Locate the real curl binary (cross-platform, bypass alias)
   # ------------------------------------------------------------
-  $curlCmd = (Get-Command curl -CommandType Application -ErrorAction Stop).Source
-
+  
+  if ($PSEdition -eq 'Desktop' -or $IsWindows) { $curlCmd = 'curl.exe' } else { $curlCmd = 'curl' }
   # ------------------------------------------------------------
   # Prep temporary files
   # ------------------------------------------------------------

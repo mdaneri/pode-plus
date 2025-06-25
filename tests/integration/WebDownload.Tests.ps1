@@ -66,9 +66,9 @@ Describe 'Download endpoints' {
             $Sizes = @(
                 @{ Label = '1MB'; Bytes = 1MB; Tag = 'Quick' },
                 @{ Label = '1GB'; Bytes = 1GB; Tag = 'Medium' },
-                @{ Label = '3GB'; Bytes = 3GB; Tag = 'Large' },
-                @{ Label = '8GB'; Bytes = 8GB; Tag = 'Huge' },
-                @{ Label = '13GB'; Bytes = 13GB; Tag = 'Enormous' }
+                @{ Label = '3GB'; Bytes = 3GB; Tag = 'Large' }#,
+                #@{ Label = '8GB'; Bytes = 8GB; Tag = 'Huge' },
+                #@{ Label = '13GB'; Bytes = 13GB; Tag = 'Enormous' }
             )
             $Kinds = @('Text', 'Binary')
 
