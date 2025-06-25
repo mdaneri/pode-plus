@@ -15,27 +15,34 @@ Describe 'Service Lifecycle' {
         $Port = 8080
         $Uri = "http://localhost:$($Port)"
         $SleepTime = 15
-
+        $HelloService_ps1 = Join-Path -Path (Join-Path -Path (Join-Path -Path (Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent) -ChildPath 'examples') -ChildPath 'HelloService') -ChildPath 'HelloService.ps1'
         # Ensure the port is free
         Wait-ForWebServer -Port $Port -Offline
     }
     it 'register' {
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Register -Agent:$isAgent
+        $success = & $HelloService_ps1 -Register -Agent:$isAgent
         if (-not $success) {
-            Write-Host "Error stopping service: $(Get-Error)"
+            Write-Host "Error registering service: $(Get-Error)"
+            $success = & $HelloService_ps1 -Unregister -Force -Agent:$isAgent
+            if (-not $success) {
+                Write-Host "Error stopping service: $(Get-Error)"
+            }
+            else {
+                $success = & $HelloService_ps1 -Register -Agent:$isAgent
+            }
         }
         $success | Should -BeTrue
         Start-Sleep -Seconds $SleepTime
         if ($IsMacOS) {
             Wait-ForWebServer -Port $Port
-            $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+            $status = & $HelloService_ps1 -Query -Agent:$isAgent
             $status.Status | Should -Be 'Running'
             $status.Pid | Should -BeGreaterThan 0
 
 
         }
         else {
-            $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+            $status = & $HelloService_ps1 -Query -Agent:$isAgent
             $status.Status | Should -Be 'Stopped'
             $status.Pid | Should -Be 0
         }
@@ -46,14 +53,14 @@ Describe 'Service Lifecycle' {
 
 
     it 'start' -Skip:( $IsMacOS) {
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Start -Agent:$isAgent
+        $success = & $HelloService_ps1 -Start -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
         }
         $success | Should -BeTrue
         Wait-ForWebServer -Port $Port
         $webRequest = Invoke-WebRequest -Uri $Uri -ErrorAction SilentlyContinue
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status.Status | Should -Be 'Running'
         $status.Name | Should -Be 'Hello Service'
         $status.Pid | Should -BeGreaterThan 0
@@ -61,14 +68,14 @@ Describe 'Service Lifecycle' {
     }
 
     it  'pause' {
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Suspend -Agent:$isAgent
+        $success = & $HelloService_ps1 -Suspend -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
         }
         $success | Should -BeTrue
         Wait-ForWebServer -Port $Port -Offline
 
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status.Status | Should -Be 'Suspended'
         $status.Name | Should -Be 'Hello Service'
         $status.Pid | Should -BeGreaterThan 0
@@ -77,14 +84,14 @@ Describe 'Service Lifecycle' {
 
     it  'resume' {
 
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -resume -Agent:$isAgent
+        $success = & $HelloService_ps1 -resume -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error resuming service: $(Get-Error)"
         }
         $success | Should -BeTrue
         Wait-ForWebServer -Port $Port
         $webRequest = Invoke-WebRequest -Uri $Uri -ErrorAction SilentlyContinue
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status.Status | Should -Be 'Running'
         $status.Name | Should -Be 'Hello Service'
         $status.Pid | Should -BeGreaterThan 0
@@ -92,14 +99,14 @@ Describe 'Service Lifecycle' {
     }
     it 'stop' {
 
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Stop -Agent:$isAgent
+        $success = & $HelloService_ps1 -Stop -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
         }
         $success | Should -BeTrue
         Wait-ForWebServer -Port $Port -Offline
 
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status.Status | Should -Be 'Stopped'
         $status.Name | Should -Be 'Hello Service'
         $status.Pid | Should -Be 0
@@ -109,14 +116,14 @@ Describe 'Service Lifecycle' {
 
     it 're-start' {
 
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Start -Agent:$isAgent
+        $success = & $HelloService_ps1 -Start -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
         }
         $success | Should -BeTrue
         Wait-ForWebServer -Port $Port
         $webRequest = Invoke-WebRequest -Uri $Uri -ErrorAction SilentlyContinue
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status.Status | Should -Be 'Running'
         $status.Name | Should -Be 'Hello Service'
         $status.Pid | Should -BeGreaterThan 0
@@ -124,19 +131,19 @@ Describe 'Service Lifecycle' {
     }
 
     it 'unregister' {
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status.Status | Should -Be 'Running'
         $status.Name | Should -Be 'Hello Service'
         if ($isAgent) {
             $status.Type | Should -Be 'Agent'
         }
-        $success = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Unregister -Force -Agent:$isAgent
+        $success = & $HelloService_ps1 -Unregister -Force -Agent:$isAgent
         if (-not $success) {
             Write-Host "Error stopping service: $(Get-Error)"
         }
         $success | Should -BeTrue
         Wait-ForWebServer -Port $Port -Offline
-        $status = & "$($PSScriptRoot)\..\..\examples\HelloService\HelloService.ps1" -Query -Agent:$isAgent
+        $status = & $HelloService_ps1 -Query -Agent:$isAgent
         $status | Should -BeNullOrEmpty
         { Invoke-WebRequest -Uri $Uri } | Should -Throw
     }

@@ -135,14 +135,16 @@ try {
     # Get the parent directory of the script's path
     $podePath = Split-Path -Parent -Path $ScriptPath
 
-    # Check if the Pode module file exists in the specified path
-    if (Test-Path -Path "$($podePath)/src/Pode.psm1" -PathType Leaf) {
-        # If the Pode module file exists, import it
-        Import-Module "$($podePath)/src/Pode.psm1" -Force -ErrorAction Stop
-    }
-    else {
-        # If the Pode module file does not exist, import the Pode module from the system
-        Import-Module -Name 'Pode' -MaximumVersion 2.99 -ErrorAction Stop
+    if ($null -eq (Get-Module -Name 'Pode')) {
+        # Check if the Pode module file exists in the specified path
+        if (Test-Path -Path "$($podePath)/src/Pode.psm1" -PathType Leaf) {
+            # If the Pode module file exists, import it
+            Import-Module "$($podePath)/src/Pode.psm1" -Force -ErrorAction Stop
+        }
+        else {
+            # If the Pode module file does not exist, import the Pode module from the system
+            Import-Module -Name 'Pode' -MaximumVersion 2.99 -ErrorAction Stop
+        }
     }
 }
 catch {
