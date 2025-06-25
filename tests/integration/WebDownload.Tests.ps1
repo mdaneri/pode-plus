@@ -75,11 +75,12 @@ Describe 'Download endpoints' {
             $TestCases = foreach ($size in $Sizes) {
                 foreach ($kind in $Kinds) {
                     @{
-                        Kind  = $kind
-                        Label = $size.Label
-                        Bytes = $size.Bytes
-                        Tag   = $size.Tag
-                        Ext   = $(if ($kind -eq 'Text') { '.txt' } else { '.bin' })
+                        Kind        = $kind
+                        Label       = $size.Label
+                        Bytes       = $size.Bytes
+                        Tag         = $size.Tag
+                        Ext         = $(if ($kind -eq 'Text') { '.txt' } else { '.bin' })
+                        ContentType = $(if ($kind -eq 'Text') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' })
                     }
                 }
             }
@@ -103,7 +104,7 @@ Describe 'Download endpoints' {
             $response = Invoke-CurlRequest $url -OutFile $dest  -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Pragma'] | Should -Be 'no-cache'
-            # $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
+            $response.Headers['Content-Type'] | Should -Be $ContentType
             $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
             $directives = $response.Headers['Cache-Control'] -split '\s*,\s*'
 
@@ -144,11 +145,11 @@ Describe 'Download endpoints' {
             $url = "$Endpoint/compress/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "gzip-$Label$Ext")
             #    $response = Invoke-WebRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
-            $response = Invoke-CurlRequest -Uri $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
+            $response = Invoke-CurlRequest -Uri $url -OutFile $dest -AcceptEncoding -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Pragma'] | Should -Be 'no-cache'
-            $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
+            $response.Headers['Content-Type'] | Should -Be $ContentType
             $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
             $directives = $response.Headers['Cache-Control'] -split '\s*,\s*'
             $directives | Should -Contain 'no-store'
@@ -156,23 +157,19 @@ Describe 'Download endpoints' {
             $directives | Should -Contain 'no-cache'
             $response.Headers['Content-Encoding'] | Should -Be 'gzip'
 
-
             (Get-FileHash $dest -Algo SHA256).Hash |
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
         }
 
-        
 
-
-        It 'Cache download matches for text <Label>' -ForEach $($TestCases |
-                Where-Object { $_.Kind -eq 'Text' }) {
+        It 'Cache download matches for text <Label>' -ForEach $($TestCases ) {
 
             $url = "$Endpoint/cache/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "cache-$Label$Ext")
             $response = Invoke-CurlRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
-            $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
+            $response.Headers['Content-Type'] | Should -Be $ContentType
             $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
 
             (Get-FileHash $dest -Algo SHA256).Hash |

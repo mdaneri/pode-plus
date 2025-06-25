@@ -573,13 +573,22 @@ function Invoke-CurlRequest {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory, Position = 0)]
-        [string] $Uri,
+        [string]
+        $Uri,
 
-        [string] $OutFile,
+        [string]
+        $OutFile,
 
-        [hashtable] $Headers,
+        [hashtable]
+        $Headers,
 
-        [switch] $PassThru
+        [switch]
+        $PassThru,
+
+        [Parameter()]
+        [ValidateSet('gzip', 'deflate', 'br')]
+        [string]
+        $AcceptEncoding
     )
 
     # ------------------------------------------------------------
@@ -603,6 +612,11 @@ function Invoke-CurlRequest {
         '--output',      $tmpBody,         # stream body
         '--write-out',   '%{http_code}'    # print status at the end
     )
+
+    if ($AcceptEncoding) {
+        $Headers['Accept-Encoding'] = $AcceptEncoding
+        $args += @('--compressed')  # curl will handle Accept-Encoding
+    }
 
     if ($Headers) {
         foreach ($k in $Headers.Keys) {
@@ -647,4 +661,4 @@ function Invoke-CurlRequest {
         }
     }
 
-} # end function
+}
