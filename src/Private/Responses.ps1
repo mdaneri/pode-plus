@@ -500,7 +500,7 @@ function Write-PodeFileResponseInternal {
                             'r',
                             [CultureInfo]::InvariantCulture,
                             [System.Globalization.DateTimeStyles]::AssumeUniversal
-                        ) 
+                        )
                         # If file not modified since client's cached version
                         if ($FileInfo.LastWriteTimeUtc -le $ims) {
                             $StatusCode = 304

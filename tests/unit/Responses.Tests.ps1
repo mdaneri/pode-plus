@@ -564,7 +564,7 @@ Describe 'Write-PodeFileResponseInternal Tests' {
     }
 
     BeforeEach {
-        $WebEvent = @{ Response = @{} }
+        $WebEvent = @{ Response = @{}; Path='/'}
     }
 
     It 'Sets response status to 404 if file does not exist' {
