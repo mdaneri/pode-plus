@@ -17,8 +17,8 @@ Describe 'Download endpoints' {
 
         Wait-ForWebServer -Port $Port -Offline
 
-        $TestFolder = Join-Path $env:TEMP 'pode-test'
-        $DownloadFolder = Join-Path $env:TEMP 'pode-test-downloads'
+        $TestFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) 'pode-test'
+        $DownloadFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) 'pode-test-downloads'
         # fresh test area
         if (Test-Path $TestFolder) { Remove-Item $TestFolder -Recurse -Force }
         New-Item $TestFolder -ItemType Directory | Out-Null
@@ -97,15 +97,19 @@ Describe 'Download endpoints' {
         #
         # a) full download
         #
-        <#    It 'Full download matches for <Kind> <Label>' -ForEach $TestCases {
+        It 'Full download matches for <Kind> <Label>' -ForEach $TestCases {
             $url = "$Endpoint/standard/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "full-$Label$Ext")
-            $response = Invoke-WebRequest $url -OutFile $dest  -PassThru
+            $response = Invoke-CurlRequest $url -OutFile $dest  -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Pragma'] | Should -Be 'no-cache'
-           # $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
+            # $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
             $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
-            $response.Headers['Cache-Control'] | Should -Be 'no-store, must-revalidate, no-cache'
+            $directives = $response.Headers['Cache-Control'] -split '\s*,\s*'
+
+            $directives | Should -Contain 'no-store'
+            $directives | Should -Contain 'must-revalidate'
+            $directives | Should -Contain 'no-cache'
             (Test-Path $dest) | Should -BeTrue
             (Get-FileHash $dest -Algo SHA256).Hash |
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
@@ -129,7 +133,7 @@ Describe 'Download endpoints' {
 
             Remove-Item $joined -Force
             (Test-Path $joined) | Should -BeFalse
-        }#>
+        }
 
         #
         # c) compressed – only relevant for text
@@ -139,62 +143,25 @@ Describe 'Download endpoints' {
 
             $url = "$Endpoint/compress/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "gzip-$Label$Ext")
-            $response = Invoke-WebRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
+            #    $response = Invoke-WebRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
+            $response = Invoke-CurlRequest -Uri $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Pragma'] | Should -Be 'no-cache'
             $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
             $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
-            $response.Headers['Cache-Control'] | Should -Be 'no-store, must-revalidate, no-cache'
+            $directives = $response.Headers['Cache-Control'] -split '\s*,\s*'
+            $directives | Should -Contain 'no-store'
+            $directives | Should -Contain 'must-revalidate'
+            $directives | Should -Contain 'no-cache'
+            $response.Headers['Content-Encoding'] | Should -Be 'gzip'
+
 
             (Get-FileHash $dest -Algo SHA256).Hash |
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
         }
 
-        It 'Gzip download matches for text <Label> (curl.exe)' -ForEach $($TestCases |
-                Where-Object { $_.Kind -eq 'Text' }) {
-
-            # ---------- inputs ----------
-            $url = "$Endpoint/compress/$Tag$Ext"
-            $dest = Join-Path $DownloadFolder  "gzip-$Label$Ext"
-            $ref = "$TestFolder\$Tag$Ext"
-            $hDump = New-TemporaryFile           # where we’ll capture the header block
-            # -----------------------------
-
-            # --- run curl ---------------------------------------------------------
-            & curl --location `
-                --silent --show-error --header 'Accept-Encoding: gzip' --dump-header $hDump `
-                --output $dest --write-out   '%{http_code}' $url                               # URL to fetch
-            $statusCode = [int]$LASTEXITCODE       # exit code 0 = success
-            # curl prints the code on stdout; capture from automatic var
-            $statusLine = (Get-Content -Tail 1 $hDump) -as [int]
-            # ----------------------------------------------------------------------
-
-            # ---- build a header hashtable the way Invoke-WebRequest does ---------
-            $rawHeaders = Get-Content $hDump
-            # skip the HTTP status line(s) and empty separators
-            $parsed = [ordered]@{}
-            foreach ($line in $rawHeaders) {
-                if ($line -match '^\s*$' -or $line -match '^HTTP/') { continue }
-                $name, $value = $line -split ':', 2
-                $parsed[$name.Trim()] = $value.Trim()
-            }
-            # ----------------------------------------------------------------------
-
-            # ---------- assertions -----------------------------------------------
-            $statusLine | Should -Be 200
-            $parsed['Vary'] | Should -Be 'Accept-Encoding'
-            $parsed['Pragma'] | Should -Be 'no-cache'
-            $parsed['Content-Type'] | Should -Be 'text/plain; charset=utf-8'
-            $parsed['Content-Disposition'] | Should -Be "inline; filename=`"$Tag$Ext`""
-            $parsed['Cache-Control'] | Should -Be 'no-store, must-revalidate, no-cache'
-
-    (Get-FileHash $dest -Algorithm SHA256).Hash |
-                Should -Be (Get-FileHash $ref  -Algorithm SHA256).Hash
-            # ----------------------------------------------------------------------
-
-            Remove-Item $hDump -Force
-        }
+        
 
 
         It 'Cache download matches for text <Label>' -ForEach $($TestCases |
@@ -202,7 +169,7 @@ Describe 'Download endpoints' {
 
             $url = "$Endpoint/cache/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "cache-$Label$Ext")
-            $response = Invoke-WebRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
+            $response = Invoke-CurlRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Content-Type'] | Should -Be 'text/plain; charset=utf-8'

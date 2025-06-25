@@ -548,3 +548,103 @@ function Get-RangeFile {
   $out.Dispose()
   $joined
 }
+
+<#
+.SYNOPSIS
+  Minimal, curl-backed replacement for Invoke-WebRequest that can
+  stream very large responses (≫2 GB) on Windows, Linux, and macOS.
+
+.PARAMETER Uri
+  URL to fetch.
+
+.PARAMETER OutFile
+  Path where the response body should be written.
+  If omitted the body is buffered into the returned object
+  (fine for your text tests, but skip this for multi-GB payloads).
+
+.PARAMETER Headers
+  Hashtable of request headers.
+
+.PARAMETER PassThru
+  Return a response object instead of being silent.
+#>
+function Invoke-CurlRequest {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string] $Uri,
+
+        [string] $OutFile,
+
+        [hashtable] $Headers,
+
+        [switch] $PassThru
+    )
+
+    # ------------------------------------------------------------
+    # Locate the real curl binary (cross-platform, bypass alias)
+    # ------------------------------------------------------------
+    $curlCmd = (Get-Command curl -CommandType Application -ErrorAction Stop).Source
+
+    # ------------------------------------------------------------
+    # Prep temporary files
+    # ------------------------------------------------------------
+    $tmpHdr  = [IO.Path]::GetTempFileName()
+    $tmpBody = if ($OutFile) { $OutFile } else { [IO.Path]::GetTempFileName() }
+
+    # ------------------------------------------------------------
+    # Build argument list
+    # ------------------------------------------------------------
+    $args = @(
+        '--silent', '--show-error',        # quiet transfer, still show errors
+        '--location',                      # follow 3xx
+        '--dump-header', $tmpHdr,          # capture headers
+        '--output',      $tmpBody,         # stream body
+        '--write-out',   '%{http_code}'    # print status at the end
+    )
+
+    if ($Headers) {
+        foreach ($k in $Headers.Keys) {
+            $args += @('-H', "$($k): $($Headers[$k])")
+        }
+    }
+
+    $args += '--url', $Uri
+
+    # ------------------------------------------------------------
+    # Run curl
+    # ------------------------------------------------------------
+    $statusLine = & $curlCmd @args
+    if ($LASTEXITCODE) {
+        throw "curl exited with code $LASTEXITCODE"
+    }
+    $statusCode = [int]$statusLine
+
+    # ------------------------------------------------------------
+    # Parse headers
+    # ------------------------------------------------------------
+    $hdrHash = @{}
+    foreach ($line in Get-Content $tmpHdr) {
+        if ([string]::IsNullOrWhiteSpace($line)) { break }
+        if ($line -match '^(?<k>[^:]+):\s*(?<v>.+)$') {
+            $hdrHash[$matches.k.Trim()] = $matches.v.Trim()
+        }
+    }
+
+    # ------------------------------------------------------------
+    # Build response object (if requested)
+    # ------------------------------------------------------------
+    if ($PassThru) {
+        $raw     = if (-not $OutFile) { [IO.File]::ReadAllBytes($tmpBody) }
+        $content = if ($raw) { [Text.Encoding]::UTF8.GetString($raw) }
+
+        [PSCustomObject]@{
+            StatusCode = $statusCode
+            Headers    = $hdrHash
+            RawContent = $raw
+            Content    = $content
+        }
+    }
+
+} # end function

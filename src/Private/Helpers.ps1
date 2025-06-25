@@ -1058,14 +1058,13 @@ function ConvertFrom-PodeHeaderQValue {
 
 function Get-PodeAcceptEncoding {
     param(
+        [Parameter(Mandatory = $true)]
+        [Hashtable]
+        $Route,
+        
         [Parameter()]
         [string]
         $AcceptEncoding,
-
-        [Parameter()]
-        [Hashtable]
-        $Route,
-
         [switch]
         $ThrowError
     )
@@ -1076,7 +1075,7 @@ function Get-PodeAcceptEncoding {
     }
 
     # return empty if not compressing
-    if (!$Route.compression.Enabled) {
+    if ( !$Route.compression.Enabled) {
         return [string]::Empty
     }
 
@@ -1092,7 +1091,7 @@ function Get-PodeAcceptEncoding {
 
     # build up supported and invalid
     foreach ($encoding in $encodings.Keys) {
-        if (($encoding -iin  $Route.compression.Encodings) -or ($encoding -iin $normal)) {
+        if (($encoding -iin $Route.compression.Encodings) -or ($encoding -iin $normal)) {
             $valid += @{
                 Name  = $encoding
                 Value = $encodings[$encoding]
