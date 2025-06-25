@@ -3128,8 +3128,6 @@ Enables gzip compression and captures the updated route hashtables.
 This function is part of the Pode web framework.
 Compression decisions at runtime depend on request headers and server capabilities.
 #>
-
-
 function Add-PodeRouteCompression {
     [CmdletBinding(DefaultParameterSetName = 'Enable')]
     [OutputType([hashtable[]])]

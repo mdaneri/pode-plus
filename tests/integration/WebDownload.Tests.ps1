@@ -39,7 +39,7 @@ Describe 'Download endpoints' {
                     Add-PodeRouteCompression -Enable -Encoding gzip
 
                 Add-PodeStaticRoute -Path '/cache'  -Source $using:TestFolder  -FileBrowser -PassThru |
-                    Add-PodeRouteCache -Enable -MaxAge 3600 -Visibility public -ETagMode mtime -Immutable -PassThru |
+                    Add-PodeRouteCache -Enable -MaxAge 10 -Visibility public -ETagMode mtime -MustRevalidate -PassThru |
                     Add-PodeRouteCompression -Enable -Encoding gzip
 
             }
@@ -50,7 +50,7 @@ Describe 'Download endpoints' {
 
     AfterAll {
         Receive-Job -Name 'Pode' | Out-Default
-        Invoke-RestMethod -Uri "$($Endpoint1)/close" -Method Get | Out-Null
+        Invoke-RestMethod -Uri "$($Endpoint)/close" -Method Get | Out-Null
         Get-Job -Name 'Pode' | Remove-Job -Force
         if ((Test-Path $TestFolder)) {
             Remove-Item $TestFolder -Recurse -Force
@@ -118,9 +118,6 @@ Describe 'Download endpoints' {
             (Test-Path $dest) | Should -BeFalse
         }
 
-        #
-        # b) ranged download
-        #
         It 'Range download matches for <Kind> <Label>' -ForEach $TestCases {
             $url = "$Endpoint/standard/$Tag$Ext"
             $dir = (Join-Path  $DownloadFolder "range-$Label")
@@ -134,18 +131,17 @@ Describe 'Download endpoints' {
 
             Remove-Item $joined -Force
             (Test-Path $joined) | Should -BeFalse
+            if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
         }
 
-        #
-        # c) compressed – only relevant for text
-        #
+
         It 'Gzip download matches for text <Label>' -ForEach $($TestCases |
                 Where-Object { $_.Kind -eq 'Text' }) {
 
             $url = "$Endpoint/compress/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "gzip-$Label$Ext")
             #    $response = Invoke-WebRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
-            $response = Invoke-CurlRequest -Uri $url -OutFile $dest -AcceptEncoding -PassThru
+            $response = Invoke-CurlRequest -Uri $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Pragma'] | Should -Be 'no-cache'
@@ -159,21 +155,81 @@ Describe 'Download endpoints' {
 
             (Get-FileHash $dest -Algo SHA256).Hash |
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
+            Remove-Item $dest -Force
+            (Test-Path $dest) | Should -BeFalse
         }
 
 
-        It 'Cache download matches for text <Label>' -ForEach $($TestCases ) {
+        It 'Cache download matches for text <Label>' -ForEach $($TestCases[2] ) {
 
             $url = "$Endpoint/cache/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "cache-$Label$Ext")
-            $response = Invoke-CurlRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
+            $response = Invoke-CurlRequest $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Content-Type'] | Should -Be $ContentType
             $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
-
+            { [DateTime]::ParseExact($response.Headers['Date'] , 'r', [CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal ) } | Should -Not -Throw
+            $directives = $response.Headers['Cache-Control'] -split '\s*,\s*'
+            $directives | Should -Contain 'public'
+            $directives | Should -Contain 'max-age=10'
+            $directives | Should -Contain 'must-revalidate'
+            $eTag = $response.Headers['ETag']
+            $eTag | Should -Not -BeNullOrEmpty
             (Get-FileHash $dest -Algo SHA256).Hash |
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
+
+
+            $response2 = Invoke-CurlRequest $url -OutFile $dest -Headers @{'If-None-Match' = $eTag } -AcceptEncoding 'gzip' -PassThru
+            $response2.StatusCode | Should -Be 304
+            $response2.Headers['Content-Disposition'] | Should -BeNullOrEmpty
+            $response2.Headers['Content-Encoding'] | Should -BeNullOrEmpty
+            $response2.Headers['Content-Type'] | Should -BeNullOrEmpty
+            $response2.Headers['Content-Length'] | Should -BeNullOrEmpty
+            { [DateTime]::ParseExact($response.Headers['Date'] , 'r', [CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal ) } | Should -Not -Throw
+
+            $response2.Headers['Vary'] | Should -Be 'Accept-Encoding'
+            $directives = $response2.Headers['Cache-Control'] -split '\s*,\s*'
+            $directives | Should -Contain 'public'
+            $directives | Should -Contain 'max-age=10'
+            $directives | Should -Contain 'must-revalidate'
+            Remove-Item $dest -Force
+            (Test-Path $dest) | Should -BeFalse
+        }
+
+        It 'Cache download matches for text <Label>' -ForEach $($TestCases[0] ) {
+
+            $url = "$Endpoint/cache/$Tag$Ext"
+            $dest = (Join-Path $DownloadFolder "cache-$Label$Ext")
+            $response = Invoke-CurlRequest $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
+            $response.StatusCode | Should -Be 200
+            $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
+            $response.Headers['Content-Type'] | Should -Be $ContentType
+            $response.Headers['Content-Disposition'] | Should -Be "inline; filename=""$Tag$Ext"""
+            { [DateTime]::ParseExact($response.Headers['Date'] , 'r', [CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal ) } | Should -Not -Throw
+            $date = ([DateTime]::ParseExact($response.Headers['Date'] , 'r', [CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal )).AddDays(1)
+            $directives = $response.Headers['Cache-Control'] -split '\s*,\s*'
+            $directives | Should -Contain 'public'
+            $directives | Should -Contain 'max-age=10'
+            $directives | Should -Contain 'must-revalidate'
+            $response.Headers['ETag'] | Should -Not -BeNullOrEmpty
+            (Get-FileHash $dest -Algo SHA256).Hash |
+                Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
+            Start-Sleep 10
+
+            $response2 = Invoke-CurlRequest $url -OutFile $dest -Headers @{'If-Modified-Since' = $date.ToString('R') } -AcceptEncoding 'gzip' -PassThru
+            $response2.StatusCode | Should -Be 304
+            $response2.Headers['Content-Disposition'] | Should -BeNullOrEmpty
+            $response2.Headers['Content-Encoding'] | Should -BeNullOrEmpty
+            $response2.Headers['Content-Type'] | Should -BeNullOrEmpty
+            $response2.Headers['Content-Length'] | Should -BeNullOrEmpty
+            $response2.Headers['Vary'] | Should -Be 'Accept-Encoding'
+            $directives = $response2.Headers['Cache-Control'] -split '\s*,\s*'
+            $directives | Should -Contain 'public'
+            $directives | Should -Contain 'max-age=10'
+            $directives | Should -Contain 'must-revalidate'
+            Remove-Item $dest -Force
+            (Test-Path $dest) | Should -BeFalse
         }
     }
 }

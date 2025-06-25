@@ -570,95 +570,98 @@ function Get-RangeFile {
 #>
 function Invoke-CurlRequest {
 
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory, Position = 0)]
-        [string]
-        $Uri,
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory, Position = 0)]
+    [string]
+    $Uri,
 
-        [string]
-        $OutFile,
+    [string]
+    $OutFile,
 
-        [hashtable]
-        $Headers,
+    [hashtable]
+    $Headers,
 
-        [switch]
-        $PassThru,
+    [switch]
+    $PassThru,
 
-        [Parameter()]
-        [ValidateSet('gzip', 'deflate', 'br')]
-        [string]
-        $AcceptEncoding
-    )
+    [Parameter()]
+    [ValidateSet('gzip', 'deflate', 'br')]
+    [string]
+    $AcceptEncoding
+  )
 
-    # ------------------------------------------------------------
-    # Locate the real curl binary (cross-platform, bypass alias)
-    # ------------------------------------------------------------
-    $curlCmd = (Get-Command curl -CommandType Application -ErrorAction Stop).Source
+  # ------------------------------------------------------------
+  # Locate the real curl binary (cross-platform, bypass alias)
+  # ------------------------------------------------------------
+  $curlCmd = (Get-Command curl -CommandType Application -ErrorAction Stop).Source
 
-    # ------------------------------------------------------------
-    # Prep temporary files
-    # ------------------------------------------------------------
-    $tmpHdr  = [IO.Path]::GetTempFileName()
-    $tmpBody = if ($OutFile) { $OutFile } else { [IO.Path]::GetTempFileName() }
+  # ------------------------------------------------------------
+  # Prep temporary files
+  # ------------------------------------------------------------
+  $tmpHdr = [IO.Path]::GetTempFileName()
+  $tmpBody = if ($OutFile) { $OutFile } else { [IO.Path]::GetTempFileName() }
 
-    # ------------------------------------------------------------
-    # Build argument list
-    # ------------------------------------------------------------
-    $args = @(
-        '--silent', '--show-error',        # quiet transfer, still show errors
-        '--location',                      # follow 3xx
-        '--dump-header', $tmpHdr,          # capture headers
-        '--output',      $tmpBody,         # stream body
-        '--write-out',   '%{http_code}'    # print status at the end
-    )
+  # ------------------------------------------------------------
+  # Build argument list
+  # ------------------------------------------------------------
+  $args = @(
+    '--silent', '--show-error', # quiet transfer, still show errors
+    '--location', # follow 3xx
+    '--dump-header', $tmpHdr, # capture headers
+    '--output', $tmpBody, # stream body
+    '--write-out', '%{http_code}'    # print status at the end
+  )
 
-    if ($AcceptEncoding) {
-        $Headers['Accept-Encoding'] = $AcceptEncoding
-        $args += @('--compressed')  # curl will handle Accept-Encoding
+  if ($AcceptEncoding) {
+    if ($null -eq $Headers) {
+      $Headers = @{}
     }
+    $Headers['Accept-Encoding'] = $AcceptEncoding
+    $args += @('--compressed')  # curl will handle Accept-Encoding
+  }
 
-    if ($Headers) {
-        foreach ($k in $Headers.Keys) {
-            $args += @('-H', "$($k): $($Headers[$k])")
-        }
+  if ($Headers) {
+    foreach ($k in $Headers.Keys) {
+      $args += @('-H', "$($k): $($Headers[$k])")
     }
+  }
 
-    $args += '--url', $Uri
+  $args += '--url', $Uri
 
-    # ------------------------------------------------------------
-    # Run curl
-    # ------------------------------------------------------------
-    $statusLine = & $curlCmd @args
-    if ($LASTEXITCODE) {
-        throw "curl exited with code $LASTEXITCODE"
+  # ------------------------------------------------------------
+  # Run curl
+  # ------------------------------------------------------------
+  $statusLine = & $curlCmd @args
+  if ($LASTEXITCODE) {
+    throw "curl exited with code $LASTEXITCODE"
+  }
+  $statusCode = [int]$statusLine
+
+  # ------------------------------------------------------------
+  # Parse headers
+  # ------------------------------------------------------------
+  $hdrHash = @{}
+  foreach ($line in Get-Content $tmpHdr) {
+    if ([string]::IsNullOrWhiteSpace($line)) { break }
+    if ($line -match '^(?<k>[^:]+):\s*(?<v>.+)$') {
+      $hdrHash[$matches.k.Trim()] = $matches.v.Trim()
     }
-    $statusCode = [int]$statusLine
+  }
 
-    # ------------------------------------------------------------
-    # Parse headers
-    # ------------------------------------------------------------
-    $hdrHash = @{}
-    foreach ($line in Get-Content $tmpHdr) {
-        if ([string]::IsNullOrWhiteSpace($line)) { break }
-        if ($line -match '^(?<k>[^:]+):\s*(?<v>.+)$') {
-            $hdrHash[$matches.k.Trim()] = $matches.v.Trim()
-        }
+  # ------------------------------------------------------------
+  # Build response object (if requested)
+  # ------------------------------------------------------------
+  if ($PassThru) {
+    $raw = if (-not $OutFile) { [IO.File]::ReadAllBytes($tmpBody) }
+    $content = if ($raw) { [Text.Encoding]::UTF8.GetString($raw) }
+
+    [PSCustomObject]@{
+      StatusCode = $statusCode
+      Headers    = $hdrHash
+      RawContent = $raw
+      Content    = $content
     }
-
-    # ------------------------------------------------------------
-    # Build response object (if requested)
-    # ------------------------------------------------------------
-    if ($PassThru) {
-        $raw     = if (-not $OutFile) { [IO.File]::ReadAllBytes($tmpBody) }
-        $content = if ($raw) { [Text.Encoding]::UTF8.GetString($raw) }
-
-        [PSCustomObject]@{
-            StatusCode = $statusCode
-            Headers    = $hdrHash
-            RawContent = $raw
-            Content    = $content
-        }
-    }
+  }
 
 }

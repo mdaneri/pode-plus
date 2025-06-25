@@ -404,22 +404,24 @@ function Write-PodeFileResponseInternal {
         }
     }
 
-    # this is a static file
+    $compression = [pode.podecompressiontype]::None
+    if (![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding) -and $testualMimeType -and ($null -eq $WebEvent.Ranges) -and ($FileInfo.Length -gt 512)) {
+        $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
+        switch ($encoding) {
+            'br' { $compression = [Pode.PodeCompressionType]::Brotli; break }
+            'brotli' { $compression = [Pode.PodeCompressionType]::Brotli; break }
+            'gzip' { $compression = [Pode.PodeCompressionType]::Gzip; break }
+            'gz' { $compression = [Pode.PodeCompressionType]::Gzip; break }
+            'deflate' { $compression = [Pode.PodeCompressionType]::Deflate; break }
+            default { $compression = [Pode.PodeCompressionType]::None }
+        }
+    }
+    if ($compression -ne [Pode.PodeCompressionType]::None) {
+        Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
+    }
+    #cache control
     try {
         if ($null -eq $WebEvent.Response) { return } #for testing purposes
-        $WebEvent.Response.ContentType = $ContentType
-        if ($Download) {
-            # Set the content disposition to attachment for downloading
-            # This will prompt the browser to download the file instead of displaying it
-            # If Download is false, it will be treated as inline
-            Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileInfo.Name)"""
-        }
-        else {
-            # Set the content disposition to inline for viewing in the browser
-            # This is useful for images, PDFs, etc., that can be displayed directly
-            # If Download is true, it will be treated as an attachment
-            Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileInfo.Name)"""
-        }
 
         if ($Cache) {
             Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
@@ -431,37 +433,6 @@ function Write-PodeFileResponseInternal {
         }
         elseif ($webEvent.Cache.Enabled) {
             $directives = @()
-
-            $ETagMode = if ($WebEvent.Cache.ETag.Mode -eq 'auto') {
-                if ($WebEvent.Route.IsStatic) {
-                    'mtime'
-                }
-                else {
-                    'hash'
-                }
-            }
-            else {
-                $WebEvent.Cache.ETag.Mode
-            }
-
-            switch ($ETagMode) {
-                'mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
-                'hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
-                default { $value = $null } #none
-            }
-            if ($value) {
-                $etag = if ($WebEvent.Cache.ETag.Weak) {
-                    'W/"{0}"' -f $value
-                }
-                else {
-                    '"{0}"' -f $value
-                }
-                if ($WebEvent.Request.Headers['If-None-Match'] -eq $etag) {
-                    $StatusCode = 304
-                    return
-                }
-                Set-PodeHeader -Name 'ETag' -Value $etag
-            }
 
             # Cache visibility (public/private/no-cache/no-store)
             if ($WebEvent.Cache.Visibility) {
@@ -492,12 +463,76 @@ function Write-PodeFileResponseInternal {
             if ($directives.Count -gt 0) {
                 Set-PodeHeader -Name 'Cache-Control' -Value ($directives -join ', ')
             }
+            $ETagMode = if ($WebEvent.Cache.ETag.Mode -eq 'auto') {
+                if ($WebEvent.Route.IsStatic) {
+                    'mtime'
+                }
+                else {
+                    'hash'
+                }
+            }
+            else {
+                $WebEvent.Cache.ETag.Mode
+            }
+
+            switch ($ETagMode) {
+                'mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
+                'hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
+                default { $value = $null } #none
+            }
+            if ($value) {
+                $etag = if ($WebEvent.Cache.ETag.Weak) {
+                    'W/"{0}"' -f $value
+                }
+                else {
+                    '"{0}"' -f $value
+                }
+
+                Set-PodeHeader -Name 'ETag' -Value $etag
+                if ($WebEvent.Request.Headers['If-None-Match'] -eq $etag) {
+                    $StatusCode = 304
+                    return
+                }
+                if ($WebEvent.Request.Headers['If-Modified-Since']) {
+                    try {
+                        $ims = [DateTime]::ParseExact(
+                            $WebEvent.Request.Headers['If-Modified-Since'],
+                            'r',
+                            [CultureInfo]::InvariantCulture,
+                            [System.Globalization.DateTimeStyles]::AssumeUniversal
+                        ) 
+                        # If file not modified since client's cached version
+                        if ($FileInfo.LastWriteTimeUtc -le $ims) {
+                            $StatusCode = 304
+                            return
+                        }
+                    }
+                    catch {
+                        $_ | Write-PodeErrorLoglog -Level Verbose
+                    }
+                }
+            }
         }
         else {
             Set-PodeHeader -Name 'Cache-Control' -Value 'no-store, no-cache, must-revalidate'
             Set-PodeHeader -Name 'Pragma' -Value 'no-cache'
             Set-PodeHeader -Name 'Expires' -Value '0'
         }
+
+        $WebEvent.Response.ContentType = $ContentType
+        if ($Download) {
+            # Set the content disposition to attachment for downloading
+            # This will prompt the browser to download the file instead of displaying it
+            # If Download is false, it will be treated as inline
+            Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileInfo.Name)"""
+        }
+        else {
+            # Set the content disposition to inline for viewing in the browser
+            # This is useful for images, PDFs, etc., that can be displayed directly
+            # If Download is true, it will be treated as an attachment
+            Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileInfo.Name)"""
+        }
+
         # if serverless, get the content raw and return
         if (!$WebEvent.Streamed) {
             $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
@@ -506,23 +541,10 @@ function Write-PodeFileResponseInternal {
 
         if ($WebEvent.Method -eq 'Get') {
 
-            $compression = [pode.podecompressiontype]::None
-            if (![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding) -and $testualMimeType -and ($null -eq $WebEvent.Ranges) -and ($FileInfo.Length -gt 512)) {
-                $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
-                switch ($encoding) {
-                    'br' { $compression = [Pode.PodeCompressionType]::Brotli; break }
-                    'brotli' { $compression = [Pode.PodeCompressionType]::Brotli; break }
-                    'gzip' { $compression = [Pode.PodeCompressionType]::Gzip; break }
-                    'gz' { $compression = [Pode.PodeCompressionType]::Gzip; break }
-                    'deflate' { $compression = [Pode.PodeCompressionType]::Deflate; break }
-                    default { $compression = [Pode.PodeCompressionType]::None }
-                }
-                if ($compression -ne [Pode.PodeCompressionType]::None) {
-                    Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
-                    Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
-                }
-            }
 
+            if ($compression -ne [Pode.PodeCompressionType]::None) {
+                Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
+            }
             # set file as an attachment on the response
             if ($null -eq $WebEvent.Ranges) {
                 # else if normal, stream the content back

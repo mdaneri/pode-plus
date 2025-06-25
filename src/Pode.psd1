@@ -179,6 +179,7 @@
         'Test-PodeStaticRoute',
         'Test-PodeSignalRoute',
         'Add-PodeRouteCache',
+        'Add-PodeRouteCompression',
 
         #Async
         'Set-PodeAsyncRoute',

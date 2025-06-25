@@ -68,7 +68,10 @@ namespace Pode
             }
             set
             {
-                Headers.Set("Content-Length", value);
+                if (value > 0)
+                {
+                    Headers.Set("Content-Length", value);
+                }
             }
         }
 
