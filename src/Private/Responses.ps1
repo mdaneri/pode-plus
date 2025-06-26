@@ -381,7 +381,7 @@ function Write-PodeFileResponseInternal {
         $subExt = [System.IO.Path]::GetExtension($FileInfo.BaseName).TrimStart('.')
         $subExt = Protect-PodeValue -Value $subExt -Default $mainExt
 
-        $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.MimeTypeMap]::GetExtension($subExt ))
+        $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.PodeMimeTypes]::Get($subExt))
 
         # Write the processed content as the HTTP response
         Write-PodeTextResponse -Value $content -ContentType $ContentType -StatusCode $StatusCode
@@ -389,8 +389,8 @@ function Write-PodeFileResponseInternal {
     }
 
     # Determine and set the content type for static files
-    $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.MimeTypeMap]::GetExtension($mainExt ))
-    $testualMimeType = [Pode.MimetypeMap]::IsTextualMimeType($ContentType)
+    $ContentType = Protect-PodeValue -Value $ContentType -Default ([Pode.PodeMimeTypes]::Get($mainExt ))
+    $testualMimeType = [Pode.PodeMimeTypes]::IsTextualMimeType($ContentType)
 
     if ($testualMimeType) {
         if ($Download) {
@@ -463,6 +463,7 @@ function Write-PodeFileResponseInternal {
             if ($directives.Count -gt 0) {
                 Set-PodeHeader -Name 'Cache-Control' -Value ($directives -join ', ')
             }
+
             $ETagMode = if ($WebEvent.Cache.ETag.Mode -eq 'auto') {
                 if ($WebEvent.Route.IsStatic) {
                     'mtime'
@@ -512,11 +513,11 @@ function Write-PodeFileResponseInternal {
                     }
                 }
             }
+
         }
         else {
             Set-PodeHeader -Name 'Cache-Control' -Value 'no-store, no-cache, must-revalidate'
             Set-PodeHeader -Name 'Pragma' -Value 'no-cache'
-            Set-PodeHeader -Name 'Expires' -Value '0'
         }
 
         $WebEvent.Response.ContentType = $ContentType
@@ -540,8 +541,6 @@ function Write-PodeFileResponseInternal {
         }
 
         if ($WebEvent.Method -eq 'Get') {
-
-
             if ($compression -ne [Pode.PodeCompressionType]::None) {
                 Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
             }

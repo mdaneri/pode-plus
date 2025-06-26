@@ -5,14 +5,15 @@ function Get-PodeContentType {
         $Extension,
 
         [switch]
-        $DefaultIsNull,
-
-        [switch]
-        $AddCharset
+        $DefaultIsNull
     )
-
-    $r = [Pode.MimeTypeMap]::GetExtension($Extension, $DefaultIsNull, $AddCharset) 
-    return $r
+    return $(if ($DefaultIsNull) {
+            [Pode.PodeMimeTypes]::tryGet($Extension, $null )
+        }
+        else {
+            [Pode.PodeMimeTypes]::Get($Extension)
+        }
+    )
 }
 
 function Get-PodeStatusDescription {

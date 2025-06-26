@@ -3156,13 +3156,14 @@ function Add-PodeRouteCompression {
     )
 
     process {
+     
         foreach ($r in $Route) {
             if ($Disable) {
                 $r.Compression.Enabled = $false
             }
             elseif ($Enable) {
                 $r.Compression.Enabled = $true
-                if ($Encoding) { $r.Compression.Encoding = @($Encoding) }
+                if ($Encoding) { $r.Compression.Encodings = @($Encoding) }
             }
 
             if ($PassThru) {

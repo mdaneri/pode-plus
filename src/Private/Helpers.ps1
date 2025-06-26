@@ -1061,10 +1061,11 @@ function Get-PodeAcceptEncoding {
         [Parameter(Mandatory = $true)]
         [Hashtable]
         $Route,
-        
+
         [Parameter()]
         [string]
         $AcceptEncoding,
+
         [switch]
         $ThrowError
     )
