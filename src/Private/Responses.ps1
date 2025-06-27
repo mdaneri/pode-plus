@@ -412,23 +412,9 @@ function Write-PodeFileResponseInternal {
         $WebEvent.Response.ContentType = $ContentType
 
         if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
-            $statusCode = 403
+            $statusCode = 304
             return
         }
-
-        if ($Download) {
-            # Set the content disposition to attachment for downloading
-            # This will prompt the browser to download the file instead of displaying it
-            # If Download is false, it will be treated as inline
-            Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileInfo.Name)"""
-        }
-        else {
-            # Set the content disposition to inline for viewing in the browser
-            # This is useful for images, PDFs, etc., that can be displayed directly
-            # If Download is true, it will be treated as an attachment
-            Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileInfo.Name)"""
-        }
-
         # if serverless, get the content raw and return
         if (!$WebEvent.Streamed) {
             $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
@@ -441,11 +427,23 @@ function Write-PodeFileResponseInternal {
             }
             # set file as an attachment on the response
             if ($null -eq $WebEvent.Ranges) {
+                if ($Download) {
+                    # Set the content disposition to attachment for downloading
+                    # This will prompt the browser to download the file instead of displaying it
+                    # If Download is false, it will be treated as inline
+                    Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileInfo.Name)"""
+                }
+                else {
+                    # Set the content disposition to inline for viewing in the browser
+                    # This is useful for images, PDFs, etc., that can be displayed directly
+                    # If Download is true, it will be treated as an attachment
+                    Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileInfo.Name)"""
+                }
                 # else if normal, stream the content back
                 $WebEvent.Response.WriteFile($FileInfo, $compression)
             }
             else {
-                $WebEvent.Response.WriteFile($FileInfo, $WebEvent.Ranges, $compression)
+                $WebEvent.Response.WriteFile($FileInfo, [long[]]$WebEvent.Ranges, $compression)
             }
         }
         elseif ($WebEvent.Method -eq 'head') {

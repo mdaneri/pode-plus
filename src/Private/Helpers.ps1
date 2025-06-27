@@ -1181,7 +1181,7 @@ function Get-PodeAcceptEncoding {
 #>
 function Get-PodeRange {
     [CmdletBinding()]
-    [OutputType([hashtable[]])]
+    [OutputType([long[]])]
     param(
         [Parameter()]
         [string]
@@ -1215,7 +1215,7 @@ function Get-PodeRange {
     $parts = @($parts[1] -isplit ',').Trim()
 
     # parse into From-To hashtable array
-    $ranges = @()
+    $ranges = [long[]]@()
 
     foreach ($atom in $parts) {
         if ($atom -inotmatch '(?<start>[\d]+){0,1}\s?\-\s?(?<end>[\d]+){0,1}') {
@@ -1225,11 +1225,10 @@ function Get-PodeRange {
 
             return $null
         }
+        $ranges += [long]$Matches['start']
+        $ranges += [long]$Matches['end']
 
-        $ranges += @{
-            Start = $Matches['start']
-            End   = $Matches['end']
-        }
+
     }
 
     return $ranges

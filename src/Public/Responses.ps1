@@ -129,6 +129,12 @@ The status code to set against the response.
 .PARAMETER Cache
 Should the value be cached by browsers, or not?
 
+.PARAMETER Download
+If supplied, the content will be downloaded as a file, rather than displayed in the browser.
+
+.PARAMETER FileName
+The name of the file to download or to visualize in the browser.
+
 .EXAMPLE
 Write-PodeTextResponse -Value 'Leeeeeerrrooooy Jeeeenkiiins!'
 
@@ -141,7 +147,7 @@ Write-PodeTextResponse -Bytes (Get-Content -Path ./some/image.png -Raw -AsByteSt
 .EXAMPLE
 Write-PodeTextResponse -Value 'Untitled Text Response' -StatusCode 418
 #>
-function Write-PodeTextResponse2 {
+function Write-PodeTextResponse {
     [CmdletBinding(DefaultParameterSetName = 'String')]
     param (
         [Parameter(ParameterSetName = 'String', ValueFromPipeline = $true, Position = 0)]
@@ -168,6 +174,9 @@ function Write-PodeTextResponse2 {
         [switch]
         $Download,
 
+        [Parameter()]
+        [string]
+        $FileName,
 
         [switch]
         $Cache
@@ -189,8 +198,7 @@ function Write-PodeTextResponse2 {
             $Value = $pipelineValue -join "`n"
         }
 
-        $isStringValue = ($PSCmdlet.ParameterSetName -ieq 'string')
-        $isByteValue = ($PSCmdlet.ParameterSetName -ieq 'bytes')
+
 
         # set the status code of the response, but only if it's not 200 (to prevent overriding)
         if ($StatusCode -ne 200) {
@@ -198,11 +206,14 @@ function Write-PodeTextResponse2 {
         }
 
         # if there's nothing to write, return
-        if ($isStringValue -and [string]::IsNullOrEmpty($Value)) {
-            return
-        }
+        if ($PSCmdlet.ParameterSetName -ieq 'string') {
 
-        if ($isByteValue -and (($null -eq $Bytes) -or ($Bytes.Length -eq 0))) {
+            if ( [string]::IsNullOrEmpty($Value)) {
+                return
+            }
+            $Bytes = $PodeContext.Server.Encoding.GetBytes($Value)
+        }
+        elseif ( ($null -eq $Bytes) -or ($Bytes.Length -eq 0)) {
             return
         }
         try {
@@ -232,18 +243,9 @@ function Write-PodeTextResponse2 {
 
             # set the cache header if requested
             if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
-                $statusCode = 403
+                Set-PodeResponseStatus -Code 304
                 return
             }
-
-
-            if ($Download) {
-                # Set the content disposition to attachment for downloading
-                # This will prompt the browser to download the file instead of displaying it
-                # If Download is false, it will be treated as inline
-                Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileInfo.Name)"""
-            }
-
 
             # if we're serverless, set the string as the body
             if (!$WebEvent.Streamed) {
@@ -259,107 +261,42 @@ function Write-PodeTextResponse2 {
             if ($WebEvent.Method -eq 'Get') {
 
                 if ($null -ne $WebEvent.Ranges) {
-                    $WebEvent.Response.WriteString($Value, $WebEvent.Ranges, $compression)
+                    $WebEvent.Response.WriteBody($Bytes, [long[]] $WebEvent.Ranges, $compression)
+                    return
+                }
+                elseif (![string]::IsNullOrEmpty($FileName)) {
+                    if ($Download) {
+                        # Set the content disposition to attachment for downloading
+                        # This will prompt the browser to download the file instead of displaying it
+                        # If Download is false, it will be treated as inline
+                        Set-PodeHeader -Name 'Content-Disposition' -Value "attachment; filename=""$($FileName)"""
+                    }
+                    else {
+                        # Set the content disposition to inline for viewing in the browser
+                        # This is useful for images, PDFs, etc., that can be displayed directly
+                        # If Download is true, it will be treated as an attachment
+                        Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileName)"""
+                    }
                 }
             }
             if ($compression -ne [pode.podecompressiontype]::none) {
                 Set-PodeHeader -Name 'Content-Encoding' -Value $compression.toString()
             }
-            $WebEvent.Response.WriteString($Value, $compression)
-        }
-        catch {
-            $statusCode = 404
-            write-podehost $_
-        }
-        finally {
-            # If the file does not exist, set the HTTP response status code appropriately
-            Set-PodeResponseStatus -Code $StatusCode
-        }
-        <#
-
-
-        # otherwise, write the bytes to the response stream
-        if ($isStringValue) {
-            $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
-        }
-
-        # check if we only need a range of the bytes
-        if (($null -ne $WebEvent.Ranges) -and ($WebEvent.Response.StatusCode -eq 200) -and ($StatusCode -eq 200)) {
-            $lengths = @()
-            $size = $Bytes.Length
-
-            $Bytes = @(foreach ($range in $WebEvent.Ranges) {
-                    # ensure range not invalid
-                    if (([int]$range.Start -lt 0) -or ([int]$range.Start -ge $size) -or ([int]$range.End -lt 0)) {
-                        Set-PodeResponseStatus -Code 416 -NoErrorPage
-                        return
-                    }
-
-                    # skip start bytes only
-                    if ([string]::IsNullOrEmpty($range.End)) {
-                        $Bytes[$range.Start..($size - 1)]
-                        $lengths += "$($range.Start)-$($size - 1)/$($size)"
-                    }
-
-                    # end bytes only
-                    elseif ([string]::IsNullOrEmpty($range.Start)) {
-                        if ([int]$range.End -gt $size) {
-                            $range.End = $size
-                        }
-
-                        if ([int]$range.End -gt 0) {
-                            $Bytes[$($size - $range.End)..($size - 1)]
-                            $lengths += "$($size - $range.End)-$($size - 1)/$($size)"
-                        }
-                        else {
-                            $lengths += "0-0/$($size)"
-                        }
-                    }
-
-                    # normal range
-                    else {
-                        if ([int]$range.End -ge $size) {
-                            Set-PodeResponseStatus -Code 416 -NoErrorPage
-                            return
-                        }
-
-                        $Bytes[$range.Start..$range.End]
-                        $lengths += "$($range.Start)-$($range.End)/$($size)"
-                    }
-                })
-
-            Set-PodeHeader -Name 'Content-Range' -Value "bytes $($lengths -join ', ')"
-            if ($StatusCode -eq 200) {
-                Set-PodeResponseStatus -Code 206 -NoErrorPage
-            }
-        }
-
-        # check if we need to compress the response
-        if ($PodeContext.Server.Web.Compression.Enabled -and ![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding)) {
-            # compress the bytes
-            $Bytes = [PodeHelpers]::CompressBytes($Bytes, $WebEvent.AcceptEncoding)
-
-            # set content encoding header
-            Set-PodeHeader -Name 'Content-Encoding' -Value $WebEvent.AcceptEncoding
-        }
-
-        # write the content to the response stream
-        $res.ContentLength64 = $Bytes.Length
-
-        try {
-            $res.OutputStream.Write($Bytes, 0, $Bytes.Length)
+            # write the content to the response stream
+            $WebEvent.Response.WriteBody($Bytes, $compression)
         }
         catch {
             if (Test-PodeValidNetworkFailure -Exception $_.Exception) {
                 return
             }
-
             $_ | Write-PodeErrorLog
             throw
-        }#>
+        }
+
     }
 }
-function Write-PodeTextResponse  {
+
+function Write-PodeTextResponse2 {
     [CmdletBinding(DefaultParameterSetName = 'String')]
     param (
         [Parameter(ParameterSetName = 'String', ValueFromPipeline = $true, Position = 0)]
