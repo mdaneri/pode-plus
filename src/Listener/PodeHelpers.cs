@@ -298,13 +298,13 @@ namespace Pode
 
             switch (type)
             {
-                case PodeCompressionType.Gzip:
+                case PodeCompressionType.gzip:
                     return new GZipStream(stream, mode, leaveOpen);
 
-                case PodeCompressionType.Deflate:
+                case PodeCompressionType.deflate:
                     return new DeflateStream(stream, mode, leaveOpen);
 #if NETCOREAPP2_1_OR_GREATER
-                case PodeCompressionType.Brotli:
+                case PodeCompressionType.br:
                     return new BrotliStream(stream, mode, leaveOpen);
 #endif
                 default:

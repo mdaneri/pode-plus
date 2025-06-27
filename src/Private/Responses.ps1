@@ -302,7 +302,6 @@ Lists the contents of the './files' directory if the FileBrowser switch is enabl
 - This is an internal function and may change in future releases of Pode.
 #>
 function Write-PodeFileResponseInternal {
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingBrokenHashAlgorithms', '')]
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     param(
         [Parameter(Mandatory = $true, ParameterSetName = 'Path')]
@@ -404,123 +403,19 @@ function Write-PodeFileResponseInternal {
         }
     }
 
-    $compression = [pode.podecompressiontype]::None
-    if (![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding) -and $testualMimeType -and ($null -eq $WebEvent.Ranges) -and ($FileInfo.Length -gt 512)) {
-        $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
-        switch ($encoding) {
-            'br' { $compression = [Pode.PodeCompressionType]::Brotli; break }
-            'brotli' { $compression = [Pode.PodeCompressionType]::Brotli; break }
-            'gzip' { $compression = [Pode.PodeCompressionType]::Gzip; break }
-            'gz' { $compression = [Pode.PodeCompressionType]::Gzip; break }
-            'deflate' { $compression = [Pode.PodeCompressionType]::Deflate; break }
-            default { $compression = [Pode.PodeCompressionType]::None }
-        }
-    }
-    if ($compression -ne [Pode.PodeCompressionType]::None) {
-        Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
-    }
+    $compression = Set-PodeCompressionType -Length $FileInfo.Length -WebEvent $WebEvent -TestualMimeType $testualMimeType
+
     #cache control
     try {
         if ($null -eq $WebEvent.Response) { return } #for testing purposes
 
-        if ($Cache) {
-            Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
-            Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
-        }
-        elseif ((Test-PodeRouteValidForCaching -Path $WebEvent.Path ) -and $webEvent.Cache.Enabled) {
-            Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($PodeContext.Server.Web.Static.Cache.MaxAge), must-revalidate"
-            Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($PodeContext.Server.Web.Static.Cache.MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
-        }
-        elseif ($webEvent.Cache.Enabled) {
-            $directives = @()
-
-            # Cache visibility (public/private/no-cache/no-store)
-            if ($WebEvent.Cache.Visibility) {
-                $directives += $WebEvent.Cache.Visibility
-            }
-
-            # max-age and s-maxage
-            if ($WebEvent.Cache.MaxAge -gt 0) {
-                $directives += "max-age=$($WebEvent.Cache.MaxAge)"
-                Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($WebEvent.Cache.MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
-            }
-
-            if ($WebEvent.Cache.SMaxAge -gt 0) {
-                $directives += "s-maxage=$($WebEvent.Cache.SMaxAge)"
-            }
-
-            # Must-revalidate
-            if ($WebEvent.Cache.MustRevalidate) {
-                $directives += 'must-revalidate'
-            }
-
-            # Immutable
-            if ($WebEvent.Cache.Immutable) {
-                $directives += 'immutable'
-            }
-
-            # Build and apply Cache-Control
-            if ($directives.Count -gt 0) {
-                Set-PodeHeader -Name 'Cache-Control' -Value ($directives -join ', ')
-            }
-
-            $ETagMode = if ($WebEvent.Cache.ETag.Mode -eq 'auto') {
-                if ($WebEvent.Route.IsStatic) {
-                    'mtime'
-                }
-                else {
-                    'hash'
-                }
-            }
-            else {
-                $WebEvent.Cache.ETag.Mode
-            }
-
-            switch ($ETagMode) {
-                'mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
-                'hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
-                default { $value = $null } #none
-            }
-            if ($value) {
-                $etag = if ($WebEvent.Cache.ETag.Weak) {
-                    'W/"{0}"' -f $value
-                }
-                else {
-                    '"{0}"' -f $value
-                }
-
-                Set-PodeHeader -Name 'ETag' -Value $etag
-                if ($WebEvent.Request.Headers['If-None-Match'] -eq $etag) {
-                    $StatusCode = 304
-                    return
-                }
-                if ($WebEvent.Request.Headers['If-Modified-Since']) {
-                    try {
-                        $ims = [DateTime]::ParseExact(
-                            $WebEvent.Request.Headers['If-Modified-Since'],
-                            'r',
-                            [CultureInfo]::InvariantCulture,
-                            [System.Globalization.DateTimeStyles]::AssumeUniversal
-                        )
-                        # If file not modified since client's cached version
-                        if ($FileInfo.LastWriteTimeUtc -le $ims) {
-                            $StatusCode = 304
-                            return
-                        }
-                    }
-                    catch {
-                        $_ | Write-PodeErrorLoglog -Level Verbose
-                    }
-                }
-            }
-
-        }
-        else {
-            Set-PodeHeader -Name 'Cache-Control' -Value 'no-store, no-cache, must-revalidate'
-            Set-PodeHeader -Name 'Pragma' -Value 'no-cache'
-        }
-
         $WebEvent.Response.ContentType = $ContentType
+
+        if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
+            $statusCode = 403
+            return
+        }
+
         if ($Download) {
             # Set the content disposition to attachment for downloading
             # This will prompt the browser to download the file instead of displaying it
@@ -541,8 +436,8 @@ function Write-PodeFileResponseInternal {
         }
 
         if ($WebEvent.Method -eq 'Get') {
-            if ($compression -ne [Pode.PodeCompressionType]::None) {
-                Set-PodeHeader -Name 'Content-Encoding' -Value $encoding
+            if ($compression -ne [pode.podecompressiontype]::none) {
+                Set-PodeHeader -Name 'Content-Encoding' -Value $compression.toString()
             }
             # set file as an attachment on the response
             if ($null -eq $WebEvent.Ranges) {
@@ -556,8 +451,6 @@ function Write-PodeFileResponseInternal {
         elseif ($WebEvent.Method -eq 'head') {
             Set-PodeHeader -Name 'Content-Length' -Value $FileInfo.Length
         }
-        $StatusCode = 200
-        return
     }
     catch [System.UnauthorizedAccessException] {
         $statusCode = 401
@@ -569,4 +462,151 @@ function Write-PodeFileResponseInternal {
         # If the file does not exist, set the HTTP response status code appropriately
         Set-PodeResponseStatus -Code $StatusCode
     }
+}
+
+function Set-PodeCacheHeader {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingBrokenHashAlgorithms', '')]
+    param(
+        [Parameter()]
+        [Hashtable]
+        $WebEventCache,
+
+        [Parameter()]
+        [switch]
+        $Cache,
+
+        [Parameter()]
+        [int]
+        $MaxAge = 3600
+    )
+
+    if ($Cache) {
+        Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($MaxAge), must-revalidate"
+        Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
+    }
+    elseif ((Test-PodeRouteValidForCaching -Path $WebEvent.Path ) -and $WebEventCache.Enabled) {
+        Set-PodeHeader -Name 'Cache-Control' -Value "max-age=$($PodeContext.Server.Web.Static.Cache.MaxAge), must-revalidate"
+        Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($PodeContext.Server.Web.Static.Cache.MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
+    }
+    elseif ($WebEventCache.Enabled) {
+        $directives = @()
+
+        # Cache visibility (public/private/no-cache/no-store)
+        if ($WebEventCache.Visibility) {
+            $directives += $WebEventCache.Visibility
+        }
+
+        # max-age and s-maxage
+        if ($WebEventCache.MaxAge -gt 0) {
+            $directives += "max-age=$($WebEventCache.MaxAge)"
+            Set-PodeHeader -Name 'Expires' -Value ([datetime]::UtcNow.AddSeconds($WebEventCache.MaxAge).ToString('r', [CultureInfo]::InvariantCulture))
+        }
+
+        if ($WebEventCache.SMaxAge -gt 0) {
+            $directives += "s-maxage=$($WebEventCache.SMaxAge)"
+        }
+
+        # Must-revalidate
+        if ($WebEventCache.MustRevalidate) {
+            $directives += 'must-revalidate'
+        }
+
+        # Immutable
+        if ($WebEventCache.Immutable) {
+            $directives += 'immutable'
+        }
+
+        # Build and apply Cache-Control
+        if ($directives.Count -gt 0) {
+            Set-PodeHeader -Name 'Cache-Control' -Value ($directives -join ', ')
+        }
+
+        $ETagMode = if ($WebEventCache.ETag.Mode -eq 'auto') {
+            if ($WebEvent.Route.IsStatic) {
+                'mtime'
+            }
+            else {
+                'hash'
+            }
+        }
+        else {
+            $WebEventCache.ETag.Mode
+        }
+
+        switch ($ETagMode) {
+            'mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
+            'hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
+            default { $value = $null } #none
+        }
+        if ($value) {
+            $etag = if ($WebEventCache.ETag.Weak) {
+                'W/"{0}"' -f $value
+            }
+            else {
+                '"{0}"' -f $value
+            }
+
+            Set-PodeHeader -Name 'ETag' -Value $etag
+            if ($WebEvent.Request.Headers['If-None-Match'] -eq $etag) {
+                return $true
+            }
+            if ($WebEvent.Request.Headers['If-Modified-Since']) {
+                try {
+                    $ims = [DateTime]::ParseExact(
+                        $WebEvent.Request.Headers['If-Modified-Since'],
+                        'r',
+                        [CultureInfo]::InvariantCulture,
+                        [System.Globalization.DateTimeStyles]::AssumeUniversal
+                    )
+                    # If file not modified since client's cached version
+                    if ($FileInfo.LastWriteTimeUtc -le $ims) {
+                        return $true
+                    }
+                }
+                catch {
+                    $_ | Write-PodeErrorLoglog -Level Verbose
+                }
+            }
+        }
+
+    }
+    else {
+        Set-PodeHeader -Name 'Cache-Control' -Value 'no-store, no-cache, must-revalidate'
+        Set-PodeHeader -Name 'Pragma' -Value 'no-cache'
+    }
+    return $false
+}
+
+
+function Set-PodeCompressionType {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [long]
+        $Length,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]
+        $WebEvent,
+
+        [Parameter(Mandatory = $true)]
+        [bool]
+        $TestualMimeType
+    )
+    $compression = [pode.podecompressiontype]::none
+    if (![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding) -and $TestualMimeType -and ($null -eq $WebEvent.Ranges) -and ($Length -gt 512)) {
+        $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
+        switch ($encoding) {
+            'br' { $compression = [pode.podecompressiontype]::br; break }
+            'brotli' { $compression = [pode.podecompressiontype]::br; break }
+            'gzip' { $compression = [pode.podecompressiontype]::gzip; break }
+            'gz' { $compression = [pode.podecompressiontype]::gzip; break }
+            'deflate' { $compression = [pode.podecompressiontype]::deflate; break }
+            default { $compression = [pode.podecompressiontype]::none }
+        }
+    }
+    if ($compression -ne [pode.podecompressiontype]::none) {
+        Set-PodeHeader -Name 'Vary' -Value 'Accept-Encoding'
+    }
+    return $compression
 }

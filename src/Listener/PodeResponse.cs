@@ -550,25 +550,22 @@ namespace Pode
                                               PodeCompressionType compression,
                                               out string contentEncoding)
         {
-            contentEncoding = null;
+            contentEncoding = compression.ToString();
 
             switch (compression)
             {
-                case PodeCompressionType.Gzip:
-                    contentEncoding = "gzip";
+                case PodeCompressionType.gzip:
                     return new GZipStream(destination, CompressionLevel.Fastest, leaveOpen: true);
 
 #if NETCOREAPP2_1_OR_GREATER   // <-- define this for TFMs that have BrotliStream
-                case PodeCompressionType.Brotli:
-                    contentEncoding = "br";
+                case PodeCompressionType.br:
                     return new BrotliStream(destination, CompressionLevel.Fastest, true);
 #else
-                case PodeCompressionType.Brotli:
+                case PodeCompressionType.br:
                     throw new NotSupportedException(
                         "Brotli compression requires System.IO.Compression.Brotli (netcore2.1+/net5.0+).");
 #endif
-                case PodeCompressionType.Deflate:
-                    contentEncoding = "deflate";
+                case PodeCompressionType.deflate:
                     return new DeflateStream(destination, CompressionLevel.Fastest, leaveOpen: true);
 
                 default:
@@ -589,7 +586,7 @@ namespace Pode
         /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
         /// <param name="compression">Optional compression type for the file.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task WriteFileAsync(string path, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.None)
+        public async Task WriteFileAsync(string path, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             await WriteFileAsync(new FileInfo(path), ranges, compression).ConfigureAwait(false);
         }
@@ -625,15 +622,15 @@ namespace Pode
         ///     When compression is used, the response is sent with chunked encoding and no <c>Content-Length</c>.
         ///     If neither ranges nor compression are used, the method buffers small files and streams large ones using <c>WriteLargeStream</c>.
         /// </remarks>
-        public async Task WriteStreamAsync(Stream src, long? length = null, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.None)
+        public async Task WriteStreamAsync(Stream src, long? length = null, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
 #if DEBUG
             // Caller must not mix ranges + compression (handled upstream)
-            if (compression != PodeCompressionType.None && ranges?.Count > 0)
+            if (compression != PodeCompressionType.none && ranges?.Count > 0)
                 throw new InvalidOperationException("Compression with Range is not supported.");
 #endif
 
-            if (compression != PodeCompressionType.None)
+            if (compression != PodeCompressionType.none)
             {
                 // Disable Pode request timeout for long transfers
                 Context.CancelTimeout();
@@ -704,7 +701,7 @@ namespace Pode
         ///     Internally opens the file as a read-only stream and passes it to <c>WriteStreamAsync</c>.
         ///     Uses a classic <c>using</c> block for stream disposal for compatibility with older C# versions.
         /// </remarks>
-        public async Task WriteFileAsync(FileSystemInfo file, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.None)
+        public async Task WriteFileAsync(FileSystemInfo file, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             // C#≤8 compatible type check
             var fi = file as FileInfo;
@@ -744,7 +741,7 @@ namespace Pode
         ///     The string is converted to a byte array and written to the client using <c>WriteStreamAsync</c>.
         ///     The underlying stream is disposed after writing.
         /// </remarks>
-        public async Task WriteStringAsync(string content, Encoding encoding = null, PodeCompressionType compression = PodeCompressionType.None)
+        public async Task WriteStringAsync(string content, Encoding encoding = null, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             if (content == null)
                 throw new ArgumentNullException("content");
@@ -756,10 +753,70 @@ namespace Pode
 
             using (MemoryStream ms = new MemoryStream(bytes, writable: false))
             {
-                await WriteStreamAsync(ms, bytes.Length, null, compression)
+                await WriteStreamAsync(ms, bytes.Length, ranges, compression)
                       .ConfigureAwait(false);
             }
         }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteStringAsync"/> and blocks.
+        ///  This method writes a string response to the client, with optional encoding and compression.
+        /// It is designed to be used in scenarios where synchronous execution is required, such as in Power
+        /// </summary>
+        /// <param name="content">The string content to write.</param>
+        /// <param name="encoding">Optional encoding to use when converting the string to bytes.</param>
+        /// <param name="ranges">Optional array of hashtables representing byte ranges to write.</param>
+        /// <param name="compression">Optional compression type to apply to the output.</param>
+        public void WriteString(string content, Encoding encoding = null, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        {
+            WriteStringAsync(content, encoding, ranges, compression).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteStringAsync"/> and blocks.
+        /// </summary>
+        /// <param name="content">The string content to write.</param>
+        /// <param name="encoding">Optional encoding to use when converting the string to bytes.</param>
+        /// <param name="range">Optional hashtable representing a byte range to write.</param>
+        /// <param name="compression">Optional compression type to apply to the output.</param>
+        public void WriteString(string content, Encoding encoding = null, Hashtable range = null, PodeCompressionType compression = PodeCompressionType.none)
+        {
+            var ranges = new List<Hashtable>
+            {
+                range
+            };
+            WriteStringAsync(content, encoding, ranges, compression).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteStringAsync"/> and blocks.
+        /// Writes a string response to the client, with optional encoding and compression.
+        /// This method is designed to be used in scenarios where synchronous execution is required, such as in PowerShell scripts.
+        /// It allows for writing string content directly to the response stream, optionally applying encoding and compression.
+        /// </summary>
+        /// <param name="content">The string content to write.</param>
+        /// <param name="encoding">Optional encoding to use when converting the string to bytes.</param>
+        /// <param name="compression">Optional compression type to apply to the output.</param>
+        public void WriteString(string content, Encoding encoding = null, PodeCompressionType compression = PodeCompressionType.none)
+        {
+            WriteStringAsync(content, encoding, null, compression).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Synchronous façade for PowerShell callers that don’t use 'await'.
+        /// Just forwards to <see cref="WriteStringAsync"/> and blocks.
+        /// Writes a string response to the client, with optional compression.
+        /// </summary>
+        /// <param name="content">The string content to write.</param>
+        /// <param name="compression">Optional compression type to apply to the output.</param>
+        public void WriteString(string content, PodeCompressionType compression = PodeCompressionType.none)
+        {
+            WriteStringAsync(content, null, null, compression).GetAwaiter().GetResult();
+        }
+        
         /// <summary>
         /// Synchronous façade for PowerShell callers that don’t use 'await'.
         /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
@@ -767,7 +824,7 @@ namespace Pode
         /// <param name="file">File system object representing the file.</param>
         /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
         /// <param name="compression">Optional compression type for the file.</param>
-        public void WriteFile(FileSystemInfo file, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.None)
+        public void WriteFile(FileSystemInfo file, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteFileAsync(file, ranges, compression).GetAwaiter().GetResult();
         }
@@ -778,7 +835,7 @@ namespace Pode
         /// </summary>
         /// <param name="file">File system object representing the file.</param>
         /// <param name="compression">Optional compression type for the file.</param>
-        public void WriteFile(FileSystemInfo file, PodeCompressionType compression = PodeCompressionType.None)
+        public void WriteFile(FileSystemInfo file, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteFileAsync(file, null, compression).GetAwaiter().GetResult();
         }
@@ -790,7 +847,7 @@ namespace Pode
         /// <param name="file">File system object representing the file.</param>
         /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
         /// <param name="compression">Optional compression type for the file.</param>
-        public void WriteFile(FileSystemInfo file, Hashtable range = null, PodeCompressionType compression = PodeCompressionType.None)
+        public void WriteFile(FileSystemInfo file, Hashtable range = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             var ranges = new List<Hashtable>
             {
@@ -806,7 +863,7 @@ namespace Pode
         /// <param name="path">The file path.</param>
         /// <param name="ranges">Optional PowerShell array of <c>@{ Start; End }</c> hashtables.</param>
         /// <param name="compression">Optional compression type for the file.</param>
-        public void WriteFile(string path, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.None)
+        public void WriteFile(string path, IList<Hashtable> ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteFileAsync(new FileInfo(path), ranges, compression).GetAwaiter().GetResult();
         }
@@ -976,13 +1033,13 @@ namespace Pode
                     await Request.InputStream.WriteAsync(buf.AsMemory(0, read), Context.Listener.CancellationToken)
                                             .ConfigureAwait(false);
 #else
-            int read = await src.ReadAsync(buf, 0, toRead, Context.Listener.CancellationToken)
-                                .ConfigureAwait(false);
-            if (read == 0) break;
-            remaining -= read;
+                    int read = await src.ReadAsync(buf, 0, toRead, Context.Listener.CancellationToken)
+                                        .ConfigureAwait(false);
+                    if (read == 0) break;
+                    remaining -= read;
 
-            await Request.InputStream.WriteAsync(buf, 0, read, Context.Listener.CancellationToken)
-                                    .ConfigureAwait(false);
+                    await Request.InputStream.WriteAsync(buf, 0, read, Context.Listener.CancellationToken)
+                                            .ConfigureAwait(false);
 #endif
                     await Request.InputStream.FlushAsync(Context.Listener.CancellationToken)
                                              .ConfigureAwait(false);

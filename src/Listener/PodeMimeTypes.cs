@@ -1263,7 +1263,7 @@ namespace Pode
             _map[".kt"] = "text/plain";     // Kotlin
             _map[".swift"] = "text/plain";
             _map[".go"] = "text/plain";
-          //  _map[".rs"] = "text/plain";     // Rust
+            //  _map[".rs"] = "text/plain";     // Rust
             _map[".py"] = "text/x-python";
             _map[".rb"] = "text/x-ruby";
             _map[".pl"] = "text/x-perl";
@@ -1271,6 +1271,8 @@ namespace Pode
             _map[".sql"] = "text/plain";
             _map[".gradle"] = "text/x-groovy";
             _map[".groovy"] = "text/x-groovy";
+            _map[".gemspec"] = "text/x-ruby";
+
             #endregion
 
             #region Config & meta
@@ -1304,6 +1306,38 @@ namespace Pode
             #region Build / dev
             _map[".makefile"] = "text/x-makefile";
             _map[".Dockerfile"] = "text/plain";
+            _map[".dockerignore"] = "text/plain"; // Docker ignore file
+            _map[".gitignore"] = "text/plain"; // Git ignore file
+            _map[".gitattributes"] = "text/plain"; // Git attributes file
+            _map[".npmignore"] = "text/plain"; // NPM ignore file
+            _map[".yarnignore"] = "text/plain"; // Yarn ignore file
+            _map[".sln"] = "text/plain"; // Solution file
+            _map[".csproj"] = "text/plain"; // C# project file
+            _map[".vbproj"] = "text/plain"; // VB.NET project file
+            _map[".gradle"] = "text/plain"; // Gradle build file
+            _map[".pom"] = "text/plain"; // Maven POM file
+            _map[".build"] = "text/plain"; // Generic build file
+            _map[".bazel"] = "text/plain"; // Bazel build file
+            _map[".buck"] = "text/plain"; // Buck build file
+            _map[".make"] = "text/x-makefile"; // Makefile
+            _map[".cmake"] = "text/x-cmake"; // CMake file
+            _map[".cmake.in"] = "text/x-cmake"; // CMake    input file
+            _map["nuget.config"] = "text/xml"; // NuGet configuration file
+            _map[".npmrc"] = "text/plain"; // NPM configuration file
+            _map[".yarnrc"] = "text/plain"; // Yarn configuration file
+            _map[".vscode"] = "text/plain"; // VS Code configuration directory
+            _map[".vscodeignore"] = "text/plain"; // VS Code ignore file
+            _map[".eslintrc"] = "text/plain"; // ESLint configuration
+            _map[".prettierrc"] = "text/plain"; // Prettier configuration
+            _map[".babelrc"] = "text/plain"; // Babel configuration
+            _map[".webpack.config.js"] = "text/plain"; // Webpack configuration
+            _map[".rollup.config.js"] = "text/plain"; // Rollup configuration
+            _map[".gulpfile.js"] = "text/plain"; // Gulp configuration
+            _map[".gruntfile.js"] = "text/plain"; // Grunt configuration
+            _map[".docker-compose.yml"] = "text/x-yaml"; // Docker Compose YAML file
+            _map[".docker-compose.yaml"] = "text/x-yaml"; // Docker Compose YAML file
+            _map[".lock"] = "text/plain"; // Generic lock file
+            _map[".lockfile"] = "text/plain"; // Generic lock file
             #endregion
         }
 
