@@ -413,6 +413,9 @@ Describe 'Write-PodeHtmlResponse' {
 }
 
 Describe 'Write-PodeTextResponse' {
+    BeforeAll {
+        $PodeContext = @{Server = @{Encoding = [System.Text.UTF8Encoding]::new() } }
+    }
     It 'Does nothing for no value' {
         Write-PodeTextResponse -Value $null | Out-Null
     }
@@ -564,7 +567,7 @@ Describe 'Write-PodeFileResponseInternal Tests' {
     }
 
     BeforeEach {
-        $WebEvent = @{ Response = @{}; Path='/'}
+        $WebEvent = @{ Response = @{}; Path = '/';Streamed=$true; Method = 'Get' }
     }
 
     It 'Sets response status to 404 if file does not exist' {

@@ -341,7 +341,6 @@ function Write-PodeFileResponseInternal {
         [int]
         $StatusCode = 200
     )
-
     # if the file info isn't supplied, get it from the path
     if ($null -eq $FileInfo) {
         $Path = Protect-PodePath -Path $Path -NoEscape:$NoEscape
@@ -402,12 +401,14 @@ function Write-PodeFileResponseInternal {
             $ContentType += "; charset=$($PodeContext.Server.Encoding.WebName)"
         }
     }
-
-    $compression = Set-PodeCompressionType -Length $FileInfo.Length -WebEvent $WebEvent -TestualMimeType $testualMimeType
-
+    $compression = if ($null -ne $webEvent.Ranges -and $webEvent.Ranges.Count -eq 0) {
+        [pode.podecompressiontype]::none
+    }
+    else {
+        Set-PodeCompressionType -Length $FileInfo.Length -AcceptEncoding $WebEvent.AcceptEncoding -TestualMimeType $testualMimeType
+    }
     #cache control
     try {
-        if ($null -eq $WebEvent.Response) { return } #for testing purposes
 
         $WebEvent.Response.ContentType = $ContentType
 
@@ -415,11 +416,7 @@ function Write-PodeFileResponseInternal {
             $statusCode = 304
             return
         }
-        # if serverless, get the content raw and return
-        if (!$WebEvent.Streamed) {
-            $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
-            return
-        }
+
 
         if ($WebEvent.Method -eq 'Get') {
             if ($compression -ne [pode.podecompressiontype]::none) {
@@ -439,11 +436,37 @@ function Write-PodeFileResponseInternal {
                     # If Download is true, it will be treated as an attachment
                     Set-PodeHeader -Name 'Content-Disposition' -Value "inline; filename=""$($FileInfo.Name)"""
                 }
-                # else if normal, stream the content back
-                $WebEvent.Response.WriteFile($FileInfo, $compression)
+                # If the file is not being streamed (Serverless), read the file into the response body
+                if ($WebEvent.Streamed) {
+                    $WebEvent.Response.WriteFile($FileInfo, $compression)
+                }
+                else {
+                    # Read the file into the response body
+                    # This is useful for smaller files that can be loaded into memory
+                    $WebEvent.Response.Body = [System.IO.File]::ReadAllBytes($FileInfo.FullName)
+                }
             }
             else {
-                $WebEvent.Response.WriteFile($FileInfo, [long[]]$WebEvent.Ranges, $compression)
+                if ( $WebEvent.Streamed) {
+                    $WebEvent.Response.WriteFile($FileInfo, [long[]]$WebEvent.Ranges, $compression)
+                }
+                else {
+                    $start = $WebEvent.Ranges[0]         # Offset in bytes
+                    $length = $WebEvent.Ranges[1] - $start + 1        # Number of bytes to read
+
+                    $buffer = [byte]::new($length)
+                    $fs = [System.IO.File]::OpenRead($FileInfo.FullName)
+
+                    try {
+                        $fs.Seek($start, [System.IO.SeekOrigin]::Begin) | Out-Null
+                        $fs.Read($buffer, 0, $length) | Out-Null
+                    }
+                    finally {
+                        $fs.Dispose()
+                    }
+                    $WebEvent.Response.Body = $buffer
+                }
+
             }
         }
         elseif ($WebEvent.Method -eq 'head') {
@@ -583,17 +606,20 @@ function Set-PodeCompressionType {
         [long]
         $Length,
 
-        [Parameter(Mandatory = $true)]
-        [hashtable]
-        $WebEvent,
+        [Parameter()]
+        [string]
+        $AcceptEncoding,
 
         [Parameter(Mandatory = $true)]
         [bool]
         $TestualMimeType
     )
     $compression = [pode.podecompressiontype]::none
-    if (![string]::IsNullOrWhiteSpace($WebEvent.AcceptEncoding) -and $TestualMimeType -and ($null -eq $WebEvent.Ranges) -and ($Length -gt 512)) {
-        $encoding = $WebEvent.AcceptEncoding.toLowerInvariant()
+    # if the Accept-Encoding header is set, and the mime type is textual, and the length is greater than 512 bytes
+    # then set the compression type based on the Accept-Encoding header
+    # Brotli is preferred over gzip, which is preferred over deflate
+    if (![string]::IsNullOrWhiteSpace($AcceptEncoding) -and $TestualMimeType -and ($Length -gt 512)) {
+        $encoding = $AcceptEncoding.toLowerInvariant()
         switch ($encoding) {
             'br' { $compression = [pode.podecompressiontype]::br; break }
             'brotli' { $compression = [pode.podecompressiontype]::br; break }

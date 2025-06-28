@@ -99,7 +99,25 @@ Nothing to report :D
     Add-PodeRoute -Method Get -Path '/attachment/*/test' -ScriptBlock {
         Set-PodeResponseAttachment -Path 'ruler.png'
     }
-    Add-PodeRoute -Method Get -Path '/' -ScriptBlock {
+    Add-PodeRoute -Method Get -Path '/Version' -ScriptBlock {
+        write-podehost "(inside Route) Accept-Encoding: $($WebEvent.AcceptEncoding)"
+        Set-PodeResponseAttachment -Path 'C:\Users\m_dan\Documents\GitHub\pode-plus\Version.json' -Inline
+    } -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
+
+
+    Add-PodeRoute -Method Get -Path '/encoding/transfer' -ScriptBlock {
+        write-podehost $webEvent -explode -ShowType -label 'Add-PodeRoute Response'
+        $string = Get-Content -Path $using:directoryPath/pode.build.ps1 -raw
+        $data = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($string))
+        # write-podetextresponse -Value "This is a response with transfer encoding. The Accept-Encoding header was: $($WebEvent.AcceptEncoding)"
+        Write-PodeJsonResponse -Value @{ Data = $data }
+    } -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
+
+
+
+
+
+    Add-PodeRoute -Method Get -Path '/'    -ScriptBlock {
         $str = @'
 <!DOCTYPE html>
 <html lang="en">
