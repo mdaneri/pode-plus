@@ -414,6 +414,7 @@ function Write-PodeFileResponseInternal {
 
         if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
             $statusCode = 304
+            Remove-Podeheader -Name 'Content-type'
             return
         }
 

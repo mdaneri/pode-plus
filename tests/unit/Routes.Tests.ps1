@@ -405,7 +405,7 @@ Describe 'Add-PodeRoute' {
         { Add-PodeRoute -Method GET -Path '/' -FilePath './path/*' } | Should -Throw -ExpectedMessage ($PodeLocale.invalidPathWildcardOrDirectoryExceptionMessage -f './path/*') #'*cannot be a wildcard or a directory*'
     }
 
-  
+
 
     It 'Throws error because only querystring has been given' {
         { Add-PodeRoute -Method GET -Path '?k=v' -ScriptBlock { write-host 'hi' } } | Should -Throw -ExpectedMessage $PodeLocale.noPathSuppliedForRouteExceptionMessage #'*No path supplied*'
@@ -1125,7 +1125,7 @@ Describe 'Find-PodeRouteTransferEncoding' {
     }
 
     It 'Returns a path match' {
-        $PodeContext.Server = @{ Web = @{ TransferEncoding = @{ Routes = @{
+        $PodeContext.Server = @{ Web = @{ TransferEncoding = @{Default = 'text/yml' ; Routes = @{
                         '/users' = 'text/json'
                     }
                 }
