@@ -1353,15 +1353,40 @@ namespace Pode
         public static bool TryGet(string extension, out string contentType) =>
             _map.TryGetValue(NormalizeExt(extension), out contentType);
 
-        /// <summary>Look up the type or fall back to <c>application/octet-stream</c>.</summary>
+        /// <summary>
+        /// Get the content type for the given extension.
+        /// If the extension is not known, returns "application/octet-stream".
+        /// </summary>
+        /// <param name="extension">The file extension to look up.</param>
+        /// <returns>The content type for the given extension, or "application/octet-stream" if unknown.</returns>
         public static string Get(string extension) =>
             _map.TryGetValue(NormalizeExt(extension), out var type)
                 ? type
                 : "application/octet-stream";
 
-        /// <summary>Adds or replaces a mapping at runtime.</summary>
+        /// <summary>
+        /// Add or update a mapping for the given extension.
+        /// If the extension already exists, it will be updated with the new content type.
+        /// </summary>
+        /// <param name="extension">The file extension to add or update.</param>
+        /// <param name="contentType">The MIME type to associate with the extension.</param>
         public static void AddOrUpdate(string extension, string contentType) =>
             _map[NormalizeExt(extension)] = contentType;
+
+        /// <summary>
+        /// Add a new mapping.
+        /// Throws <see cref="ArgumentException"/> if the extension already exists.
+        /// </summary>
+        /// <param name="extension">The file extension to add.</param>
+        /// <param name="contentType">The MIME type to associate with the extension.</param>
+        /// <exception cref="ArgumentException"></exception>
+        public static void Add(string extension, string contentType)
+        {
+            var ext = NormalizeExt(extension);
+            if (_map.ContainsKey(ext))
+                throw new ArgumentException($"Extension '{ext}' already exists in the mapping.");
+            _map[ext] = contentType;
+        }
 
         /// <summary>Remove a mapping. Returns false if it wasn’t present.</summary>
         public static bool Remove(string extension) =>
