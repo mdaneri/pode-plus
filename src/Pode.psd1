@@ -57,6 +57,7 @@
         'Set-PodeHeader',
         'Set-PodeHeaderBulk',
         'Test-PodeHeaderSigned',
+				'Remove-PodeHeader',
 
         # state
         'Set-PodeState',
