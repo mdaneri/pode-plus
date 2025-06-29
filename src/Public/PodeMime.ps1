@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-Add or update a MIME type mapping for a file extension.
+Add a new MIME type mapping for a file extension.
 
 .DESCRIPTION
-Add or update a MIME type mapping for a file extension in the global MIME type registry.
+Add a new MIME type mapping for a file extension in the global MIME type registry.
+Throws an exception if the extension already exists.
 
 .PARAMETER Extension
 The file extension (with or without leading dot) to map to a MIME type.
@@ -32,8 +33,8 @@ function Add-PodeMimeType {
     )
 
     try {
-        [Pode.PodeMimeTypes]::add($Extension, $MimeType)
-        Write-Verbose "Added/Updated MIME type mapping: $Extension -> $MimeType"
+        [Pode.PodeMimeTypes]::Add($Extension, $MimeType)
+        Write-Verbose "Added MIME type mapping: $Extension -> $MimeType"
     }
     catch {
         $_ | Write-PodeErrorLog
@@ -46,8 +47,8 @@ function Add-PodeMimeType {
 Update an existing MIME type mapping for a file extension.
 
 .DESCRIPTION
-Update an existing MIME type mapping for a file extension. This is an alias for Add-PodeMimeType
-since the underlying implementation handles both adding and updating.
+Update an existing MIME type mapping for a file extension. This function will add the mapping
+if it doesn't exist, or update it if it does exist.
 
 .PARAMETER Extension
 The file extension (with or without leading dot) to update.
@@ -91,17 +92,12 @@ Remove a MIME type mapping for a file extension from the global MIME type regist
 .PARAMETER Extension
 The file extension (with or without leading dot) to remove from the registry.
 
-.OUTPUTS
-[bool] Returns $true if the mapping was removed, $false if it wasn't present.
-
 .EXAMPLE
 Remove-PodeMimeType -Extension '.myext'
 
 .EXAMPLE
-$removed = Remove-PodeMimeType -Extension 'customtype'
-if ($removed) {
-    Write-Host "MIME type mapping removed successfully"
-}
+Remove-PodeMimeType -Extension 'customtype'
+Write-Host "MIME type mapping removal attempted"
 #>
 function Remove-PodeMimeType {
     [CmdletBinding()]
@@ -120,7 +116,6 @@ function Remove-PodeMimeType {
         else {
             Write-Verbose "No MIME type mapping found for extension: $Extension"
         }
-        return $result
     }
     catch {
         $_ | Write-PodeErrorLog
@@ -251,7 +246,7 @@ function Import-PodeMimeTypeFromFile {
 
     # Validate path exists
     if (!(Test-Path $Path)) {
-        throw "File not found: $Path"
+        throw ($Podelocale.pathNotExistExceptionMessage -f $Path)
     }
 
     try {

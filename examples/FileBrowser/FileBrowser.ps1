@@ -99,11 +99,6 @@ Nothing to report :D
     Add-PodeRoute -Method Get -Path '/attachment/*/test' -ScriptBlock {
         Set-PodeResponseAttachment -Path 'ruler.png'
     }
-    Add-PodeRoute -Method Get -Path '/Version' -ScriptBlock {
-        write-podehost "(inside Route) Accept-Encoding: $($WebEvent.AcceptEncoding)"
-        Set-PodeResponseAttachment -Path 'C:\Users\m_dan\Documents\GitHub\pode-plus\Version.json' -Inline
-    } -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
-
 
     Add-PodeRoute -Method Get -Path '/encoding/transfer' -ScriptBlock {
         write-podehost $webEvent -explode -ShowType -label 'Add-PodeRoute Response'

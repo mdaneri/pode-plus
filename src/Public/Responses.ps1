@@ -240,9 +240,10 @@ function Write-PodeTextResponse {
                     $ContentType += "; charset=$($PodeContext.Server.Encoding.WebName)"
                 }
             }
-
+            # set the content type of the response
             $WebEvent.Response.ContentType = $ContentType
 
+            # set the compression type based on the Accept-Encoding header and the content length
             $compression = if ($null -ne $webEvent.Ranges -and $webEvent.Ranges.Count -eq 0) {
                 [pode.podecompressiontype]::none
             }
@@ -258,8 +259,7 @@ function Write-PodeTextResponse {
 
             # if we're serverless, set the string as the body
             if (!$WebEvent.Streamed) {
-                $res.Body = $Bytes
-
+                $res.Body = $Bytes 
                 return
             }
             if ($WebEvent.Method -eq 'Get') {

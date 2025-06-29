@@ -90,6 +90,17 @@ namespace Pode
         private static readonly UTF8Encoding Encoding = new UTF8Encoding();
 
         /// <summary>
+        /// PodeResponse constructor for testing purposes.
+        /// This constructor initializes the response with default headers and an empty output stream.  
+        /// </summary>
+        public PodeResponse()
+        {
+            Headers = new PodeResponseHeaders();
+            OutputStream = new MemoryStream();
+            Context = null; // This constructor is not meant to be used directly, but for testing purposes.
+        }
+
+        /// <summary>
         /// PodeResponse class represents an HTTP response in the Pode framework.
         /// It encapsulates the response headers, status code, output stream, and methods to send the response.
         /// </summary>

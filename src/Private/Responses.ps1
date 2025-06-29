@@ -409,15 +409,12 @@ function Write-PodeFileResponseInternal {
     }
     #cache control
     try {
-
-        $WebEvent.Response.ContentType = $ContentType
-
         if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
             $statusCode = 304
-            Remove-Podeheader -Name 'Content-type'
             return
         }
 
+        $WebEvent.Response.ContentType = $ContentType
 
         if ($WebEvent.Method -eq 'Get') {
             if ($compression -ne [pode.podecompressiontype]::none) {
@@ -479,7 +476,7 @@ function Write-PodeFileResponseInternal {
     }
     catch {
         write-podehost $_
-        $_| Write-PodeErrorLog -Level Verbose
+        $_ | Write-PodeErrorLog -Level Verbose
         # If an error occurs, set the HTTP response status code to 400 (Bad Request
         $statusCode = 400
     }
@@ -489,6 +486,33 @@ function Write-PodeFileResponseInternal {
     }
 }
 
+<#
+.SYNOPSIS
+    Sets appropriate HTTP cache headers for a response based on route and server settings.
+
+.DESCRIPTION
+    This function configures cache-related headers (such as Cache-Control, ETag, and Expires) for HTTP responses.
+    It determines whether caching should be enabled for the current route and applies the correct headers accordingly.
+    Used internally by Pode to manage client-side and proxy caching behavior.
+
+.PARAMETER WebEventCache
+    A hashtable containing cache settings for the current web event/route, such as visibility, max-age, ETag, etc.
+
+.PARAMETER Cache
+    Switch to explicitly enable cache headers for the response.
+
+.PARAMETER MaxAge
+    The maximum age (in seconds) for which the response can be cached by the client. Default is 3600.
+
+.OUTPUTS
+    Returns $true if cache headers were set (and a 304 should be returned), otherwise $false.
+
+.EXAMPLE
+    Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache -MaxAge 600
+
+.NOTES
+    This is an internal function and may change in future releases of Pode.
+#>
 function Set-PodeCacheHeader {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingBrokenHashAlgorithms', '')]
     param(
@@ -603,6 +627,33 @@ function Set-PodeCacheHeader {
 }
 
 
+<#
+.SYNOPSIS
+    Determines the appropriate compression type for a response based on request headers and content type.
+
+.DESCRIPTION
+    This function inspects the 'Accept-Encoding' header of the incoming request and the content type of the response.
+    It selects the best available compression method (such as gzip, deflate, or Brotli) if the content is textual and large enough.
+    The function is used internally by Pode to optimize response delivery.
+
+.PARAMETER Length
+    The length of the response content in bytes. Compression is only applied if this is greater than 512 bytes.
+
+.PARAMETER AcceptEncoding
+    The value of the 'Accept-Encoding' header from the request, indicating supported compression algorithms.
+
+.PARAMETER TestualMimeType
+    Indicates whether the response content type is textual and suitable for compression.
+
+.OUTPUTS
+    Returns the selected compression type as a [pode.podecompressiontype] enum value (e.g., 'gzip', 'deflate', 'br', or 'none').
+
+.EXAMPLE
+    $compression = Set-PodeCompressionType -Length 2048 -AcceptEncoding $WebEvent.AcceptEncoding -TestualMimeType $true
+
+.NOTES
+    This is an internal function and may change in future releases of Pode.
+#>
 function Set-PodeCompressionType {
     [CmdletBinding()]
     param(
