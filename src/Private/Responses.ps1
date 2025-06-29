@@ -478,6 +478,9 @@ function Write-PodeFileResponseInternal {
         $statusCode = 401
     }
     catch {
+        write-podehost $_
+        $_| Write-PodeErrorLog -Level Verbose
+        # If an error occurs, set the HTTP response status code to 400 (Bad Request
         $statusCode = 400
     }
     finally {
