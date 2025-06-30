@@ -741,7 +741,12 @@ function Invoke-CurlRequest {
   # if Etag header is set, we will add it to the request.
   # This is used for conditional requests.
   if ($ETag) {
-    $arguments += @('-H', "If-None-Match: ""$ETag""")
+    if ($PSEdition -eq 'Desktop' ) {
+      $arguments += @('-H', "If-None-Match: ""$ETag""")
+    }
+    else {
+      $arguments += @('-H', "If-None-Match: $ETag")
+    }
   }
 
   # IfModifiedSince header
