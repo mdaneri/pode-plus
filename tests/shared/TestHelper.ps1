@@ -514,16 +514,6 @@ function New-TestFile {
   finally { $fs.Dispose() }
 }
 
-# Download a file in 1 GiB ranges, join the parts, and return the path
-function Get-RangeFile {
-  param(
-    [string]$Url,
-    [string]$DownloadDir,
-    [long]$RangeSize = 1GB
-  )
-  # Use Invoke-CurlRequest for range-based downloads
-  return Invoke-CurlRequest -Uri $Url -UseRangeDownload -RangeSize $RangeSize -DownloadDir $DownloadDir -PassThru | Select-Object -ExpandProperty OutFile
-}
 
 <#
 .SYNOPSIS
@@ -555,37 +545,61 @@ function Get-RangeFile {
 .PARAMETER DownloadDir
   Directory for temporary part files when using range downloads.
   If not specified, uses the OutFile directory or a temporary directory.
+
+.PARAMETER ETag
+  ETag value to use for conditional requests. If provided, the request will include
+  an `If-None-Match` header with this value.
+
+.PARAMETER IfModifiedSince
+  DateTime value for the `If-Modified-Since` header.
+  If provided, the request will include this header to check for modifications.
 #>
 function Invoke-CurlRequest {
 
-  [CmdletBinding()]
+  [CmdletBinding(DefaultParameterSetName = 'Default')]
   param(
     [Parameter(Mandatory, Position = 0)]
     [string]
-    $Uri,
+    $Url,
 
+    [Parameter()]
     [string]
     $OutFile,
 
+    [Parameter()]
     [hashtable]
     $Headers,
 
+    [Parameter()]
     [switch]
     $PassThru,
 
     [Parameter()]
+    [string]
+    $DownloadDir,
+
+    [Parameter(ParameterSetName = 'Default')]
+    [Parameter(ParameterSetName = 'Etag')]
+    [Parameter(ParameterSetName = 'IfModifiedSince')]
     [ValidateSet('gzip', 'deflate', 'br')]
     [string]
     $AcceptEncoding,
 
+    [Parameter(Mandatory = $true, ParameterSetName = 'RangeDownload')]
     [switch]
     $UseRangeDownload,
 
+    [Parameter( ParameterSetName = 'RangeDownload')]
     [long]
     $RangeSize = 1GB,
 
+    [Parameter(Mandatory = $true, ParameterSetName = 'Etag')]
     [string]
-    $DownloadDir
+    $ETag,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'IfModifiedSince')]
+    [datetime]
+    $IfModifiedSince
   )
 
   # ------------------------------------------------------------
@@ -603,7 +617,7 @@ function Invoke-CurlRequest {
       '--head', # HEAD request only
       '--dump-header', $tmpHdr,
       '--write-out', '%{http_code}',
-      '--url', $Uri
+      '--url', $Url
     )
 
     $statusLine = & $curlCmd @headArgs
@@ -652,7 +666,7 @@ function Invoke-CurlRequest {
         '--location',
         '--output', $part,
         '-H', "Range: bytes=$start-$end",
-        '--url', $Uri
+        '--url', $Url
       )
 
       # Add any additional headers
@@ -708,7 +722,7 @@ function Invoke-CurlRequest {
   # ------------------------------------------------------------
   # Build argument list
   # ------------------------------------------------------------
-  $args = @(
+  $arguments = @(
     '--silent', '--show-error', # quiet transfer, still show errors
     '--location', # follow 3xx
     '--dump-header', $tmpHdr, # capture headers
@@ -721,21 +735,39 @@ function Invoke-CurlRequest {
       $Headers = @{}
     }
     $Headers['Accept-Encoding'] = $AcceptEncoding
-    $args += @('--compressed')  # curl will handle Accept-Encoding
+    $arguments += @('--compressed')  # curl will handle Accept-Encoding
   }
 
+  # if Etag header is set, we will add it to the request.
+  # This is used for conditional requests.
+  if ($ETag) {
+    $arguments += @('-H', "If-None-Match: ""$ETag""")
+  }
+
+  # IfModifiedSince header
+  # If the header is not set, we will not add it to the request.
+  if ($IfModifiedSince) {
+    $arguments += @('-H', "If-Modified-Since: $($IfModifiedSince.ToString('R'))")
+  }
+
+  # Add any additional headers
   if ($Headers) {
     foreach ($k in $Headers.Keys) {
-      $args += @('-H', "$($k): $($Headers[$k])")
+      $arguments += @('-H', ('{0}: {1}' -f $k, $Headers[$k]))
     }
   }
 
-  $args += '--url', $Uri
+  $arguments += '--url', $Url
 
   # ------------------------------------------------------------
   # Run curl
   # ------------------------------------------------------------
-  $statusLine = & $curlCmd @args
+  if ($PSEdition -eq 'Desktop') {
+    $statusLine = cmd /c $curlCmd @arguments
+  }
+  else {
+    $statusLine = & $curlCmd @arguments
+  }
   if ($LASTEXITCODE) {
     throw "curl exited with code $LASTEXITCODE"
   }

@@ -102,7 +102,7 @@ Describe 'Download endpoints' {
         It 'Full download matches for <Kind> <Label>' -ForEach $TestCases {
             $url = "$Endpoint/standard/$Tag$Ext"
             $dest = (Join-Path -Path $DownloadFolder -ChildPath "full-$Label$Ext")
-            $response = Invoke-CurlRequest $url -OutFile $dest  -PassThru
+            $response = Invoke-CurlRequest -Url $Url -OutFile $dest  -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Pragma'] | Should -Be 'no-cache'
             $response.Headers['Content-Type'] | Should -Be $ContentType
@@ -124,7 +124,7 @@ Describe 'Download endpoints' {
             $dir = (Join-Path -Path $DownloadFolder -ChildPath "range-$Label")
             if (Test-Path -Path $dir) { Remove-Item $dir -Recurse -Force }
             New-Item $dir -ItemType Directory | Out-Null
-            $joined = Invoke-CurlRequest -Uri $Url -UseRangeDownload -DownloadDir $dir -PassThru | Select-Object -ExpandProperty OutFile
+            $joined = Invoke-CurlRequest -Url $Url -UseRangeDownload -DownloadDir $dir -PassThru | Select-Object -ExpandProperty OutFile
 
             (Test-Path $joined) | Should -BeTrue
             (Get-FileHash $joined -Algo SHA256).Hash |
@@ -142,7 +142,7 @@ Describe 'Download endpoints' {
             $url = "$Endpoint/compress/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "gzip-$Label$Ext")
             #    $response = Invoke-WebRequest $url -OutFile $dest -Headers @{ 'Accept-Encoding' = 'gzip' } -PassThru
-            $response = Invoke-CurlRequest -Uri $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
+            $response = Invoke-CurlRequest -Url $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Pragma'] | Should -Be 'no-cache'
@@ -165,7 +165,7 @@ Describe 'Download endpoints' {
 
             $url = "$Endpoint/cache/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "cache-$Label$Ext")
-            $response = Invoke-CurlRequest $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
+            $response = Invoke-CurlRequest -Url $Url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Content-Type'] | Should -Be $ContentType
@@ -181,7 +181,7 @@ Describe 'Download endpoints' {
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
 
 
-            $response2 = Invoke-CurlRequest $url -OutFile $dest -Headers @{'If-None-Match' = $eTag } -AcceptEncoding 'gzip' -PassThru
+            $response2 = Invoke-CurlRequest -Url $Url -OutFile $dest -ETag $eTag -AcceptEncoding 'gzip' -PassThru
             $response2.StatusCode | Should -Be 304
             $response2.Headers['Content-Disposition'] | Should -BeNullOrEmpty
             $response2.Headers['Content-Encoding'] | Should -BeNullOrEmpty
@@ -202,7 +202,7 @@ Describe 'Download endpoints' {
 
             $url = "$Endpoint/cache/$Tag$Ext"
             $dest = (Join-Path $DownloadFolder "cache-$Label$Ext")
-            $response = Invoke-CurlRequest $url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
+            $response = Invoke-CurlRequest -Url $Url -OutFile $dest -AcceptEncoding 'gzip' -PassThru
             $response.StatusCode | Should -Be 200
             $response.Headers['Vary'] | Should -Be 'Accept-Encoding'
             $response.Headers['Content-Type'] | Should -Be $ContentType
@@ -218,7 +218,7 @@ Describe 'Download endpoints' {
                 Should -Be (Get-FileHash "$TestFolder\$Tag$Ext" -Algo SHA256).Hash
             Start-Sleep 10
 
-            $response2 = Invoke-CurlRequest $url -OutFile $dest -Headers @{'If-Modified-Since' = $date.ToString('R') } -AcceptEncoding 'gzip' -PassThru
+            $response2 = Invoke-CurlRequest -Url $Url -OutFile $dest -IfModifiedSince $date -AcceptEncoding 'gzip' -PassThru
             $response2.StatusCode | Should -Be 304
             $response2.Headers['Content-Disposition'] | Should -BeNullOrEmpty
             $response2.Headers['Content-Encoding'] | Should -BeNullOrEmpty
