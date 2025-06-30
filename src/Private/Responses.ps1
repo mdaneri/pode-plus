@@ -409,7 +409,7 @@ function Write-PodeFileResponseInternal {
     }
     #cache control
     try {
-        if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
+        if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge -FileInfo $FileInfo) {
             $statusCode = 304
             return
         }
@@ -504,6 +504,12 @@ function Write-PodeFileResponseInternal {
 .PARAMETER MaxAge
     The maximum age (in seconds) for which the response can be cached by the client. Default is 3600.
 
+.PARAMETER FileInfo
+    A FileInfo object representing the file being served. Used to determine ETag and last modified time for caching.
+
+.PARAMETER ETag
+    An optional ETag value to be set in the response headers. If not provided, it will be generated based on the FileInfo or WebEvent settings.
+
 .OUTPUTS
     Returns $true if cache headers were set (and a 304 should be returned), otherwise $false.
 
@@ -526,7 +532,15 @@ function Set-PodeCacheHeader {
 
         [Parameter()]
         [int]
-        $MaxAge = 3600
+        $MaxAge = 3600,
+
+        [Parameter()]
+        [System.IO.FileInfo]
+        $FileInfo,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     if ($Cache) {
@@ -569,55 +583,71 @@ function Set-PodeCacheHeader {
         if ($directives.Count -gt 0) {
             Set-PodeHeader -Name 'Cache-Control' -Value ($directives -join ', ')
         }
+        # ETag handling
 
-        $ETagMode = if ($WebEventCache.ETag.Mode -eq 'auto') {
-            if ($WebEvent.Route.IsStatic) {
-                'mtime'
+        # if ETag mode is not set to 'None'
+        if ($WebEventCache.ETag.Mode -ne 'None') {
+
+            # if Etag mode is set to 'manual' but not ETag is provided, return false and do not set ETag header
+            if ( [string]::IsNullOrEmpty($ETag) -and ($WebEventCache.ETag.Mode -eq 'Manual')) { return $false }
+            # if ETag mode is set to 'auto' then determine the mode based on the file type
+            # if the file is static, use mtime, otherwise use hash
+            $ETagMode = if ($WebEventCache.ETag.Mode -eq 'Auto') {
+                if ($WebEvent.Route.IsStatic) {
+                    'Mtime'
+                }
+                else {
+                    'Hash'
+                }
             }
             else {
-                'hash'
-            }
-        }
-        else {
-            $WebEventCache.ETag.Mode
-        }
-
-        switch ($ETagMode) {
-            'mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
-            'hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
-            default { $value = $null } #none
-        }
-        if ($value) {
-            $etag = if ($WebEventCache.ETag.Weak) {
-                'W/"{0}"' -f $value
-            }
-            else {
-                '"{0}"' -f $value
+                $WebEventCache.ETag.Mode
             }
 
-            Set-PodeHeader -Name 'ETag' -Value $etag
-            if ($WebEvent.Request.Headers['If-None-Match'] -eq $etag) {
-                return $true
-            }
-            if ($WebEvent.Request.Headers['If-Modified-Since']) {
-                try {
-                    $ims = [DateTime]::ParseExact(
-                        $WebEvent.Request.Headers['If-Modified-Since'],
-                        'r',
-                        [CultureInfo]::InvariantCulture,
-                        [System.Globalization.DateTimeStyles]::AssumeUniversal
-                    )
-                    # If file not modified since client's cached version
-                    if ($FileInfo.LastWriteTimeUtc -le $ims) {
-                        return $true
+            if ($null -ne $FileInfo) {
+                # if FileInfo is provided, use it to generate the ETag
+                # Generate the ETag value based on the mode
+                switch ($ETagMode) {
+                    'Mtime' { $value = "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)" }
+                    'Hash' { $value = "$(Get-FileHash -Path $FileInfo.FullName -Algorithm MD5)" }
+                    default { $value = $null } #none
+                }
+                if ($value) {
+                    $ETag = if ($WebEventCache.ETag.Weak) {
+                        # if ETag is weak, prefix with W/
+                        'W/"{0}"' -f $value
+                    }
+                    else {
+                        '"{0}"' -f $value
+                    }
+                    # Set the ETag header in the response
+                    Set-PodeHeader -Name 'ETag' -Value $etag
+
+                    # If the ETag matches the client's cached version, return 304 Not Modified
+                    if ($WebEvent.Request.Headers['If-Modified-Since']) {
+                        try {
+                            $ims = [DateTime]::ParseExact(
+                                $WebEvent.Request.Headers['If-Modified-Since'],
+                                'r',
+                                [CultureInfo]::InvariantCulture,
+                                [System.Globalization.DateTimeStyles]::AssumeUniversal
+                            )
+                            # If file not modified since client's cached version
+                            if ($FileInfo.LastWriteTimeUtc -le $ims) {
+                                return $true
+                            }
+                        }
+                        catch {
+                            $_ | Write-PodeErrorLoglog -Level Verbose
+                        }
                     }
                 }
-                catch {
-                    $_ | Write-PodeErrorLoglog -Level Verbose
-                }
+            }
+            # If the ETag matches the client's cached version, return 304 Not Modified
+            if ($WebEvent.Request.Headers['If-None-Match'] -eq $ETag) {
+                return $true
             }
         }
-
     }
     else {
         Set-PodeHeader -Name 'Cache-Control' -Value 'no-store, no-cache, must-revalidate'

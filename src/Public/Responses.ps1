@@ -141,6 +141,9 @@ If supplied, the content will be downloaded as a file, rather than displayed in 
 .PARAMETER FileName
 The name of the file to download or to visualize in the browser.
 
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, it will be generated based on the content.
+
 .EXAMPLE
 Write-PodeTextResponse -Value 'Leeeeeerrrooooy Jeeeenkiiins!'
 
@@ -184,8 +187,13 @@ function Write-PodeTextResponse {
         [string]
         $FileName,
 
+        [Parameter()]
         [switch]
-        $Cache
+        $Cache,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     begin {
@@ -252,14 +260,14 @@ function Write-PodeTextResponse {
             }
 
             # set the cache header if requested
-            if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge) {
+            if (Set-PodeCacheHeader -WebEventCache $WebEvent.Cache -Cache:$Cache -MaxAge $MaxAge -ETag $ETag) {
                 Set-PodeResponseStatus -Code 304
                 return
             }
 
             # if we're serverless, set the string as the body
             if (!$WebEvent.Streamed) {
-                $res.Body = $Bytes 
+                $res.Body = $Bytes
                 return
             }
             if ($WebEvent.Method -eq 'Get') {
@@ -512,6 +520,9 @@ The status code to set against the response.
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
 
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, it will be generated based on the content.
+
 .EXAMPLE
 Write-PodeCsvResponse -Value "Name`nRick"
 
@@ -543,7 +554,11 @@ function Write-PodeCsvResponse {
 
         [Parameter(ParameterSetName = 'File')]
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     begin {
@@ -588,7 +603,7 @@ function Write-PodeCsvResponse {
             $Value = [string]::Empty
         }
 
-        Write-PodeTextResponse -Value $Value -ContentType 'text/csv' -StatusCode $StatusCode
+        Write-PodeTextResponse -Value $Value -ContentType 'text/csv' -StatusCode $StatusCode -ETag $ETag
     }
 }
 
@@ -610,6 +625,9 @@ The status code to set against the response.
 
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
+
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, it will be generated based on the content.
 
 .EXAMPLE
 Write-PodeHtmlResponse -Value "Raw HTML can be placed here"
@@ -642,7 +660,11 @@ function Write-PodeHtmlResponse {
 
         [Parameter(ParameterSetName = 'File')]
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     begin {
@@ -678,7 +700,7 @@ function Write-PodeHtmlResponse {
             $Value = [string]::Empty
         }
 
-        Write-PodeTextResponse -Value $Value -ContentType 'text/html' -StatusCode $StatusCode
+        Write-PodeTextResponse -Value $Value -ContentType 'text/html' -StatusCode $StatusCode -ETag $ETag
     }
 }
 
@@ -704,6 +726,9 @@ If supplied, the Markdown will be converted to HTML. (This is only supported in 
 
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
+
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, and cache is enabled, it will be generated based on the content.
 
 .EXAMPLE
 Write-PodeMarkdownResponse -Value '# Hello, world!' -AsHtml
@@ -736,7 +761,11 @@ function Write-PodeMarkdownResponse {
 
         [Parameter(ParameterSetName = 'File')]
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
     begin {
         $pipelineItemCount = 0
@@ -771,7 +800,7 @@ function Write-PodeMarkdownResponse {
             }
         }
 
-        Write-PodeTextResponse -Value $Value -ContentType $mimeType -StatusCode $StatusCode
+        Write-PodeTextResponse -Value $Value -ContentType $mimeType -StatusCode $StatusCode -ETag $ETag
     }
 }
 
@@ -803,6 +832,9 @@ The JSON document is not compressed (Human readable form)
 
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
+
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, and cache is enabled, it will be generated based on the content.
 
 .EXAMPLE
 Write-PodeJsonResponse -Value '{"name": "Rick"}'
@@ -851,7 +883,11 @@ function Write-PodeJsonResponse {
 
         [Parameter(ParameterSetName = 'File')]
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     begin {
@@ -889,7 +925,7 @@ function Write-PodeJsonResponse {
             $Value = '{}'
         }
 
-        Write-PodeTextResponse -Value $Value -ContentType $ContentType -StatusCode $StatusCode
+        Write-PodeTextResponse -Value $Value -ContentType $ContentType -StatusCode $StatusCode -ETag $ETag
     }
 }
 
@@ -919,6 +955,9 @@ The status code to set against the response.
 
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
+
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, and cache is enabled, it will be generated based on the content.
 
 .EXAMPLE
 Write-PodeXmlResponse -Value '<root><name>Rick</name></root>'
@@ -983,7 +1022,11 @@ function Write-PodeXmlResponse {
 
         [Parameter(ParameterSetName = 'File')]
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     begin {
@@ -1020,7 +1063,7 @@ function Write-PodeXmlResponse {
             $Value = [string]::Empty
         }
 
-        Write-PodeTextResponse -Value $Value -ContentType $ContentType -StatusCode $StatusCode
+        Write-PodeTextResponse -Value $Value -ContentType $ContentType -StatusCode $StatusCode -ETag $ETag
     }
 }
 
@@ -1049,6 +1092,9 @@ The status code to set against the response.
 
 .PARAMETER NoEscape
 If supplied, the path will not be escaped. This is useful for paths that contain expected wildcards, or are already escaped.
+
+.PARAMETER ETag
+An optional ETag value to be set in the response headers. If not provided, and cache is enabled, it will be generated based on the content.
 
 .EXAMPLE
 Write-PodeYamlResponse -Value 'name: "Rick"'
@@ -1094,7 +1140,11 @@ function Write-PodeYamlResponse {
 
         [Parameter(ParameterSetName = 'File')]
         [switch]
-        $NoEscape
+        $NoEscape,
+
+        [Parameter()]
+        [string]
+        $ETag
     )
 
     begin {
@@ -1131,7 +1181,7 @@ function Write-PodeYamlResponse {
             $Value = '[]'
         }
 
-        Write-PodeTextResponse -Value $Value -ContentType $ContentType -StatusCode $StatusCode
+        Write-PodeTextResponse -Value $Value -ContentType $ContentType -StatusCode $StatusCode -ETag $ETag
     }
 }
 

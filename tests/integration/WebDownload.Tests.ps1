@@ -124,7 +124,7 @@ Describe 'Download endpoints' {
             $dir = (Join-Path -Path $DownloadFolder -ChildPath "range-$Label")
             if (Test-Path -Path $dir) { Remove-Item $dir -Recurse -Force }
             New-Item $dir -ItemType Directory | Out-Null
-            $joined = Get-RangeFile -Url $url -DownloadDir $dir
+            $joined = Invoke-CurlRequest -Uri $Url -UseRangeDownload -DownloadDir $dir -PassThru | Select-Object -ExpandProperty OutFile
 
             (Test-Path $joined) | Should -BeTrue
             (Get-FileHash $joined -Algo SHA256).Hash |

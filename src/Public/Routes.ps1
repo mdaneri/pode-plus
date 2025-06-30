@@ -2968,6 +2968,8 @@ Controls how the ETag should be generated. Valid values:
 - 'auto': chooses 'mtime' for static, 'hash' for dynamic routes
 - 'hash': generates ETag based on content hash
 - 'mtime': generates ETag based on file modification time
+- 'manual': allows manual ETag setting via the ETag parameter of Write-PodeTextResponse, Write-PodeYamlResponse, Write-PodeJsonResponse, Write-PodeCsvResponse,
+   Write-PodeHtmlResponse, and Write-PodexmlResponse cmdlets.
 
 .PARAMETER WeakValidation
 If specified, the ETag is returned in weak form (prefixed with W/).
@@ -3028,9 +3030,9 @@ function Add-PodeRouteCache {
         $Disable,
 
         [Parameter(ParameterSetName = 'Cache')]
-        [ValidateSet('none', 'auto', 'hash', 'mtime')]
+        [ValidateSet('None', 'Auto', 'Hash', 'Mtime', 'Manual')]
         [string]
-        $ETagMode = 'none',
+        $ETagMode = 'None',
 
         [Parameter(ParameterSetName = 'Cache')]
         [switch]
@@ -3059,7 +3061,7 @@ function Add-PodeRouteCache {
                 if ($SharedMaxAge -gt 0) { $r.Cache.SharedMaxAge = $SharedMaxAge }
                 if ($MustRevalidate) { $r.Cache.MustRevalidate = $true }
                 if ($Immutable) { $r.Cache.Immutable = $true }
-                if ($ETagMode -ne 'none') {
+                if ($ETagMode -ne 'None') {
                     $r.Cache.ETag = @{
                         Mode = $ETagMode
                         Weak = $WeakValidation.isPresent
@@ -3156,7 +3158,7 @@ function Add-PodeRouteCompression {
     )
 
     process {
-     
+
         foreach ($r in $Route) {
             if ($Disable) {
                 $r.Compression.Enabled = $false

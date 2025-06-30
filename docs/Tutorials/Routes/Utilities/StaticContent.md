@@ -8,7 +8,6 @@ Caching is supported on static content.
 
 You can place static files within the `/public` directory at the root of your server, which serves as the default location for static content. When a request is made for a file, Pode will automatically check this designated static directory first, and if the file is found, it will be returned to the requester.
 
-
 For example, if you have a `logic.js` at `/public/scripts/logic.js`. The following request would return the file's content:
 
 ```plain
@@ -28,7 +27,7 @@ But if you need to relocate this directory, you can do so programmatically using
 
 Here is an example:
 
-1. Using `Set-PodeStaticFolder`
+#### Using `Set-PodeStaticFolder`
 
 ```powershell
 Set-PodeDefaultFolder -Type 'Public' -Path 'c:\custom\public'
@@ -36,7 +35,7 @@ Set-PodeDefaultFolder -Type 'Views' -Path 'd:\shared\views'
 Set-PodeDefaultFolder -Type 'Errors' -Path 'e:\logs\errors'
 ```
 
-2. Using `server.psd1` configuration file
+#### Using `server.psd1` configuration file
 
 ```powershell
 @{
@@ -96,12 +95,14 @@ Invoke-WebRequest -Uri 'http://localhost:8080/assets/images/home' -Method Get
 
 The default pages can be configured in two ways; either by using the `-Defaults` parameter on the [`Add-PodeStaticRoute`](../../../../Functions/Routes/Add-PodeStaticRoute) function, or by setting them in the `server.psd1` [configuration file](../../../Configuration). To set the defaults to be only a `home.html` page, both ways would work as follows:
 
-*Defaults Parameter*
+### Defaults Parameter
+
 ```powershell
 Add-PodeStaticRoute -Path '/assets' -Source './content/assets' -Defaults @('index.html')
 ```
 
-*Configuration File*
+### Configuration File
+
 ```powershell
 @{
     Web = @{

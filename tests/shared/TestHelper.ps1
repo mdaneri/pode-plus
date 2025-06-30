@@ -301,9 +301,6 @@ function Compare-Hashtable {
 
   Waits up to 45 seconds for the web server at "http://127.0.0.1:5000" to respond.
 
-.NOTES
-  Author: ChatGPT
-  This function ensures that the web server is fully responding, not just that the port is open.
 #>
 function Wait-ForWebServer {
   [CmdletBinding(DefaultParameterSetName = 'localhost')]
@@ -327,7 +324,6 @@ function Wait-ForWebServer {
 
     [Parameter()]
     [switch]$Offline
-
   )
 
   # Determine the final URI: If no URI is provided, use "http://localhost:$Port"
@@ -345,40 +341,37 @@ function Wait-ForWebServer {
 
   while ($RetryCount -lt $MaxRetries) {
     try {
-      # Send a request but ignore status codes (any response means the server is online)
-      $null = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3 -SkipCertificateCheck
+      # Use curl to check server status
+      if ($PSEdition -eq 'Desktop' -or $IsWindows) {
+        $curlCmd = 'curl.exe'
+        $outputArg = 'NUL'
+      }
+      else {
+        $curlCmd = 'curl'
+        $outputArg = '/dev/null'
+      }
+      # Suppress curl error output when server is offline
+      $statusCode = & $curlCmd --silent --show-error --output $outputArg --write-out '%{http_code}' --max-time 3 --insecure --url $Uri 2>$null
+      if ($statusCode -eq '000') { throw 'curl failed to connect' }
       if ($Offline) {
         $RetryCount++
         Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount)/$MaxRetries)"
         continue
       }
-      else {
-        Write-Host "Webserver is online at $Uri"
-      }
-      return $true
-    }
-    catch {
-      if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 404) {
-        if ($Offline) {
-          $RetryCount++
-          Write-Host "Webserver is expected to be offline, but it is online at $Uri... (Attempt $($RetryCount)/$MaxRetries)"
-
-          continue
-        }
+      elseif ($statusCode -eq '200' -or $statusCode -eq '404') {
+        Write-Host "Webserver is online at $Uri (HTTP $statusCode)"
         return $true
       }
-      else {
-        if ($Offline) {
-          return $true
-        }
-        Write-Host "Waiting for webserver to come online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
-      }
     }
-
+    catch {
+      if ($Offline) {
+        return $true
+      }
+      Write-Host "Waiting for webserver to come online at $Uri... (Attempt $($RetryCount+1)/$MaxRetries)"
+    }
     Start-Sleep -Seconds $Interval
     $RetryCount++
   }
-
   return $false
 }
 
@@ -528,31 +521,15 @@ function Get-RangeFile {
     [string]$DownloadDir,
     [long]$RangeSize = 1GB
   )
-  $resp = Invoke-WebRequest -Uri $Url -Method Head -ErrorAction Stop
-  $length = [int64]$resp.Headers['Content-Length'][0]
-  $parts = 0..[math]::Floor(($length - 1) / $RangeSize) | ForEach-Object {
-    $start = $_ * $RangeSize
-    $end = [math]::Min($length - 1, $start + $RangeSize - 1)
-    $part = Join-Path -Path $DownloadDir -ChildPath "part$_.bin"
-    Invoke-WebRequest -Uri $Url -OutFile $part -Headers @{ Range = "bytes=$start-$end" } -ErrorAction Stop
-    $part
-  }
-
-  $joined = Join-Path -Path $DownloadDir -ChildPath 'joined.tmp'
-  $out = [System.IO.File]::Create($joined)
-  foreach ($p in $parts) {
-    $bytes = [System.IO.File]::ReadAllBytes($p)
-    $out.Write($bytes, 0, $bytes.Length)
-    Remove-Item $p
-  }
-  $out.Dispose()
-  $joined
+  # Use Invoke-CurlRequest for range-based downloads
+  return Invoke-CurlRequest -Uri $Url -UseRangeDownload -RangeSize $RangeSize -DownloadDir $DownloadDir -PassThru | Select-Object -ExpandProperty OutFile
 }
 
 <#
 .SYNOPSIS
   Minimal, curl-backed replacement for Invoke-WebRequest that can
   stream very large responses (≫2 GB) on Windows, Linux, and macOS.
+  Now supports range-based downloads for very large files.
 
 .PARAMETER Uri
   URL to fetch.
@@ -567,6 +544,17 @@ function Get-RangeFile {
 
 .PARAMETER PassThru
   Return a response object instead of being silent.
+
+.PARAMETER UseRangeDownload
+  Use range-based downloading for large files. Automatically detects file size
+  and downloads in chunks, then joins them together.
+
+.PARAMETER RangeSize
+  Size of each range chunk when UseRangeDownload is enabled. Default is 1GB.
+
+.PARAMETER DownloadDir
+  Directory for temporary part files when using range downloads.
+  If not specified, uses the OutFile directory or a temporary directory.
 #>
 function Invoke-CurlRequest {
 
@@ -588,13 +576,128 @@ function Invoke-CurlRequest {
     [Parameter()]
     [ValidateSet('gzip', 'deflate', 'br')]
     [string]
-    $AcceptEncoding
+    $AcceptEncoding,
+
+    [switch]
+    $UseRangeDownload,
+
+    [long]
+    $RangeSize = 1GB,
+
+    [string]
+    $DownloadDir
   )
 
   # ------------------------------------------------------------
-  # Locate the real curl binary (cross-platform, bypass alias)
+  # Handle range downloads
+  # ------------------------------------------------------------
+  if ($UseRangeDownload) {
+    # Locate the real curl binary (cross-platform, bypass alias)
+    if ($PSEdition -eq 'Desktop' -or $IsWindows) { $curlCmd = 'curl.exe' } else { $curlCmd = 'curl' }
+
+    # First get the content length with a HEAD request
+    $tmpHdr = [IO.Path]::GetTempFileName()
+    $headArgs = @(
+      '--silent', '--show-error',
+      '--location',
+      '--head', # HEAD request only
+      '--dump-header', $tmpHdr,
+      '--write-out', '%{http_code}',
+      '--url', $Uri
+    )
+
+    $statusLine = & $curlCmd @headArgs
+    if ($LASTEXITCODE) {
+      throw "curl HEAD request failed with code $LASTEXITCODE"
+    }
+
+    # Parse headers from HEAD response
+    $hdrHash = @{}
+    foreach ($line in Get-Content $tmpHdr) {
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      if ($line -match '^(?<k>[^:]+):\s*(?<v>.+)$') {
+        $hdrHash[$matches.k.Trim()] = $matches.v.Trim()
+      }
+    }
+    Remove-Item $tmpHdr -Force
+
+    if (-not $hdrHash.ContainsKey('Content-Length')) {
+      throw 'Server does not provide Content-Length header, cannot use range downloads'
+    }
+
+    $length = [int64]$hdrHash['Content-Length']
+    if (-not $DownloadDir) {
+      if ($OutFile) {
+        $DownloadDir = Split-Path -Path $OutFile -Parent
+      }
+      else {
+        $DownloadDir = [IO.Path]::GetTempPath()
+      }
+    }
+
+    # Create download directory if it doesn't exist
+    if (-not (Test-Path -Path $DownloadDir)) {
+      New-Item -Path $DownloadDir -ItemType Directory -Force | Out-Null
+    }
+
+    # Calculate parts and download each range
+    $parts = 0..[math]::Floor(($length - 1) / $RangeSize) | ForEach-Object {
+      $start = $_ * $RangeSize
+      $end = [math]::Min($length - 1, $start + $RangeSize - 1)
+      $part = Join-Path -Path $DownloadDir -ChildPath "part$_.bin"
+
+      # Download this range using curl directly (avoid recursion)
+      $rangeArgs = @(
+        '--silent', '--show-error',
+        '--location',
+        '--output', $part,
+        '-H', "Range: bytes=$start-$end",
+        '--url', $Uri
+      )
+
+      # Add any additional headers
+      if ($Headers) {
+        foreach ($k in $Headers.Keys) {
+          $rangeArgs += @('-H', "$($k): $($Headers[$k])")
+        }
+      }
+
+      & $curlCmd @rangeArgs
+      if ($LASTEXITCODE) {
+        throw "curl range request failed with code $LASTEXITCODE"
+      }
+      $part
+    }
+
+    # Join all parts into final file
+    $joined = if ($OutFile) { $OutFile } else { Join-Path -Path $DownloadDir -ChildPath 'joined.tmp' }
+    $out = [System.IO.File]::Create($joined)
+    try {
+      foreach ($p in $parts) {
+        $bytes = [System.IO.File]::ReadAllBytes($p)
+        $out.Write($bytes, 0, $bytes.Length)
+        Remove-Item $p -Force
+      }
+    }
+    finally {
+      $out.Dispose()
+    }
+
+    if ($PassThru) {
+      return [PSCustomObject]@{
+        StatusCode = 200
+        Headers    = $hdrHash
+        OutFile    = $joined
+      }
+    }
+    return
+  }
+
+  # ------------------------------------------------------------
+  # Normal (non-range) download logic
   # ------------------------------------------------------------
 
+  # Locate the real curl binary (cross-platform, bypass alias)
   if ($PSEdition -eq 'Desktop' -or $IsWindows) { $curlCmd = 'curl.exe' } else { $curlCmd = 'curl' }
   # ------------------------------------------------------------
   # Prep temporary files
@@ -649,6 +752,9 @@ function Invoke-CurlRequest {
     }
   }
 
+  # Clean up temporary header file
+  Remove-Item $tmpHdr -Force
+
   # ------------------------------------------------------------
   # Build response object (if requested)
   # ------------------------------------------------------------
@@ -662,6 +768,11 @@ function Invoke-CurlRequest {
       RawContent = $raw
       Content    = $content
     }
+  }
+
+  # Clean up temporary body file if we created one
+  if (-not $OutFile -and -not $PassThru) {
+    Remove-Item $tmpBody -Force
   }
 
 }
