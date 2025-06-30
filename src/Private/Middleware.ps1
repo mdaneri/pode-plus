@@ -295,6 +295,9 @@ function Get-PodeRouteValidateMiddleware {
                 $WebEvent.TransferEncoding = $route.TransferEncoding
             }
 
+            $WebEvent.AcceptEncoding = (Resolve-PodeCompressionEncoding -AcceptEncoding (Get-PodeHeader -Name 'Accept-Encoding') -Route $WebEvent.Route -ThrowError)
+            $WebEvent.ContentEncoding = (Resolve-PodeCompressionEncoding -ContentEncoding (Get-PodeHeader -Name 'Content-Encoding') -Route $WebEvent.Route -ThrowError)
+            $WebEvent.Ranges = (Get-PodeRange -Range (Get-PodeHeader -Name 'Range') -ThrowError)
             # set the content type for any pages for the route if it's not empty
             $WebEvent.ErrorType = $route.ErrorType
 
@@ -308,7 +311,7 @@ function Get-PodeBodyMiddleware {
     return (Get-PodeInbuiltMiddleware -Name '__pode_mw_body_parsing__' -ScriptBlock {
             try {
                 # attempt to parse that data
-                $result = ConvertFrom-PodeRequestContent -Request $WebEvent.Request -ContentType $WebEvent.ContentType -TransferEncoding $WebEvent.TransferEncoding
+                $result = ConvertFrom-PodeRequestContent -Request $WebEvent.Request -ContentType $WebEvent.ContentType -TransferEncoding $WebEvent.TransferEncoding -ContentEncoding $WebEvent.ContentEncoding
 
                 # set session data
                 $WebEvent.Data = $result.Data
@@ -321,6 +324,7 @@ function Get-PodeBodyMiddleware {
                 return $true
             }
             catch {
+                $_ | write-PodeErrorLog -Level Verbose
                 Set-PodeResponseStatus -Code 400 -Exception $_
                 return $false
             }

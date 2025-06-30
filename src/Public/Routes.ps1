@@ -470,6 +470,8 @@ function Add-PodeRoute {
                     Compression      = @{
                         Enabled   = $PodeContext.Server.Web.Compression.Enabled
                         Encodings = $PodeContext.Server.Web.Compression.Encodings
+                        Request   = $false
+                        Response  = $PodeContext.Server.Web.Compression.Enabled
                     }
                 }
             })
@@ -922,6 +924,8 @@ function Add-PodeStaticRoute {
                 Compression       = @{
                     Enabled   = $PodeContext.Server.Web.Compression.Enabled
                     Encodings = $PodeContext.Server.Web.Compression.Encodings
+                    Request   = $false
+                    Response  = $PodeContext.Server.Web.Compression.Enabled
                 }
             }
         })
@@ -3107,6 +3111,11 @@ This parameter is only valid when compression is being enabled.
 .PARAMETER PassThru
 Returns the updated route hashtables to the pipeline.
 
+.PARAMETER Direction
+Specifies the direction of compression. Valid values are: 'Request', 'Response', and 'Both'.
+The default is 'Response'. This determines whether the route will compress incoming requests, outgoing responses, or both.
+
+
 .OUTPUTS
 System.Collections.Hashtable[]
 If -PassThru is specified, the modified route objects are returned.
@@ -3152,20 +3161,46 @@ function Add-PodeRouteCompression {
         [string[]]
         $Encoding,
 
+        [Parameter(ParameterSetName = 'Enable')]
+        [ValidateSet('Request', 'Response', 'Both')]
+        [string]
+        $Direction = 'Response',
+
         [Parameter()]
         [switch]
         $PassThru
     )
 
     process {
-
         foreach ($r in $Route) {
             if ($Disable) {
                 $r.Compression.Enabled = $false
+                $r.Compression.Request = $false
+                $r.Compression.Response = $false
             }
             elseif ($Enable) {
                 $r.Compression.Enabled = $true
                 if ($Encoding) { $r.Compression.Encodings = @($Encoding) }
+
+                switch ($Direction) {
+                    'Request' {
+                        $r.Compression.Request = $true
+                        $r.Compression.Response = $false
+                    }
+                    'Response' {
+                        $r.Compression.Request = $false
+                        $r.Compression.Response = $true
+                    }
+                    'Both' {
+                        $r.Compression.Request = $true
+                        $r.Compression.Response = $true
+                    }
+                    default {
+                        # This should never happen, but just in case
+                        $r.Compression.Request = $false
+                        $r.Compression.Response = $false
+                    }
+                }
             }
 
             if ($PassThru) {

@@ -191,6 +191,7 @@ function Start-PodeWebServer {
                                     Timestamp        = [datetime]::UtcNow
                                     TransferEncoding = $null
                                     AcceptEncoding   = $null
+                                    ContentEncoding  = $null
                                     Ranges           = $null
                                     Sse              = $null
                                     Metadata         = @{}
@@ -242,11 +243,7 @@ function Start-PodeWebServer {
                                         throw $Request.Error
                                     }
 
-                                    # accept/transfer encoding
-                                    $WebEvent.AcceptEncoding = (Get-PodeAcceptEncoding -AcceptEncoding (Get-PodeHeader -Name 'Accept-Encoding') -Route $WebEvent.Route -ThrowError)
-                                    $WebEvent.Ranges = (Get-PodeRange -Range (Get-PodeHeader -Name 'Range') -ThrowError)
-
-                                    if ($null -ne $WebEvent.Route) {
+                                  if ($null -ne $WebEvent.Route) {
                                         # set the cache settings for the web event
                                         $WebEvent.Cache = $WebEvent.Route.Cache
                                     }

@@ -109,9 +109,6 @@ Nothing to report :D
     } -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
 
 
-
-
-
     Add-PodeRoute -Method Get -Path '/'    -ScriptBlock {
         $str = @'
 <!DOCTYPE html>
