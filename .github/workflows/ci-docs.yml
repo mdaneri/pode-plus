@@ -28,6 +28,7 @@ env:
 
 jobs:
   build:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: windows-latest
     timeout-minutes: 40
     strategy:
