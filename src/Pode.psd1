@@ -57,6 +57,7 @@
         'Set-PodeHeader',
         'Set-PodeHeaderBulk',
         'Test-PodeHeaderSigned',
+        'Remove-PodeHeader',
 
         # state
         'Set-PodeState',
@@ -176,6 +177,8 @@
         'Test-PodeRoute',
         'Test-PodeStaticRoute',
         'Test-PodeSignalRoute',
+        'Add-PodeRouteCache',
+        'Add-PodeRouteCompression',
 
         #Async
         'Set-PodeAsyncRoute',
@@ -580,7 +583,15 @@
         'Get-PodeService',
         'Suspend-PodeService',
         'Resume-PodeService',
-        'Restart-PodeService'
+        'Restart-PodeService',
+
+        # Mime Types
+        'Add-PodeMimeType',
+        'Set-PodeMimeType',
+        'Remove-PodeMimeType',
+        'Get-PodeMimeType',
+        'Test-PodeMimeType',
+        'Import-PodeMimeTypeFromFile'
     )
 
     # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.

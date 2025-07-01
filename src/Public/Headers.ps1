@@ -227,7 +227,7 @@ function Get-PodeHeader {
             # return the raw header value
             return $WebEvent.Raw.Headers[$Name]
         }
-        
+
         # get the value for the header from the request
         $header = $WebEvent.Request.Headers.$Name
         # if a secret was supplied, attempt to unsign the header's value
@@ -383,4 +383,28 @@ function Test-PodeHeaderSigned {
 
     $header = Get-PodeHeader -Name $Name
     return Test-PodeValueSigned -Value $header -Secret $Secret -Strict:$Strict
+}
+
+
+<#
+.SYNOPSIS
+Removes a header from the Response.
+
+.DESCRIPTION
+Removes a header from the Response. If the current context is serverless, then this function removes the key directly; otherwise, it uses the standard removal approach.
+
+.PARAMETER Name
+The name of the header to remove.
+
+.EXAMPLE
+Remove-PodeHeader -Name 'X-AuthToken'
+#>
+function Remove-PodeHeader {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]
+        $Name
+    )
+    $WebEvent.Response.Headers.Remove($Name)
 }
