@@ -202,11 +202,8 @@ function Get-PodePublicMiddleware {
                 return $true
             }
 
-            # check current state of caching
-            # $cachable = Test-PodeRouteValidForCaching -Path $WebEvent.Path
-
             # write the file to the response
-            Write-PodeFileResponseInternal -FileInfo $pubRoute.FileInfo #-MaxAge $PodeContext.Server.Web.Static.Cache.MaxAge -Cache:$cachable
+            Write-PodeFileResponseInternal -FileInfo $pubRoute.FileInfo
             # public static content found, stop
             return $false
         })
