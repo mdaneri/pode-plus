@@ -153,8 +153,6 @@
         'Set-PodeCurrentRunspaceName',
         'Invoke-PodeGC',
         'Start-PodeSleep',
-        'Set-PodeServerSetting',
-        'Get-PodeServerSetting',
 
         # routes
         'Add-PodeRoute',
