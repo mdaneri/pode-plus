@@ -24,14 +24,17 @@ on:
     - 'src/Pode.psd1'
 
 env:
-  INVOKE_BUILD_VERSION: '5.12.2'
+  INVOKE_BUILD_VERSION: '5.14.4'
 
 jobs:
   build:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: windows-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      matrix:
+        os: [windows-latest]
 
     steps:
     - uses: actions/checkout@v4

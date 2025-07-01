@@ -20,10 +20,11 @@ on:
     - '.github/workflows/ci-coverage.yml'
 
 env:
-  INVOKE_BUILD_VERSION: '5.12.2'
+  INVOKE_BUILD_VERSION: '5.14.4'
 
 jobs:
   build:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
 
     steps:
