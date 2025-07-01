@@ -143,7 +143,7 @@ function Add-PodeRoute {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
+        [ValidateSet('', 'br', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -617,7 +617,7 @@ function Add-PodeStaticRoute {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
+        [ValidateSet('', 'br', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -1193,7 +1193,7 @@ function Add-PodeRouteGroup {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
+        [ValidateSet('', 'br', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 
@@ -1468,7 +1468,7 @@ function Add-PodeStaticRouteGroup {
         $ContentType,
 
         [Parameter()]
-        [ValidateSet('', 'brotli', 'gzip', 'deflate')]
+        [ValidateSet('', 'br', 'gzip', 'deflate')]
         [string]
         $TransferEncoding,
 

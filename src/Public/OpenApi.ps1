@@ -2062,7 +2062,7 @@ function Enable-PodeOAViewer {
             -Role $Role -Scope $Scope -Group $Group `
             -ScriptBlock {
             param($meta)
- 
+
             $data = @{
                 Title    = $meta.Title
                 OpenApi  = $meta.OpenApi
@@ -2072,8 +2072,6 @@ function Enable-PodeOAViewer {
             }
             $content = Get-PodeFileContentUsingViewEngine -Path ([System.IO.Path]::Combine((Get-PodeModuleMiscPath), "default-$($meta.Type).html.pode")) -Data $data
             Write-PodeTextResponse -Value $content -ContentType 'text/html' -StatusCode 200
-
-
         }
     }
 

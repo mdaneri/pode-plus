@@ -104,7 +104,7 @@ function Set-PodeResponseAttachment {
         else {
             $_path = Get-PodeRelativePath -Path $Path -JoinRoot
         }
-        # call internal Attachment function
+        # if the path is a directory, then return a browsable directory response
         Write-PodeFileResponseInternal -Path $_path -ContentType $ContentType -FileBrowser:$fileBrowser -NoEscape -Download:(!$Inline.IsPresent)
     }
 }

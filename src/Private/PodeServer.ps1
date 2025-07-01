@@ -265,7 +265,6 @@ function Start-PodeWebServer {
                                                 else {
                                                     Write-PodeFileResponseInternal -FileInfo $WebEvent.StaticContent.FileInfo `
                                                         -FileBrowser:$fileBrowser -Download:$WebEvent.StaticContent.IsDownload
-                                                    #-MaxAge $PodeContext.Server.Web.Static.Cache.MaxAge -Cache:$WebEvent.StaticContent.IsCachable
                                                 }
                                             }
                                             else {
