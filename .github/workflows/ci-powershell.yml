@@ -20,7 +20,7 @@ on:
     - '.github/workflows/ci-powershell.yml'
 
 env:
-  INVOKE_BUILD_VERSION: '5.12.2'
+  INVOKE_BUILD_VERSION: '5.14.4'
 
 jobs:
   build:
@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      matrix:
+        os: [windows-latest]
 
     steps:
     - uses: actions/checkout@v4
