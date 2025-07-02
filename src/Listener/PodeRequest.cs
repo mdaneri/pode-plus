@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Security;
@@ -174,10 +175,49 @@ namespace Pode
                     }
                 }))
                 {
+#if !NETSTANDARD2_0
+                    // Configure ALPN protocols for HTTP/2 support
+                    var serverOptions = new SslServerAuthenticationOptions
+                    {
+                        ServerCertificate = Certificate,
+                        ClientCertificateRequired = AllowClientCertificate,
+                        EnabledSslProtocols = Protocols,
+                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                        ApplicationProtocols = new List<SslApplicationProtocol>
+                        {
+                            SslApplicationProtocol.Http2,    // HTTP/2 over TLS
+                            SslApplicationProtocol.Http11    // HTTP/1.1 fallback
+                        }
+                    };
 
-                    // Authenticate the SSL stream
+                    // Authenticate the SSL stream with ALPN support
+                    await ssl.AuthenticateAsServerAsync(serverOptions, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    // Check which protocol was negotiated
+                    var negotiatedProtocol = ssl.NegotiatedApplicationProtocol;
+                    if (negotiatedProtocol == SslApplicationProtocol.Http2)
+                    {
+                        PodeHelpers.WriteErrorMessage("HTTP/2 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
+                        // Set a flag to indicate HTTP/2 was negotiated
+                        Context.Data["AlpnNegotiatedHttp2"] = true;
+                    }
+                    else if (negotiatedProtocol == SslApplicationProtocol.Http11)
+                    {
+                        PodeHelpers.WriteErrorMessage("HTTP/1.1 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
+                        Context.Data["AlpnNegotiatedHttp2"] = false;
+                    }
+                    else
+                    {
+                        PodeHelpers.WriteErrorMessage($"Unexpected ALPN protocol: {negotiatedProtocol}", Context.Listener, PodeLoggingLevel.Warning, Context);
+                        Context.Data["AlpnNegotiatedHttp2"] = false;
+                    }
+#else
+                    // Fallback to HTTP/1.1 only authentication for netstandard2.0
                     await ssl.AuthenticateAsServerAsync(Certificate, AllowClientCertificate, Protocols, false)
                         .ConfigureAwait(false);
+                    Context.Data["AlpnNegotiatedHttp2"] = false;
+#endif
                 }
 
                 // Set InputStream to the upgraded SSL stream

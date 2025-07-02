@@ -196,6 +196,17 @@ namespace Pode
 
             // http method
             HttpMethod = reqMeta[0].Trim().ToUpper();
+
+            // Special handling for HTTP/2 connection preface that ended up in HTTP/1.1 parser
+            if (HttpMethod == "PRI")
+            {
+#if !NETSTANDARD2_0
+                throw new PodeRequestException("HTTP/2 connection preface detected in HTTP/1.1 parser. This indicates a protocol detection issue.", 400);
+#else
+                throw new PodeRequestException("HTTP/2 is not supported in this version. Please use HTTP/1.1.", 400);
+#endif
+            }
+
             if (!PodeHelpers.HTTP_METHODS.Contains(HttpMethod))
             {
                 throw new PodeRequestException($"Invalid request HTTP method: {HttpMethod}", 405);

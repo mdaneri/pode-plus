@@ -1,6 +1,15 @@
 <#
 .SYNOPSIS
-    PowerShell script to set up a Pode server with static file browsing and authentication.
+    PowerShell script to set Start-PodeServer -ScriptBlock {
+
+    Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http
+    Add-PodeEndpoint -Address localhost -Port 8043 -Protocol Https -Default -SelfSigned -DualMode
+
+    New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
+    New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
+    #   Set-PodeServerSetting -Compression -Enable -Encoding 'gzip'
+
+    #Set-PodeServerSetting -Cache -Enablerver with static file browsing and authentication.
 
 .DESCRIPTION
     This script sets up a Pode server that listens on port 8081. It includes static file browsing
@@ -44,7 +53,8 @@ $directoryPath = $podePath
 #Start-PodeServer -ConfigFile '..\Server.psd1' -ScriptBlock {
 Start-PodeServer -ScriptBlock {
 
-    Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http -Default
+    Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http
+    Add-PodeEndpoint -Address localhost -Port 8043 -Protocol Https -Default -SelfSigned -DualMode
 
     New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
     New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
@@ -110,7 +120,31 @@ Nothing to report :D
 
 
     Add-PodeRoute -Method Get -Path '/'    -ScriptBlock {
-        $str = @'
+        # Determine protocol version safely across framework versions
+        $protocol = "HTTP/1.1"  # Default
+        $requestType = $WebEvent.Request.GetType().Name
+        $debugInfo = "Request type: $requestType"
+        
+        try {
+            # Try to determine if this is HTTP/2 - this will work on .NET Framework 4.6.1+ and .NET Core/.NET 5+
+            if ($WebEvent.Request.GetType().Name -eq "PodeHttp2Request") {
+                $protocol = "HTTP/2.0"
+                $debugInfo += " | Detected HTTP/2"
+            } else {
+                $debugInfo += " | Detected HTTP/1.x"
+            }
+            
+            # Also check the protocol from the request itself
+            if ($WebEvent.Request.Protocol) {
+                $debugInfo += " | Request.Protocol: $($WebEvent.Request.Protocol)"
+            }
+        }
+        catch {
+            # Type doesn't exist in this framework version, stick with HTTP/1.1
+            $debugInfo += " | Error: $($_.Exception.Message)"
+        }
+
+        $str = @"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -119,6 +153,7 @@ Nothing to report :D
     <style>
         body { font-family: system-ui, sans-serif; margin: 2rem; }
         h1   { margin-bottom: .5rem; }
+        .protocol { color: #0060df; font-size: 1.2em; font-weight: bold; margin-bottom: 1rem; }
         ul   { list-style: none; padding-left: 0; }
         li   { margin: .25rem 0; }
         a    { text-decoration: none; color: #0060df; }
@@ -128,6 +163,8 @@ Nothing to report :D
 </head>
 <body>
     <h1>Route Links</h1>
+    <div class="protocol">Protocol: $protocol</div>
+    <div style="font-size: 0.9em; color: #666; margin-bottom: 1rem;">Debug: $debugInfo</div>
     <ul>
         <li><a href="/standard">/standard</a></li>
 
@@ -159,7 +196,7 @@ Nothing to report :D
     </ul>
 </body>
 </html>
-'@
+"@
         Write-PodeHtmlResponse -Value $str -StatusCode 200
     }
 

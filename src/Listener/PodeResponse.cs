@@ -84,14 +84,31 @@ namespace Pode
 
         public string HttpResponseLine
         {
-            get => $"{((PodeHttpRequest)Request).Protocol} {StatusCode} {StatusDescription}{PodeHelpers.NEW_LINE}";
+            get
+            {
+#if !NETSTANDARD2_0
+                if (Request is PodeHttp2Request)
+                {
+                    // HTTP/2 doesn't use status lines in the same way as HTTP/1.x
+                    // For now, return empty string as HTTP/2 uses binary frames
+                    return string.Empty;
+                }
+#endif
+                if (Request is PodeHttpRequest httpRequest)
+                {
+                    return $"{httpRequest.Protocol} {StatusCode} {StatusDescription}{PodeHelpers.NEW_LINE}";
+                }
+
+                // Fallback for other request types
+                return $"HTTP/1.1 {StatusCode} {StatusDescription}{PodeHelpers.NEW_LINE}";
+            }
         }
 
         private static readonly UTF8Encoding Encoding = new UTF8Encoding();
 
         /// <summary>
         /// PodeResponse constructor for testing purposes.
-        /// This constructor initializes the response with default headers and an empty output stream.  
+        /// This constructor initializes the response with default headers and an empty output stream.
         /// </summary>
         public PodeResponse()
         {
