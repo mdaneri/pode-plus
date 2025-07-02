@@ -91,7 +91,7 @@ namespace Pode
 
         /// <summary>
         /// PodeResponse constructor for testing purposes.
-        /// This constructor initializes the response with default headers and an empty output stream.  
+        /// This constructor initializes the response with default headers and an empty output stream.
         /// </summary>
         public PodeResponse()
         {
@@ -661,7 +661,7 @@ namespace Pode
                 }
                 catch (Exception ex)
                 {
-                    PodeHelpers.WriteException(ex, Context.Listener);
+                    PodeLogger.LogException(ex, Context.Listener);
                     throw;
                 }
                 finally
