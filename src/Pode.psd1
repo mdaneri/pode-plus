@@ -57,6 +57,7 @@
         'Set-PodeHeader',
         'Set-PodeHeaderBulk',
         'Test-PodeHeaderSigned',
+        'Remove-PodeHeader',
 
         # state
         'Set-PodeState',
@@ -176,6 +177,8 @@
         'Test-PodeRoute',
         'Test-PodeStaticRoute',
         'Test-PodeSignalRoute',
+        'Add-PodeRouteCache',
+        'Add-PodeRouteCompression',
 
         #Async
         'Set-PodeAsyncRoute',
@@ -569,8 +572,7 @@
         'New-PodeLimitRouteComponent',
         'New-PodeLimitEndpointComponent',
         'New-PodeLimitMethodComponent',
-        'New-PodeLimitHeaderComponent'
-        'Use-PodeScopedVariables',
+        'New-PodeLimitHeaderComponent' 
 
         # service
         'Register-PodeService',
@@ -580,8 +582,15 @@
         'Get-PodeService',
         'Suspend-PodeService',
         'Resume-PodeService',
-        'Restart-PodeService'
-        'Use-PodeScopedVariables',
+        'Restart-PodeService',
+
+        # Mime Types
+        'Add-PodeMimeType',
+        'Set-PodeMimeType',
+        'Remove-PodeMimeType',
+        'Get-PodeMimeType',
+        'Test-PodeMimeType',
+        'Import-PodeMimeTypeFromFile' 
 
         # watchdog
         'Enable-PodeWatchdog',

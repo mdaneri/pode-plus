@@ -1247,7 +1247,7 @@ function Get-PodeAsyncRouteQueryScriptBlock {
                     }
                 }
             }
-            write-podehost $query -explode -ShowType
+
             # Get the 'Accept' header from the request to determine the response format
             $responseMediaType = Get-PodeHeader -Name 'Accept'
             $response = @()  # Initialize an empty array to hold the response
