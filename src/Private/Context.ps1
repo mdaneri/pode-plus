@@ -570,10 +570,6 @@ function New-PodeContext {
     $ctx.Server.Middleware = @()
     $ctx.Server.BodyParsers = @{}
 
-    # common support values
-    $ctx.Server.Compression = @{
-        Encodings = @('gzip', 'deflate', 'x-gzip')
-    }
 
     # endware that needs to run
     $ctx.Server.Endware = @()
@@ -897,6 +893,9 @@ function Open-PodeConfiguration {
         Set-PodeServerConfiguration -Configuration $config.Server -Context $Context
         Set-PodeWebConfiguration -Configuration $config.Web -Context $Context
     }
+    else {
+        Set-PodeWebConfiguration -Configuration @{} -Context $Context
+    }
 
     # Return the loaded configuration
     return $config
@@ -1091,10 +1090,20 @@ function Set-PodeWebConfiguration {
             Routes  = @{}
         }
         Compression      = @{
-            Enabled = [bool]$Configuration.Compression.Enable
+            Enabled   = [bool]$Configuration.Compression.Enable
+            Encodings = $(if ($PSVersionTable.PSEdition -eq 'Core') { @('gzip', 'deflate', 'br', 'x-gzip') } else { @('gzip', 'deflate', 'br') })
         }
         OpenApi          = @{
             DefaultDefinitionTag = [string](Protect-PodeValue -Value $Configuration.OpenApi.DefaultDefinitionTag -Default 'default')
+        }
+    }
+
+    if ($Configuration.Compression) {
+        if (  $Configuration.Compression.ContainsKey('Enabled')) {
+            $Context.Server.Web.Compression.Enabled = [bool]$Configuration.Compression.Enabled
+        }
+        if ( $Configuration.Compression.ContainsKey('Encodings')) {
+            $Context.Server.Web.Compression.Encodings = @($Configuration.Compression.Encodings)
         }
     }
 

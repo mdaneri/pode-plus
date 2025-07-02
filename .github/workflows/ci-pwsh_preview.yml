@@ -24,13 +24,14 @@ on:
     - '*.dockerfile'
 
 env:
-  INVOKE_BUILD_VERSION: '5.12.2'
+  INVOKE_BUILD_VERSION: '5.14.4'
   POWERSHELL_VERSION: 'Preview'
 
 jobs:
   build-preview:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ${{ matrix.os }}
-
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

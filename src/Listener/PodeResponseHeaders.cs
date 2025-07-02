@@ -85,10 +85,7 @@ namespace Pode
         /// </summary>
         public void Remove(string name)
         {
-            if (Headers.ContainsKey(name))
-            {
-                Headers.Remove(name);
-            }
+            Headers.Remove(name);
         }
 
         /// <summary>
