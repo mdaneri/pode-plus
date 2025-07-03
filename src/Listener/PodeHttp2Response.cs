@@ -54,7 +54,7 @@ namespace Pode
                 // from sending HTTP/1.1 response
                 SentHeaders = true;
                 SentBody = true;
-                
+
                 // Send HTTP/2 frames
                 await SendHttp2Headers().ConfigureAwait(false);
                 await SendHttp2Body().ConfigureAwait(false);
@@ -171,7 +171,7 @@ namespace Pode
             if (networkStream != null)
             {
                 PodeHelpers.WriteErrorMessage($"DEBUG: Writing frame header and payload to network stream", _context.Listener, PodeLoggingLevel.Verbose, _context);
-                
+
                 // Send frame header
                 await networkStream.WriteAsync(frameHeader, 0, frameHeader.Length);
 
@@ -204,7 +204,7 @@ namespace Pode
                         return new System.Net.Sockets.NetworkStream(socket);
                     }
                 }
-                
+
                 // Fallback to accessing from the context
                 return _context.Request?.InputStream;
             }
@@ -255,20 +255,20 @@ namespace Pode
         public override void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 WriteBody called with {bytes?.Length ?? 0} bytes", _context.Listener, PodeLoggingLevel.Verbose, _context);
-            
+
             // Prevent duplicate response sending
             if (_sentHeaders && _sentBody)
             {
                 PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response already sent, ignoring duplicate WriteBody call", _context.Listener, PodeLoggingLevel.Verbose, _context);
                 return;
             }
-            
+
             // Store the body data in the OutputStream
             if (bytes != null && bytes.Length > 0)
             {
                 OutputStream.Write(bytes, 0, bytes.Length);
             }
-            
+
             // Send the HTTP/2 response using the Send method
             Send().GetAwaiter().GetResult();
         }

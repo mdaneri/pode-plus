@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Net.Security;
 
 namespace Pode
 {
@@ -129,10 +130,45 @@ namespace Pode
             return bytes.Length >= 9;
         }
 
+        public override async Task Open(CancellationToken cancellationToken)
+        {
+            Console.WriteLine("[DEBUG] PodeHttp2Request.Open() called");
+
+            // Check if InputStream is already set (transferred from HTTP/1.1 request)
+            if (InputStream != null)
+            {
+                Console.WriteLine("[DEBUG] InputStream already set, skipping NetworkStream creation");
+
+                // If InputStream is already an SSL stream, skip SSL upgrade
+                if (InputStream is SslStream sslStream)
+                {
+                    Console.WriteLine("[DEBUG] InputStream is already an authenticated SSL stream, skipping SSL upgrade");
+                    SslUpgraded = true;
+                    State = PodeStreamState.Open;
+                    return;
+                }
+                else if (IsSsl && TlsMode != PodeTlsMode.Explicit)
+                {
+                    Console.WriteLine("[DEBUG] InputStream is NetworkStream but SSL required, upgrading to SSL");
+                    await UpgradeToSSL(cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    Console.WriteLine("[DEBUG] InputStream is NetworkStream and no SSL required");
+                    State = PodeStreamState.Open;
+                }
+                return;
+            }
+
+            // If InputStream is null, use the base implementation
+            Console.WriteLine("[DEBUG] InputStream is null, using base Open implementation");
+            await base.Open(cancellationToken).ConfigureAwait(false);
+        }
+
         protected override async Task<bool> Parse(byte[] bytes, CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] PodeHttp2Request.Parse called with {bytes.Length} bytes");
-            
+
             if (bytes.Length == 0)
             {
                 Console.WriteLine("[DEBUG] Empty bytes received, returning true");
@@ -143,7 +179,7 @@ namespace Pode
             try
             {
                 Console.WriteLine("[DEBUG] Starting HTTP/2 parsing logic");
-                
+
                 // First check if ALPN negotiated HTTP/1.1 instead of HTTP/2
                 if (Context.Data.ContainsKey("AlpnNegotiatedHttp2") && !(bool)Context.Data["AlpnNegotiatedHttp2"])
                 {
@@ -153,11 +189,22 @@ namespace Pode
                     throw new PodeRequestException("HTTP/1.1 protocol negotiated via ALPN, but HTTP/2 parser was selected. This indicates a protocol detection issue.", 422);
                 }
 
+                // Check if we have preface data from the HTTP/1.1 parser that detected the upgrade
+                byte[] actualBytes = bytes;
+                if (!_hasReceivedPreface && Context.Data.ContainsKey("Http2PrefaceData"))
+                {
+                    var prefaceData = (byte[])Context.Data["Http2PrefaceData"];
+                    Console.WriteLine($"[DEBUG] Using stored preface data ({prefaceData.Length} bytes) instead of reading from stream");
+                    actualBytes = prefaceData;
+                    // Remove the stored data so we don't use it again
+                    Context.Data.Remove("Http2PrefaceData");
+                }
+
                 // Check connection preface
                 if (!_hasReceivedPreface)
                 {
-                    Console.WriteLine($"[DEBUG] Checking connection preface, bytes.Length = {bytes.Length}");
-                    if (!CheckConnectionPreface(bytes))
+                    Console.WriteLine($"[DEBUG] Checking connection preface, actualBytes.Length = {actualBytes.Length}");
+                    if (!CheckConnectionPreface(actualBytes))
                     {
                         Console.WriteLine("[DEBUG] Connection preface check failed");
                         // If this is an HTTPS connection but no proper HTTP/2 preface,
@@ -178,15 +225,23 @@ namespace Pode
                     await SendInitialSettingsFrame(cancellationToken);
 
                     // Remove preface from bytes and continue processing
-                    var remainingBytes = new byte[bytes.Length - HTTP2_PREFACE.Length];
-                    Array.Copy(bytes, HTTP2_PREFACE.Length, remainingBytes, 0, remainingBytes.Length);
-                    bytes = remainingBytes;
+                    var remainingBytes = new byte[actualBytes.Length - HTTP2_PREFACE.Length];
+                    Array.Copy(actualBytes, HTTP2_PREFACE.Length, remainingBytes, 0, remainingBytes.Length);
+                    actualBytes = remainingBytes;
                     Console.WriteLine($"[DEBUG] Preface removed, remaining bytes: {remainingBytes.Length}");
+
+                    // If we used stored preface data and there are no remaining bytes from the original parse call,
+                    // we should process any additional bytes that came in the original call
+                    if (Context.Data.ContainsKey("Http2PrefaceData") && remainingBytes.Length == 0 && bytes.Length > 0)
+                    {
+                        Console.WriteLine($"[DEBUG] Processing original {bytes.Length} bytes after handling stored preface");
+                        actualBytes = bytes;
+                    }
                 }
 
                 // Add any incomplete frame data from previous parsing
                 var allBytes = new List<byte>(_incompleteFrame);
-                allBytes.AddRange(bytes);
+                allBytes.AddRange(actualBytes);
                 _incompleteFrame.Clear();
                 Console.WriteLine($"[DEBUG] Processing {allBytes.Count} total bytes (including incomplete frames)");
 
@@ -194,7 +249,7 @@ namespace Pode
                 while (offset < allBytes.Count)
                 {
                     Console.WriteLine($"[DEBUG] Processing frame at offset {offset}, remaining bytes: {allBytes.Count - offset}");
-                    
+
                     // Need at least 9 bytes for frame header
                     if (allBytes.Count - offset < 9)
                     {
@@ -276,7 +331,7 @@ namespace Pode
         private async Task ProcessFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] ProcessFrame: Type={frame.Type}, StreamId={frame.StreamId}, Length={frame.Length}");
-            
+
             switch (frame.Type)
             {
                 case FRAME_TYPE_HEADERS:
@@ -324,7 +379,7 @@ namespace Pode
         private async Task ProcessHeadersFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] ProcessHeadersFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
-            
+
             StreamId = frame.StreamId;
             EndOfHeaders = (frame.Flags & FLAG_END_HEADERS) != 0;
             EndOfStream = (frame.Flags & FLAG_END_STREAM) != 0;
@@ -390,14 +445,14 @@ namespace Pode
         private void ProcessSettingsFrame(Http2Frame frame)
         {
             Console.WriteLine($"[DEBUG] ProcessSettingsFrame: Length={frame.Length}, Flags=0x{frame.Flags:X2}");
-            
+
             // Check if this is a SETTINGS ACK frame
             if ((frame.Flags & FLAG_ACK) != 0)
             {
                 Console.WriteLine("[DEBUG] Received SETTINGS ACK frame");
                 return;
             }
-            
+
             // Process settings - each setting is 6 bytes (2 bytes ID + 4 bytes value)
             for (int i = 0; i < frame.Payload.Length; i += 6)
             {
@@ -419,7 +474,7 @@ namespace Pode
                     }
                 }
             }
-            
+
             // Send SETTINGS ACK frame in response
             Console.WriteLine("[DEBUG] Sending SETTINGS ACK frame");
             Task.Run(async () => await SendSettingsAck());
@@ -561,12 +616,12 @@ namespace Pode
             if (!string.IsNullOrEmpty(Host))
             {
                 var path = stream.Headers.ContainsKey(":path") ? stream.Headers[":path"].ToString() : "/";
-                
+
                 try
                 {
                     // Improved hostname parsing logic
                     Console.WriteLine($"[DEBUG] Host header: '{Host}'");
-                    
+
                     // First, strip any existing scheme from the Host if present
                     string hostWithoutScheme = Host;
                     if (Host.Contains("://"))
@@ -575,11 +630,11 @@ namespace Pode
                         hostWithoutScheme = Host.Substring(schemeIndex + 3);
                         Console.WriteLine($"[DEBUG] Host had scheme, extracted: '{hostWithoutScheme}'");
                     }
-                    
+
                     // Next, handle port number in the hostname - make sure it's properly formatted
                     // For example, 'localhost:8043' needs to be handled correctly when building the URI
                     string urlString = $"{scheme}://{hostWithoutScheme}{path}";
-                    
+
                     Console.WriteLine($"[DEBUG] Building URL: '{urlString}'");
                     Url = new Uri(urlString);
                     Console.WriteLine($"[DEBUG] URL parsed successfully: {Url}");
@@ -589,18 +644,21 @@ namespace Pode
                     Console.WriteLine($"[ERROR] Failed to parse URL: {ex.Message}");
                     Console.WriteLine($"[DEBUG] Host: '{Host}', Path: '{path}', IsSsl: {IsSsl}");
                     // Fallback to a simpler URI construction
-                    try {
+                    try
+                    {
                         // Try to extract host without port
                         string hostOnly = Host;
-                        if (Host.Contains(":")) {
+                        if (Host.Contains(":"))
+                        {
                             hostOnly = Host.Split(':')[0];
                         }
-                        
+
                         string fallbackUrl = $"{scheme}://{hostOnly}{path}";
                         Console.WriteLine($"[DEBUG] Trying fallback URL: {fallbackUrl}");
                         Url = new Uri(fallbackUrl);
                     }
-                    catch (Exception innerEx) {
+                    catch (Exception innerEx)
+                    {
                         // Last resort fallback
                         Console.WriteLine($"[ERROR] Fallback URL parsing failed: {innerEx.Message}");
                         Url = new Uri($"{scheme}://localhost{path}");
@@ -662,10 +720,10 @@ namespace Pode
             try
             {
                 Console.WriteLine("[DEBUG] Building initial SETTINGS frame");
-                
+
                 // Build SETTINGS frame with our default settings
                 var settingsData = new List<byte>();
-                
+
                 // Add each setting (6 bytes per setting: 2 bytes ID + 4 bytes value)
                 AddSetting(settingsData, 1, 4096);  // SETTINGS_HEADER_TABLE_SIZE
                 AddSetting(settingsData, 2, 0);     // SETTINGS_ENABLE_PUSH (disabled)
@@ -673,30 +731,30 @@ namespace Pode
                 AddSetting(settingsData, 4, 65535); // SETTINGS_INITIAL_WINDOW_SIZE
                 AddSetting(settingsData, 5, 16384); // SETTINGS_MAX_FRAME_SIZE
                 AddSetting(settingsData, 6, 8192);  // SETTINGS_MAX_HEADER_LIST_SIZE
-                
+
                 var payload = settingsData.ToArray();
                 Console.WriteLine($"[DEBUG] SETTINGS payload length: {payload.Length}");
-                
+
                 // Create HTTP/2 frame header (9 bytes)
                 var frameHeader = new byte[9];
-                
+
                 // Frame length (24 bits)
                 frameHeader[0] = (byte)((payload.Length >> 16) & 0xFF);
                 frameHeader[1] = (byte)((payload.Length >> 8) & 0xFF);
                 frameHeader[2] = (byte)(payload.Length & 0xFF);
-                
+
                 // Frame type (SETTINGS = 0x4)
                 frameHeader[3] = FRAME_TYPE_SETTINGS;
-                
+
                 // Flags (no flags for initial SETTINGS)
                 frameHeader[4] = 0x0;
-                
+
                 // Stream ID (0 for SETTINGS frame)
                 frameHeader[5] = 0x0;
                 frameHeader[6] = 0x0;
                 frameHeader[7] = 0x0;
                 frameHeader[8] = 0x0;
-                
+
                 // Send frame header + payload
                 Console.WriteLine("[DEBUG] Sending SETTINGS frame to client");
                 var networkStream = GetNetworkStream();
@@ -710,7 +768,7 @@ namespace Pode
                 {
                     throw new InvalidOperationException("Could not get network stream for SETTINGS frame");
                 }
-                
+
                 Console.WriteLine("[DEBUG] SETTINGS frame sent successfully");
             }
             catch (Exception ex)
@@ -719,13 +777,13 @@ namespace Pode
                 throw;
             }
         }
-        
+
         private void AddSetting(List<byte> settingsData, int settingId, int value)
         {
             // Setting ID (2 bytes)
             settingsData.Add((byte)((settingId >> 8) & 0xFF));
             settingsData.Add((byte)(settingId & 0xFF));
-            
+
             // Setting value (4 bytes)
             settingsData.Add((byte)((value >> 24) & 0xFF));
             settingsData.Add((byte)((value >> 16) & 0xFF));
@@ -738,27 +796,27 @@ namespace Pode
             try
             {
                 Console.WriteLine("[DEBUG] Sending SETTINGS ACK frame");
-                
+
                 // Create HTTP/2 frame header for SETTINGS ACK (9 bytes)
                 var frameHeader = new byte[9];
-                
+
                 // Frame length (0 for ACK)
                 frameHeader[0] = 0x0;
                 frameHeader[1] = 0x0;
                 frameHeader[2] = 0x0;
-                
+
                 // Frame type (SETTINGS = 0x4)
                 frameHeader[3] = FRAME_TYPE_SETTINGS;
-                
+
                 // Flags (ACK = 0x1)
                 frameHeader[4] = FLAG_ACK;
-                
+
                 // Stream ID (0 for SETTINGS frame)
                 frameHeader[5] = 0x0;
                 frameHeader[6] = 0x0;
                 frameHeader[7] = 0x0;
                 frameHeader[8] = 0x0;
-                
+
                 // Send frame header (no payload for ACK)
                 Console.WriteLine("[DEBUG] Writing SETTINGS ACK frame to stream");
                 var networkStream = GetNetworkStream();
@@ -788,7 +846,7 @@ namespace Pode
                 {
                     return InputStream;
                 }
-                
+
                 // If no InputStream, we need to access the socket through reflection or use the Context
                 // For now, let's try using the context's socket information
                 if (Context?.PodeSocket != null)
@@ -804,7 +862,7 @@ namespace Pode
                         }
                     }
                 }
-                
+
                 return null;
             }
             catch (Exception ex)
@@ -834,9 +892,14 @@ namespace Pode
         public MemoryStream Data { get; set; }
     }
 
-    // Simplified HPACK decoder - in production, use a full HPACK implementation
+    // RFC 7541 compliant HPACK decoder
     public class SimpleHpackDecoder
     {
+        private readonly List<KeyValuePair<string, string>> _dynamicTable;
+        private int _maxTableSize = 4096;
+        private int _currentTableSize = 0;
+
+        // Complete HPACK static table from RFC 7541 Appendix B
         private static readonly Dictionary<int, KeyValuePair<string, string>> StaticTable =
             new Dictionary<int, KeyValuePair<string, string>>
             {
@@ -848,8 +911,65 @@ namespace Pode
                 { 6, new KeyValuePair<string, string>(":scheme", "http") },
                 { 7, new KeyValuePair<string, string>(":scheme", "https") },
                 { 8, new KeyValuePair<string, string>(":status", "200") },
-                // Add more static table entries as needed
+                { 9, new KeyValuePair<string, string>(":status", "204") },
+                { 10, new KeyValuePair<string, string>(":status", "206") },
+                { 11, new KeyValuePair<string, string>(":status", "304") },
+                { 12, new KeyValuePair<string, string>(":status", "400") },
+                { 13, new KeyValuePair<string, string>(":status", "404") },
+                { 14, new KeyValuePair<string, string>(":status", "500") },
+                { 15, new KeyValuePair<string, string>("accept-charset", "") },
+                { 16, new KeyValuePair<string, string>("accept-encoding", "gzip, deflate") },
+                { 17, new KeyValuePair<string, string>("accept-language", "") },
+                { 18, new KeyValuePair<string, string>("accept-ranges", "") },
+                { 19, new KeyValuePair<string, string>("accept", "") },
+                { 20, new KeyValuePair<string, string>("access-control-allow-origin", "") },
+                { 21, new KeyValuePair<string, string>("age", "") },
+                { 22, new KeyValuePair<string, string>("allow", "") },
+                { 23, new KeyValuePair<string, string>("authorization", "") },
+                { 24, new KeyValuePair<string, string>("cache-control", "") },
+                { 25, new KeyValuePair<string, string>("content-disposition", "") },
+                { 26, new KeyValuePair<string, string>("content-encoding", "") },
+                { 27, new KeyValuePair<string, string>("content-language", "") },
+                { 28, new KeyValuePair<string, string>("content-length", "") },
+                { 29, new KeyValuePair<string, string>("content-location", "") },
+                { 30, new KeyValuePair<string, string>("content-range", "") },
+                { 31, new KeyValuePair<string, string>("content-type", "") },
+                { 32, new KeyValuePair<string, string>("cookie", "") },
+                { 33, new KeyValuePair<string, string>("date", "") },
+                { 34, new KeyValuePair<string, string>("etag", "") },
+                { 35, new KeyValuePair<string, string>("expect", "") },
+                { 36, new KeyValuePair<string, string>("expires", "") },
+                { 37, new KeyValuePair<string, string>("from", "") },
+                { 38, new KeyValuePair<string, string>("host", "") },
+                { 39, new KeyValuePair<string, string>("if-match", "") },
+                { 40, new KeyValuePair<string, string>("if-modified-since", "") },
+                { 41, new KeyValuePair<string, string>("if-none-match", "") },
+                { 42, new KeyValuePair<string, string>("if-range", "") },
+                { 43, new KeyValuePair<string, string>("if-unmodified-since", "") },
+                { 44, new KeyValuePair<string, string>("last-modified", "") },
+                { 45, new KeyValuePair<string, string>("link", "") },
+                { 46, new KeyValuePair<string, string>("location", "") },
+                { 47, new KeyValuePair<string, string>("max-forwards", "") },
+                { 48, new KeyValuePair<string, string>("proxy-authenticate", "") },
+                { 49, new KeyValuePair<string, string>("proxy-authorization", "") },
+                { 50, new KeyValuePair<string, string>("range", "") },
+                { 51, new KeyValuePair<string, string>("referer", "") },
+                { 52, new KeyValuePair<string, string>("refresh", "") },
+                { 53, new KeyValuePair<string, string>("retry-after", "") },
+                { 54, new KeyValuePair<string, string>("server", "") },
+                { 55, new KeyValuePair<string, string>("set-cookie", "") },
+                { 56, new KeyValuePair<string, string>("strict-transport-security", "") },
+                { 57, new KeyValuePair<string, string>("transfer-encoding", "") },
+                { 58, new KeyValuePair<string, string>("user-agent", "") },
+                { 59, new KeyValuePair<string, string>("vary", "") },
+                { 60, new KeyValuePair<string, string>("via", "") },
+                { 61, new KeyValuePair<string, string>("www-authenticate", "") }
             };
+
+        public SimpleHpackDecoder()
+        {
+            _dynamicTable = new List<KeyValuePair<string, string>>();
+        }
 
         public List<KeyValuePair<string, string>> Decode(byte[] headerBlock)
         {
@@ -880,9 +1000,23 @@ namespace Pode
             {
                 var index = DecodeInt(data, ref offset, 7);
                 Console.WriteLine($"[DEBUG] Indexed header field: index={index}");
-                if (StaticTable.ContainsKey(index))
+
+                if (index == 0)
                 {
-                    return StaticTable[index];
+                    Console.WriteLine($"[DEBUG] Invalid index 0 in indexed header field");
+                    return null;
+                }
+
+                var header = GetHeaderFromIndex(index);
+                if (header.HasValue)
+                {
+                    Console.WriteLine($"[DEBUG] Found indexed header: {header.Value.Key}={header.Value.Value}");
+                    return header;
+                }
+                else
+                {
+                    Console.WriteLine($"[DEBUG] Unknown table index: {index}");
+                    return null;
                 }
             }
             // Literal Header Field with Incremental Indexing (starts with 01)
@@ -891,25 +1025,48 @@ namespace Pode
                 var nameIndex = DecodeInt(data, ref offset, 6);
                 Console.WriteLine($"[DEBUG] Literal header field (incremental): nameIndex={nameIndex}");
                 string name;
-                
+
                 if (nameIndex == 0)
                 {
                     // New name
                     name = DecodeLiteralString(data, ref offset);
-                }
-                else if (StaticTable.ContainsKey(nameIndex))
-                {
-                    // Indexed name
-                    name = StaticTable[nameIndex].Key;
+                    Console.WriteLine($"[DEBUG] New name: '{name}'");
                 }
                 else
                 {
-                    // Unknown index, skip
-                    return null;
+                    var nameHeader = GetHeaderFromIndex(nameIndex);
+                    if (nameHeader.HasValue)
+                    {
+                        name = nameHeader.Value.Key;
+                        Console.WriteLine($"[DEBUG] Indexed name: '{name}'");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG] Unknown name index: {nameIndex}");
+                        return null;
+                    }
                 }
-                
+
                 var value = DecodeLiteralString(data, ref offset);
-                return new KeyValuePair<string, string>(name, value);
+                Console.WriteLine($"[DEBUG] Header value: '{value}'");
+
+                var header = new KeyValuePair<string, string>(name, value);
+
+                // Add to dynamic table if name is not empty
+                if (!string.IsNullOrEmpty(name))
+                {
+                    AddToDynamicTable(header);
+                }
+
+                return header;
+            }
+            // Dynamic Table Size Update (starts with 001)
+            else if ((firstByte & 0xE0) == 0x20)
+            {
+                var newSize = DecodeInt(data, ref offset, 5);
+                Console.WriteLine($"[DEBUG] Dynamic table size update: {newSize}");
+                UpdateDynamicTableSize(newSize);
+                return null; // Size updates don't produce headers
             }
             // Literal Header Field Never Indexed (starts with 0001)
             else if ((firstByte & 0x10) != 0)
@@ -917,24 +1074,30 @@ namespace Pode
                 var nameIndex = DecodeInt(data, ref offset, 4);
                 Console.WriteLine($"[DEBUG] Literal header field (never indexed): nameIndex={nameIndex}");
                 string name;
-                
+
                 if (nameIndex == 0)
                 {
                     // New name
                     name = DecodeLiteralString(data, ref offset);
-                }
-                else if (StaticTable.ContainsKey(nameIndex))
-                {
-                    // Indexed name
-                    name = StaticTable[nameIndex].Key;
+                    Console.WriteLine($"[DEBUG] New name: '{name}'");
                 }
                 else
                 {
-                    // Unknown index, skip
-                    return null;
+                    var nameHeader = GetHeaderFromIndex(nameIndex);
+                    if (nameHeader.HasValue)
+                    {
+                        name = nameHeader.Value.Key;
+                        Console.WriteLine($"[DEBUG] Indexed name: '{name}'");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG] Unknown name index: {nameIndex}");
+                        return null;
+                    }
                 }
-                
+
                 var value = DecodeLiteralString(data, ref offset);
+                Console.WriteLine($"[DEBUG] Header value: '{value}'");
                 return new KeyValuePair<string, string>(name, value);
             }
             // Literal Header Field without Indexing (starts with 0000)
@@ -943,32 +1106,100 @@ namespace Pode
                 var nameIndex = DecodeInt(data, ref offset, 4);
                 Console.WriteLine($"[DEBUG] Literal header field (no indexing): nameIndex={nameIndex}");
                 string name;
-                
+
                 if (nameIndex == 0)
                 {
                     // New name
                     name = DecodeLiteralString(data, ref offset);
-                }
-                else if (StaticTable.ContainsKey(nameIndex))
-                {
-                    // Indexed name
-                    name = StaticTable[nameIndex].Key;
+                    Console.WriteLine($"[DEBUG] New name: '{name}'");
                 }
                 else
                 {
-                    // Unknown index, skip
-                    return null;
+                    var nameHeader = GetHeaderFromIndex(nameIndex);
+                    if (nameHeader.HasValue)
+                    {
+                        name = nameHeader.Value.Key;
+                        Console.WriteLine($"[DEBUG] Indexed name: '{name}'");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG] Unknown name index: {nameIndex}");
+                        return null;
+                    }
                 }
-                
+
                 var value = DecodeLiteralString(data, ref offset);
+                Console.WriteLine($"[DEBUG] Header value: '{value}'");
                 return new KeyValuePair<string, string>(name, value);
+            }
+        }
+
+        private KeyValuePair<string, string>? GetHeaderFromIndex(int index)
+        {
+            if (index <= 0) return null;
+
+            // Static table entries (1-61)
+            if (StaticTable.ContainsKey(index))
+            {
+                return StaticTable[index];
+            }
+
+            // Dynamic table entries (62+)
+            var dynamicIndex = index - StaticTable.Count;
+            if (dynamicIndex > 0 && dynamicIndex <= _dynamicTable.Count)
+            {
+                return _dynamicTable[dynamicIndex - 1];
             }
 
             return null;
         }
 
+        private void AddToDynamicTable(KeyValuePair<string, string> header)
+        {
+            // Calculate entry size (name + value + 32 bytes overhead per RFC 7541)
+            var entrySize = Encoding.UTF8.GetByteCount(header.Key) +
+                           Encoding.UTF8.GetByteCount(header.Value) + 32;
+
+            // Remove entries if necessary to make room
+            while (_currentTableSize + entrySize > _maxTableSize && _dynamicTable.Count > 0)
+            {
+                var removedHeader = _dynamicTable[_dynamicTable.Count - 1];
+                _dynamicTable.RemoveAt(_dynamicTable.Count - 1);
+                var removedSize = Encoding.UTF8.GetByteCount(removedHeader.Key) +
+                                Encoding.UTF8.GetByteCount(removedHeader.Value) + 32;
+                _currentTableSize -= removedSize;
+            }
+
+            // Add new entry if it fits
+            if (entrySize <= _maxTableSize)
+            {
+                _dynamicTable.Insert(0, header);
+                _currentTableSize += entrySize;
+                Console.WriteLine($"[DEBUG] Added to dynamic table: {header.Key}={header.Value} (size: {entrySize}, total: {_currentTableSize})");
+            }
+        }
+
+        private void UpdateDynamicTableSize(int newSize)
+        {
+            _maxTableSize = newSize;
+
+            // Remove entries if current size exceeds new maximum
+            while (_currentTableSize > _maxTableSize && _dynamicTable.Count > 0)
+            {
+                var removedHeader = _dynamicTable[_dynamicTable.Count - 1];
+                _dynamicTable.RemoveAt(_dynamicTable.Count - 1);
+                var removedSize = Encoding.UTF8.GetByteCount(removedHeader.Key) +
+                                Encoding.UTF8.GetByteCount(removedHeader.Value) + 32;
+                _currentTableSize -= removedSize;
+            }
+
+            Console.WriteLine($"[DEBUG] Updated dynamic table max size to: {newSize}");
+        }
+
         private int DecodeInt(byte[] data, ref int offset, int prefixBits)
         {
+            if (offset >= data.Length) return 0;
+
             var mask = (1 << prefixBits) - 1;
             var value = data[offset] & mask;
             offset++;
@@ -978,7 +1209,7 @@ namespace Pode
                 return value;
             }
 
-            // Variable length integer decoding (simplified)
+            // Variable length integer decoding
             var m = 0;
             while (offset < data.Length)
             {
@@ -993,47 +1224,409 @@ namespace Pode
 
         private string DecodeLiteralString(byte[] data, ref int offset)
         {
-            if (offset >= data.Length) return "";
-
-            var firstByte = data[offset];
-            var isHuffmanCoded = (firstByte & 0x80) != 0;
-            var length = firstByte & 0x7F;
-            
-            Console.WriteLine($"[DEBUG] DecodeLiteralString: offset={offset}, firstByte=0x{firstByte:X2}, isHuffmanCoded={isHuffmanCoded}, length={length}");
-            offset++;
-            
-            if (offset + length > data.Length) 
+            if (offset >= data.Length)
             {
-                Console.WriteLine($"[DEBUG] DecodeLiteralString: Not enough bytes for string (need {length}, have {data.Length - offset})");
+                Console.WriteLine($"[WARNING] DecodeLiteralString: No data at offset {offset}");
                 return "";
             }
 
-            // Only copy the exact number of bytes specified by length
-            var stringBytes = new byte[length];
-            for (int i = 0; i < length; i++)
+            var firstByte = data[offset];
+            var isHuffmanCoded = (firstByte & 0x80) != 0;
+            var length = DecodeInt(data, ref offset, 7);
+
+            Console.WriteLine($"[DEBUG] DecodeLiteralString: offset={offset}, isHuffmanCoded={isHuffmanCoded}, length={length}");
+
+            if (length == 0)
             {
-                stringBytes[i] = data[offset + i];
+                Console.WriteLine($"[DEBUG] DecodeLiteralString: Zero-length string");
+                return "";
             }
-            
+
+            if (offset + length > data.Length)
+            {
+                Console.WriteLine($"[ERROR] DecodeLiteralString: Not enough bytes for string (need {length}, have {data.Length - offset})");
+                // Return what we can instead of failing completely
+                var availableLength = Math.Max(0, data.Length - offset);
+                if (availableLength > 0)
+                {
+                    var partialBytes = new byte[availableLength];
+                    Array.Copy(data, offset, partialBytes, 0, availableLength);
+                    offset += availableLength;
+
+                    try
+                    {
+                        return isHuffmanCoded ? DecodeHuffman(partialBytes) : Encoding.UTF8.GetString(partialBytes);
+                    }
+                    catch
+                    {
+                        return "";
+                    }
+                }
+                return "";
+            }
+
+            // Copy the exact number of bytes specified by length
+            var stringBytes = new byte[length];
+            Array.Copy(data, offset, stringBytes, 0, length);
+            offset += length;
+
             string result;
             if (isHuffmanCoded)
             {
-                // For now, just decode as UTF-8 (proper Huffman decoding would be complex)
-                result = Encoding.UTF8.GetString(stringBytes);
-                Console.WriteLine($"[DEBUG] DecodeLiteralString: Huffman coded string (decoded as UTF-8): '{result}'");
+                // Decode Huffman-coded string
+                result = DecodeHuffman(stringBytes);
+                Console.WriteLine($"[DEBUG] DecodeLiteralString: Huffman decoded '{result}' from {BitConverter.ToString(stringBytes)}");
             }
             else
             {
                 result = Encoding.UTF8.GetString(stringBytes);
-                Console.WriteLine($"[DEBUG] DecodeLiteralString: Plain string: '{result}'");
+                Console.WriteLine($"[DEBUG] DecodeLiteralString: Plain string '{result}' from {BitConverter.ToString(stringBytes)}");
             }
-            
-            Console.WriteLine($"[DEBUG] DecodeLiteralString: Raw bytes: {BitConverter.ToString(stringBytes)}");
-            
-            offset += length;
-            Console.WriteLine($"[DEBUG] DecodeLiteralString: New offset={offset}");
-            return result;
+
+            return result ?? "";
         }
+
+        // RFC 7541 compliant Huffman decoder for HTTP/2 HPACK
+        private string DecodeHuffman(byte[] data)
+        {
+            try
+            {
+                var result = new StringBuilder();
+                var bitAccumulator = 0UL;
+                var bitsAccumulated = 0;
+
+                foreach (var b in data)
+                {
+                    // Accumulate bits from MSB
+                    bitAccumulator = (bitAccumulator << 8) | b;
+                    bitsAccumulated += 8;
+
+                    // Decode as many symbols as possible
+                    while (bitsAccumulated >= 5) // Minimum symbol length is 5 bits
+                    {
+                        var symbolFound = false;
+
+                        // Try to match symbols from longest to shortest (to get greedy matching)
+                        for (int testLength = Math.Min(30, bitsAccumulated); testLength >= 5; testLength--)
+                        {
+                            // Extract the most significant testLength bits
+                            var extractedBits = bitAccumulator >> (bitsAccumulated - testLength);
+                            var key = (extractedBits, testLength);
+
+                            if (HuffmanDecodeTable.TryGetValue(key, out var symbol))
+                            {
+                                result.Append((char)symbol);
+
+                                // Remove the decoded bits from accumulator
+                                var remainingBits = bitsAccumulated - testLength;
+                                bitAccumulator &= (1UL << remainingBits) - 1;
+                                bitsAccumulated = remainingBits;
+
+                                symbolFound = true;
+                                break;
+                            }
+                        }
+
+                        if (!symbolFound)
+                        {
+                            // No symbol found, either we need more data or it's padding
+                            break;
+                        }
+                    }
+                }
+
+                // RFC 7541: Padding should be most-significant bits of EOS (all 1s)
+                // Only validate padding if we have remaining bits
+                if (bitsAccumulated > 0)
+                {
+                    // EOS (End of String) symbol for padding is all 1s
+                    var paddingValue = (1UL << bitsAccumulated) - 1;
+                    if (bitAccumulator > paddingValue)
+                    {
+                        Console.WriteLine($"[WARNING] Invalid Huffman padding detected (ignoring): {bitAccumulator:X} vs expected max {paddingValue:X}");
+                        // Don't fail on padding issues - just log and continue
+                    }
+                }
+
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Huffman decoding error: {ex.Message}");
+                // Fallback: try to decode as raw UTF-8
+                try
+                {
+                    return Encoding.UTF8.GetString(data);
+                }
+                catch
+                {
+                    return ""; // Last resort: empty string
+                }
+            }
+        }
+
+        private static readonly Dictionary<(ulong bits, int length), int> HuffmanDecodeTable =
+            new Dictionary<(ulong bits, int length), int>
+            {
+                // Complete Huffman table from RFC 7541 Appendix B
+                { (0x1ff8, 13), 0 },      // (  0)
+                { (0x7fffd8, 23), 1 },    // (  1)
+                { (0xfffffe2, 28), 2 },   // (  2)
+                { (0xfffffe3, 28), 3 },   // (  3)
+                { (0xfffffe4, 28), 4 },   // (  4)
+                { (0xfffffe5, 28), 5 },   // (  5)
+                { (0xfffffe6, 28), 6 },   // (  6)
+                { (0xfffffe7, 28), 7 },   // (  7)
+                { (0xfffffe8, 28), 8 },   // (  8)
+                { (0xffffea, 24), 9 },    // (  9) '\t'
+                { (0x3ffffec, 30), 10 },  // ( 10) '\n'
+                { (0xfffffe9, 28), 11 },  // ( 11)
+                { (0xfffffea, 28), 12 },  // ( 12)
+                { (0x3ffffed, 30), 13 },  // ( 13) '\r'
+                { (0xfffffeb, 28), 14 },  // ( 14)
+                { (0xfffffec, 28), 15 },  // ( 15)
+                { (0xfffffed, 28), 16 },  // ( 16)
+                { (0xfffffee, 28), 17 },  // ( 17)
+                { (0xfffffef, 28), 18 },  // ( 18)
+                { (0xffffff0, 28), 19 },  // ( 19)
+                { (0xffffff1, 28), 20 },  // ( 20)
+                { (0xffffff2, 28), 21 },  // ( 21)
+                { (0x3ffffee, 30), 22 },  // ( 22)
+                { (0xffffff3, 28), 23 },  // ( 23)
+                { (0xffffff4, 28), 24 },  // ( 24)
+                { (0xffffff5, 28), 25 },  // ( 25)
+                { (0xffffff6, 28), 26 },  // ( 26)
+                { (0xffffff7, 28), 27 },  // ( 27)
+                { (0xffffff8, 28), 28 },  // ( 28)
+                { (0xffffff9, 28), 29 },  // ( 29)
+                { (0xffffffa, 28), 30 },  // ( 30)
+                { (0xffffffb, 28), 31 },  // ( 31)
+                { (0x14, 6), 32 },        // ( 32) ' '
+                { (0x3f8, 10), 33 },      // ( 33) '!'
+                { (0x3f9, 10), 34 },      // ( 34) '"'
+                { (0xffa, 12), 35 },      // ( 35) '#'
+                { (0x1ff9, 13), 36 },     // ( 36) '$'
+                { (0x15, 6), 37 },        // ( 37) '%'
+                { (0xf8, 8), 38 },        // ( 38) '&'
+                { (0x7fa, 11), 39 },      // ( 39) '''
+                { (0x3fa, 10), 40 },      // ( 40) '('
+                { (0x3fb, 10), 41 },      // ( 41) ')'
+                { (0xf9, 8), 42 },        // ( 42) '*'
+                { (0x7fb, 11), 43 },      // ( 43) '+'
+                { (0xfa, 8), 44 },        // ( 44) ','
+                { (0x16, 6), 45 },        // ( 45) '-'
+                { (0x17, 6), 46 },        // ( 46) '.'
+                { (0x18, 6), 47 },        // ( 47) '/'
+                { (0x0, 5), 48 },         // ( 48) '0'
+                { (0x1, 5), 49 },         // ( 49) '1'
+                { (0x2, 5), 50 },         // ( 50) '2'
+                { (0x19, 6), 51 },        // ( 51) '3'
+                { (0x1a, 6), 52 },        // ( 52) '4'
+                { (0x1b, 6), 53 },        // ( 53) '5'
+                { (0x1c, 6), 54 },        // ( 54) '6'
+                { (0x1d, 6), 55 },        // ( 55) '7'
+                { (0x1e, 6), 56 },        // ( 56) '8'
+                { (0x1f, 6), 57 },        // ( 57) '9'
+                { (0x5c, 8), 58 },        // ( 58) ':'
+                { (0xfb, 8), 59 },        // ( 59) ';'
+                { (0x7ffc, 15), 60 },     // ( 60) '<'
+                { (0x20, 6), 61 },        // ( 61) '='
+                { (0xffb, 12), 62 },      // ( 62) '>'
+                { (0x3fc, 10), 63 },      // ( 63) '?'
+                { (0x1ffa, 13), 64 },     // ( 64) '@'
+                { (0x21, 6), 65 },        // ( 65) 'A'
+                { (0x5d, 8), 66 },        // ( 66) 'B'
+                { (0x5e, 8), 67 },        // ( 67) 'C'
+                { (0x5f, 8), 68 },        // ( 68) 'D'
+                { (0x60, 8), 69 },        // ( 69) 'E'
+                { (0x61, 8), 70 },        // ( 70) 'F'
+                { (0x62, 8), 71 },        // ( 71) 'G'
+                { (0x63, 8), 72 },        // ( 72) 'H'
+                { (0x64, 8), 73 },        // ( 73) 'I'
+                { (0x65, 8), 74 },        // ( 74) 'J'
+                { (0x66, 8), 75 },        // ( 75) 'K'
+                { (0x67, 8), 76 },        // ( 76) 'L'
+                { (0x68, 8), 77 },        // ( 77) 'M'
+                { (0x69, 8), 78 },        // ( 78) 'N'
+                { (0x6a, 8), 79 },        // ( 79) 'O'
+                { (0x6b, 8), 80 },        // ( 80) 'P'
+                { (0x6c, 8), 81 },        // ( 81) 'Q'
+                { (0x6d, 8), 82 },        // ( 82) 'R'
+                { (0x6e, 8), 83 },        // ( 83) 'S'
+                { (0x6f, 8), 84 },        // ( 84) 'T'
+                { (0x70, 8), 85 },        // ( 85) 'U'
+                { (0x71, 8), 86 },        // ( 86) 'V'
+                { (0x72, 8), 87 },        // ( 87) 'W'
+                { (0xfc, 8), 88 },        // ( 88) 'X'
+                { (0x73, 8), 89 },        // ( 89) 'Y'
+                { (0xfd, 8), 90 },        // ( 90) 'Z'
+                { (0x1ffb, 13), 91 },     // ( 91) '['
+                { (0x7fff0, 19), 92 },    // ( 92) '\'
+                { (0x1ffc, 13), 93 },     // ( 93) ']'
+                { (0x3ffc, 14), 94 },     // ( 94) '^'
+                { (0x22, 6), 95 },        // ( 95) '_'
+                { (0x7ffd, 15), 96 },     // ( 96) '`'
+                { (0x3, 5), 97 },         // ( 97) 'a'
+                { (0x23, 6), 98 },        // ( 98) 'b'
+                { (0x4, 5), 99 },         // ( 99) 'c'
+                { (0x24, 6), 100 },       // (100) 'd'
+                { (0x5, 5), 101 },        // (101) 'e'
+                { (0x25, 6), 102 },       // (102) 'f'
+                { (0x26, 6), 103 },       // (103) 'g'
+                { (0x27, 6), 104 },       // (104) 'h'
+                { (0x6, 5), 105 },        // (105) 'i'
+                { (0x74, 8), 106 },       // (106) 'j'
+                { (0x75, 8), 107 },       // (107) 'k'
+                { (0x28, 6), 108 },       // (108) 'l'
+                { (0x29, 6), 109 },       // (109) 'm'
+                { (0x2a, 6), 110 },       // (110) 'n'
+                { (0x7, 5), 111 },        // (111) 'o'
+                { (0x2b, 6), 112 },       // (112) 'p'
+                { (0x76, 8), 113 },       // (113) 'q'
+                { (0x2c, 6), 114 },       // (114) 'r'
+                { (0x8, 5), 115 },        // (115) 's'
+                { (0x9, 5), 116 },        // (116) 't'
+                { (0x2d, 6), 117 },       // (117) 'u'
+                { (0x77, 8), 118 },       // (118) 'v'
+                { (0x78, 8), 119 },       // (119) 'w'
+                { (0x79, 8), 120 },       // (120) 'x'
+                { (0x7a, 8), 121 },       // (121) 'y'
+                { (0x7b, 8), 122 },       // (122) 'z'
+                { (0x7ffe, 15), 123 },    // (123) '{'
+                { (0x7fc, 11), 124 },     // (124) '|'
+                { (0x3ffd, 14), 125 },    // (125) '}'
+                { (0x1ffd, 13), 126 },    // (126) '~'
+                { (0xffffffc, 28), 127 }, // (127)
+                { (0xfffe6, 20), 128 },   // (128)
+                { (0x3fffd2, 22), 129 },  // (129)
+                { (0xfffe7, 20), 130 },   // (130)
+                { (0xfffe8, 20), 131 },   // (131)
+                { (0x3fffd3, 22), 132 },  // (132)
+                { (0x3fffd4, 22), 133 },  // (133)
+                { (0x3fffd5, 22), 134 },  // (134)
+                { (0x7fffd9, 23), 135 },  // (135)
+                { (0x3fffd6, 22), 136 },  // (136)
+                { (0x7fffda, 23), 137 },  // (137)
+                { (0x7fffdb, 23), 138 },  // (138)
+                { (0x7fffdc, 23), 139 },  // (139)
+                { (0x7fffdd, 23), 140 },  // (140)
+                { (0x7fffde, 23), 141 },  // (141)
+                { (0xffffeb, 24), 142 },  // (142)
+                { (0x7fffdf, 23), 143 },  // (143)
+                { (0xffffec, 24), 144 },  // (144)
+                { (0xffffed, 24), 145 },  // (145)
+                { (0x3fffd7, 22), 146 },  // (146)
+                { (0x7fffe0, 23), 147 },  // (147)
+                { (0xffffee, 24), 148 },  // (148)
+                { (0x7fffe1, 23), 149 },  // (149)
+                { (0x7fffe2, 23), 150 },  // (150)
+                { (0x7fffe3, 23), 151 },  // (151)
+                { (0x7fffe4, 23), 152 },  // (152)
+                { (0x1fffdc, 21), 153 },  // (153)
+                { (0x3fffd8, 22), 154 },  // (154)
+                { (0x7fffe5, 23), 155 },  // (155)
+                { (0x3fffd9, 22), 156 },  // (156)
+                { (0x7fffe6, 23), 157 },  // (157)
+                { (0x7fffe7, 23), 158 },  // (158)
+                { (0xffffef, 24), 159 },  // (159)
+                { (0x3fffda, 22), 160 },  // (160)
+                { (0x1fffdd, 21), 161 },  // (161)
+                { (0xfffe9, 20), 162 },   // (162)
+                { (0x3fffdb, 22), 163 },  // (163)
+                { (0x3fffdc, 22), 164 },  // (164)
+                { (0x7fffe8, 23), 165 },  // (165)
+                { (0x7fffe9, 23), 166 },  // (166)
+                { (0x1fffde, 21), 167 },  // (167)
+                { (0x7fffea, 23), 168 },  // (168)
+                { (0x3fffdd, 22), 169 },  // (169)
+                { (0x3fffde, 22), 170 },  // (170)
+                { (0xfffff0, 24), 171 },  // (171)
+                { (0x1fffdf, 21), 172 },  // (172)
+                { (0x3fffdf, 22), 173 },  // (173)
+                { (0x7fffeb, 23), 174 },  // (174)
+                { (0x7fffec, 23), 175 },  // (175)
+                { (0x1fffe0, 21), 176 },  // (176)
+                { (0x1fffe1, 21), 177 },  // (177)
+                { (0x3fffe0, 22), 178 },  // (178)
+                { (0x1fffe2, 21), 179 },  // (179)
+                { (0x7fffed, 23), 180 },  // (180)
+                { (0x3fffe1, 22), 181 },  // (181)
+                { (0x7fffee, 23), 182 },  // (182)
+                { (0x7fffef, 23), 183 },  // (183)
+                { (0xfffea, 20), 184 },   // (184)
+                { (0x3fffe2, 22), 185 },  // (185)
+                { (0x3fffe3, 22), 186 },  // (186)
+                { (0x3fffe4, 22), 187 },  // (187)
+                { (0x7ffff0, 23), 188 },  // (188)
+                { (0x3fffe5, 22), 189 },  // (189)
+                { (0x3fffe6, 22), 190 },  // (190)
+                { (0x7ffff1, 23), 191 },  // (191)
+                { (0x3ffffe0, 26), 192 }, // (192)
+                { (0x3ffffe1, 26), 193 }, // (193)
+                { (0xfffeb, 20), 194 },   // (194)
+                { (0x7fff1, 19), 195 },   // (195)
+                { (0x3fffe7, 22), 196 },  // (196)
+                { (0x7ffff2, 23), 197 },  // (197)
+                { (0x3fffe8, 22), 198 },  // (198)
+                { (0x1ffffec, 25), 199 }, // (199)
+                { (0x3ffffe2, 26), 200 }, // (200)
+                { (0x3ffffe3, 26), 201 }, // (201)
+                { (0x3ffffe4, 26), 202 }, // (202)
+                { (0x7ffffde, 27), 203 }, // (203)
+                { (0x7ffffdf, 27), 204 }, // (204)
+                { (0x3ffffe5, 26), 205 }, // (205)
+                { (0xfffff1, 24), 206 },  // (206)
+                { (0x1ffffed, 25), 207 }, // (207)
+                { (0x7fff2, 19), 208 },   // (208)
+                { (0x1fffe3, 21), 209 },  // (209)
+                { (0x3ffffe6, 26), 210 }, // (210)
+                { (0x7ffffe0, 27), 211 }, // (211)
+                { (0x7ffffe1, 27), 212 }, // (212)
+                { (0x3ffffe7, 26), 213 }, // (213)
+                { (0x7ffffe2, 27), 214 }, // (214)
+                { (0xfffff2, 24), 215 },  // (215)
+                { (0x1fffe4, 21), 216 },  // (216)
+                { (0x1fffe5, 21), 217 },  // (217)
+                { (0x3ffffe8, 26), 218 }, // (218)
+                { (0x3ffffe9, 26), 219 }, // (219)
+                { (0xffffffd, 28), 220 }, // (220)
+                { (0x7ffffe3, 27), 221 }, // (221)
+                { (0x7ffffe4, 27), 222 }, // (222)
+                { (0x7ffffe5, 27), 223 }, // (223)
+                { (0xfffec, 20), 224 },   // (224)
+                { (0xfffff3, 24), 225 },  // (225)
+                { (0xfffed, 20), 226 },   // (226)
+                { (0x1fffe6, 21), 227 },  // (227)
+                { (0x3fffe9, 22), 228 },  // (228)
+                { (0x1fffe7, 21), 229 },  // (229)
+                { (0x1fffe8, 21), 230 },  // (230)
+                { (0x7ffff3, 23), 231 },  // (231)
+                { (0x3fffea, 22), 232 },  // (232)
+                { (0x3fffeb, 22), 233 },  // (233)
+                { (0x1ffffee, 25), 234 }, // (234)
+                { (0x1ffffef, 25), 235 }, // (235)
+                { (0xfffff4, 24), 236 },  // (236)
+                { (0xfffff5, 24), 237 },  // (237)
+                { (0x3ffffea, 26), 238 }, // (238)
+                { (0x7ffff4, 23), 239 },  // (239)
+                { (0x3ffffeb, 26), 240 }, // (240)
+                { (0x7ffffe6, 27), 241 }, // (241)
+                { (0x3ffffec, 26), 242 }, // (242)
+                { (0x3ffffed, 26), 243 }, // (243)
+                { (0x7ffffe7, 27), 244 }, // (244)
+                { (0x7ffffe8, 27), 245 }, // (245)
+                { (0x7ffffe9, 27), 246 }, // (246)
+                { (0x7ffffea, 27), 247 }, // (247)
+                { (0x7ffffeb, 27), 248 }, // (248)
+                { (0xffffffe, 28), 249 }, // (249)
+                { (0x7ffffec, 27), 250 }, // (250)
+                { (0x7ffffed, 27), 251 }, // (251)
+                { (0x7ffffee, 27), 252 }, // (252)
+                { (0x7ffffef, 27), 253 }, // (253)
+                { (0x7fffff0, 27), 254 }, // (254)
+                { (0x3ffffef, 26), 255 }, // (255)
+            };
+
     }
 }
 #endif

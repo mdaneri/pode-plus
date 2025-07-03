@@ -34,7 +34,9 @@ namespace Pode
 
         private bool IsRequestLineValid;
         private MemoryStream BodyStream;
-
+#if !NETSTANDARD2_0
+        private bool _hasCheckedForHttp2Upgrade = false;
+#endif
         public string SseClientId { get; private set; }
         public string SseClientName { get; private set; }
         public string SseClientGroup { get; private set; }
@@ -145,6 +147,43 @@ namespace Pode
                 return true;
             }
 
+#if !NETSTANDARD2_0
+            // Check for HTTP/2 upgrade after SSL handshake
+            if (IsSsl && !_hasCheckedForHttp2Upgrade)
+            {
+                _hasCheckedForHttp2Upgrade = true;
+                Console.WriteLine("[DEBUG] 🔄 Checking for post-SSL HTTP/2 upgrade in HTTP/1.1 parser");
+
+                // Check if ALPN negotiated HTTP/2
+                bool alpnNegotiatedHttp2 = Context.Data.ContainsKey("AlpnNegotiatedHttp2") && (bool)Context.Data["AlpnNegotiatedHttp2"];
+
+                // Check if this looks like HTTP/2 preface
+                var isHttp2Preface = bytes.Length >= 3 &&
+                    System.Text.Encoding.ASCII.GetString(bytes, 0, 3) == "PRI";
+
+                Console.WriteLine($"[DEBUG] ALPN negotiated HTTP/2: {alpnNegotiatedHttp2}, Has HTTP/2 preface: {isHttp2Preface}");
+
+                if (alpnNegotiatedHttp2 && isHttp2Preface)
+                {
+                    Console.WriteLine("[DEBUG] ✅ Delegating to HTTP/2 parser after detecting ALPN + preface");
+                    PodeHelpers.WriteErrorMessage("ALPN negotiated HTTP/2 and HTTP/2 preface detected, switching to HTTP/2 processing", Context.Listener, PodeLoggingLevel.Debug, Context);
+
+                    // Store the preface data so the HTTP/2 parser can use it
+                    Context.Data["Http2PrefaceData"] = bytes;
+                    Console.WriteLine($"[DEBUG] Stored {bytes.Length} bytes of preface data for HTTP/2 parser");
+
+                    // This is a more elegant approach: throw an exception that the context can catch
+                    // and use to switch to HTTP/2 parser. This avoids complex state copying.
+                    throw new PodeRequestException("HTTP_2_UPGRADE_REQUIRED", 422);
+                }
+                else if (!alpnNegotiatedHttp2 && isHttp2Preface)
+                {
+                    Console.WriteLine("[DEBUG] ❌ HTTP/2 preface without ALPN negotiation - this is an error");
+                    throw new PodeRequestException("HTTP/2 connection preface detected but ALPN did not negotiate HTTP/2. This indicates a client or protocol error.", 400);
+                }
+            }
+#endif
+
             // new line char
             var newline = Array.IndexOf(bytes, PodeHelpers.CARRIAGE_RETURN_BYTE) == -1
                 ? PodeHelpers.NEW_LINE_UNIX
@@ -201,7 +240,18 @@ namespace Pode
             if (HttpMethod == "PRI")
             {
 #if !NETSTANDARD2_0
-                throw new PodeRequestException("HTTP/2 connection preface detected in HTTP/1.1 parser. This indicates a protocol detection issue.", 400);
+                // Check if ALPN actually negotiated HTTP/2
+                if (Context.Data.ContainsKey("AlpnNegotiatedHttp2") && (bool)Context.Data["AlpnNegotiatedHttp2"])
+                {
+                    // ALPN negotiated HTTP/2, but we're in the HTTP/1.1 parser
+                    // This is the timing issue we're trying to fix
+                    throw new PodeRequestException("HTTP/2 connection detected after ALPN negotiation. Request should be handled by HTTP/2 parser.", 422);
+                }
+                else
+                {
+                    // No HTTP/2 ALPN negotiation, this is an error
+                    throw new PodeRequestException("HTTP/2 connection preface detected in HTTP/1.1 parser. This indicates a protocol detection issue.", 400);
+                }
 #else
                 throw new PodeRequestException("HTTP/2 is not supported in this version. Please use HTTP/1.1.", 400);
 #endif

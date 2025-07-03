@@ -26,15 +26,15 @@ namespace Pode
 
         // SSL/TLS properties
         public bool IsSsl { get; private set; }
-        public bool SslUpgraded { get; private set; }
+        public bool SslUpgraded { get; protected set; }
         public bool IsKeepAlive { get; protected set; }
 
         // Flags indicating request characteristics and handling status
         public virtual bool CloseImmediately => false;
         public virtual bool IsProcessable => true;
         // Input stream for incoming request data
-        public Stream InputStream { get; private set; }
-        public PodeStreamState State { get; private set; }
+        public Stream InputStream { get; internal set; }
+        public PodeStreamState State { get; protected set; }
         public bool IsOpen => State == PodeStreamState.Open;
 
         // Certificate properties
@@ -113,12 +113,20 @@ namespace Pode
         /// </summary>
         /// <param name="cancellationToken">Token to monitor for cancellation requests.</param>
         /// <returns>A Task representing the async operation.</returns>
-        public async Task Open(CancellationToken cancellationToken)
+        public virtual async Task Open(CancellationToken cancellationToken)
         {
             try
             {
-                // Open the input stream for the socket
-                InputStream = new NetworkStream(Socket, true);
+                // Check if InputStream is already set (e.g., transferred from parser switching)
+                if (InputStream == null)
+                {
+                    // Open the input stream for the socket
+                    InputStream = new NetworkStream(Socket, true);
+                }
+                else
+                {
+                    Console.WriteLine("[DEBUG] InputStream already set, skipping NetworkStream creation");
+                }
 
                 // Upgrade to SSL if necessary
                 if (!IsSsl || TlsMode == PodeTlsMode.Explicit)
@@ -177,6 +185,13 @@ namespace Pode
                 {
 #if !NETSTANDARD2_0
                     // Configure ALPN protocols for HTTP/2 support
+                try
+                {
+                    Console.WriteLine("[DEBUG] Creating SSL server authentication options with ALPN");
+                    Console.WriteLine($"[DEBUG] Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+                    Console.WriteLine($"[DEBUG] OS: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+                    Console.WriteLine($"[DEBUG] Certificate: {Certificate?.Subject}");
+
                     var serverOptions = new SslServerAuthenticationOptions
                     {
                         ServerCertificate = Certificate,
@@ -190,33 +205,60 @@ namespace Pode
                         }
                     };
 
+                    Console.WriteLine($"[DEBUG] ALPN protocols configured: Http2, Http11");
+                    Console.WriteLine($"[DEBUG] SSL protocols enabled: {Protocols}");
+                    Console.WriteLine($"[DEBUG] Starting SSL authentication...");
+
                     // Authenticate the SSL stream with ALPN support
                     await ssl.AuthenticateAsServerAsync(serverOptions, cancellationToken)
                         .ConfigureAwait(false);
 
+                    Console.WriteLine("[DEBUG] SSL authentication completed successfully");
+                    Console.WriteLine($"[DEBUG] SSL Protocol: {ssl.SslProtocol}");
+                    Console.WriteLine($"[DEBUG] Cipher Algorithm: {ssl.CipherAlgorithm}");
+                    Console.WriteLine($"[DEBUG] Is Authenticated: {ssl.IsAuthenticated}");
+                    Console.WriteLine($"[DEBUG] Is Encrypted: {ssl.IsEncrypted}");
+
                     // Check which protocol was negotiated
                     var negotiatedProtocol = ssl.NegotiatedApplicationProtocol;
+                    Console.WriteLine($"[DEBUG] Negotiated ALPN protocol: '{negotiatedProtocol}'");
+                    Console.WriteLine($"[DEBUG] ALPN protocol bytes: {(negotiatedProtocol.Protocol.Length > 0 ? BitConverter.ToString(negotiatedProtocol.Protocol.ToArray()) : "EMPTY")}");
+
                     if (negotiatedProtocol == SslApplicationProtocol.Http2)
                     {
+                        Console.WriteLine("[DEBUG] ✅ HTTP/2 protocol negotiated via ALPN!");
                         PodeHelpers.WriteErrorMessage("HTTP/2 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
                         // Set a flag to indicate HTTP/2 was negotiated
                         Context.Data["AlpnNegotiatedHttp2"] = true;
                     }
                     else if (negotiatedProtocol == SslApplicationProtocol.Http11)
                     {
+                        Console.WriteLine("[DEBUG] ⚠️ HTTP/1.1 protocol negotiated via ALPN");
                         PodeHelpers.WriteErrorMessage("HTTP/1.1 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
                         Context.Data["AlpnNegotiatedHttp2"] = false;
                     }
                     else
                     {
+                        Console.WriteLine($"[DEBUG] ❌ Unexpected ALPN protocol: {negotiatedProtocol}");
                         PodeHelpers.WriteErrorMessage($"Unexpected ALPN protocol: {negotiatedProtocol}", Context.Listener, PodeLoggingLevel.Warning, Context);
                         Context.Data["AlpnNegotiatedHttp2"] = false;
                     }
-#else
-                    // Fallback to HTTP/1.1 only authentication for netstandard2.0
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DEBUG] ❌ SSL authentication failed: {ex.Message}");
+                    Console.WriteLine($"[DEBUG] Exception type: {ex.GetType().Name}");
+                    Console.WriteLine($"[DEBUG] Falling back to basic SSL without ALPN");
+
+                    // Fallback to basic SSL without ALPN
                     await ssl.AuthenticateAsServerAsync(Certificate, AllowClientCertificate, Protocols, false)
-                        .ConfigureAwait(false);
-                    Context.Data["AlpnNegotiatedHttp2"] = false;
+                        .ConfigureAwait(false);                    Context.Data["AlpnNegotiatedHttp2"] = false;
+                }
+#else
+                // Fallback to HTTP/1.1 only authentication for netstandard2.0
+                await ssl.AuthenticateAsServerAsync(Certificate, AllowClientCertificate, Protocols, false)
+                    .ConfigureAwait(false);
+                Context.Data["AlpnNegotiatedHttp2"] = false;
 #endif
                 }
 
@@ -369,6 +411,11 @@ namespace Pode
             catch (IOException ex)
             {
                 PodeHelpers.WriteException(ex, Context.Listener, PodeLoggingLevel.Verbose);
+            }
+            catch (PodeRequestException ex) when (ex.Message == "HTTP_2_UPGRADE_REQUIRED")
+            {
+                // Re-throw HTTP/2 upgrade exceptions so the context can handle them
+                throw;
             }
             catch (PodeRequestException ex)
             {

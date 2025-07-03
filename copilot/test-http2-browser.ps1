@@ -36,28 +36,28 @@ function Start-PodeServer {
     }
 
     Write-ColorOutput "Starting FileBrowser server on $Host`:$Port..." $colors.Info
-    
+
     # Start the server as a background job
     $currentPath = $PWD.Path
     $serverPort = $Port
-    
+
     $serverJob = Start-Job -ScriptBlock {
         param($Path, $Port)
         Set-Location $Path
         # Dot source the FileBrowser example
         . "$Path\examples\FileBrowser\FileBrowser.ps1" -Port $Port -Verbose
     } -ArgumentList $currentPath, $serverPort
-    
+
     # Wait for the server to initialize
     Start-Sleep -Seconds 3
-    
+
     # Check if the job is running
     $jobStatus = Get-Job -Id $serverJob.Id | Select-Object -ExpandProperty State
     if ($jobStatus -ne "Running") {
         Write-ColorOutput "Failed to start the server. Check for errors." $colors.Error
         return $false
     }
-    
+
     Write-ColorOutput "Server started successfully with job ID: $($serverJob.Id)" $colors.Success
     return $serverJob.Id
 }
@@ -68,11 +68,11 @@ function Test-Http2WithBrowser {
     )
 
     $url = "http://$Host`:$Port"
-    
+
     Write-ColorOutput "`n=========================================================" $colors.Header
     Write-ColorOutput "  TESTING HTTP/2 WITH BROWSER" $colors.Header
     Write-ColorOutput "=========================================================" $colors.Header
-    
+
     Write-ColorOutput "`nServer Information:" $colors.Highlight
     Write-ColorOutput "- URL: $url" $colors.Info
     Write-ColorOutput "- Job ID: $ServerJobId" $colors.Info
@@ -81,9 +81,13 @@ function Test-Http2WithBrowser {
     Write-ColorOutput "1. Opening browser to $url" $colors.Info
     Write-ColorOutput "2. To verify HTTP/2 is working:" $colors.Info
     Write-ColorOutput "   - In Chrome/Edge: Open DevTools (F12) > Network tab" $colors.Info
-    Write-ColorOutput "   - Look for 'Protocol' column (add it if not visible)" $colors.Info 
+    Write-ColorOutput "   - Look for 'Protocol' column (add it if not visible)" $colors.Info
     Write-ColorOutput "   - Reload the page and check if requests show 'h2' protocol" $colors.Info
     Write-ColorOutput "   - If 'h2' appears, HTTP/2 is working correctly!" $colors.Success
+
+    # IMPORTANT NOTE: This test uses HTTP (not HTTPS), which means browsers will NOT use HTTP/2
+    # Modern browsers require HTTPS for HTTP/2. Use test-http2-browser-https.ps1 for proper browser testing.
+    # This script is useful for testing the HTTP/2 protocol implementation with tools, not browsers.
 
     # Try to open the browser
     try {
@@ -100,13 +104,13 @@ function Test-Http2WithBrowser {
             # Try to use the provided path
             Start-Process $BrowserPath -ArgumentList "$url" -ErrorAction SilentlyContinue
         }
-        
+
         Write-ColorOutput "`nBrowser launched. Checking the page in browser..." $colors.Success
     }
     catch {
         Write-ColorOutput "`nCouldn't automatically open browser. Please manually navigate to: $url" $colors.Warning
     }
-    
+
     # Now run our HTTP/2 verification script
     Write-ColorOutput "`nRunning HTTP/2 verification test..." $colors.Info
     & "$PSScriptRoot\test-http2-verify.ps1" -HostName $Host -Port $Port
@@ -116,11 +120,11 @@ function Stop-PodeServer {
     param(
         [int]$JobId
     )
-    
+
     Write-ColorOutput "`n=========================================================" $colors.Header
     Write-ColorOutput "  STOPPING SERVER" $colors.Header
     Write-ColorOutput "=========================================================" $colors.Header
-    
+
     try {
         Stop-Job -Id $JobId
         Remove-Job -Id $JobId -Force
@@ -142,7 +146,7 @@ if ($jobId) {
     try {
         # Test with browser
         Test-Http2WithBrowser -ServerJobId $jobId
-        
+
         # Wait for user input before stopping
         Write-ColorOutput "`nPress Enter to stop the server and exit..." $colors.Highlight
         Read-Host | Out-Null
