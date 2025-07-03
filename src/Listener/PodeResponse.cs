@@ -91,7 +91,7 @@ namespace Pode
 
         /// <summary>
         /// PodeResponse constructor for testing purposes.
-        /// This constructor initializes the response with default headers and an empty output stream.  
+        /// This constructor initializes the response with default headers and an empty output stream.
         /// </summary>
         public PodeResponse()
         {
@@ -155,13 +155,13 @@ namespace Pode
                 return;
             }
 
-            PodeHelpers.WriteErrorMessage($"Sending response", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            PodeLogger.LogMessage($"Sending response", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             try
             {
                 await SendHeaders(Context.IsTimeout).ConfigureAwait(false);
                 await SendBody(Context.IsTimeout).ConfigureAwait(false);
-                PodeHelpers.WriteErrorMessage($"Response sent", Context.Listener, PodeLoggingLevel.Verbose, Context);
+                PodeLogger.LogMessage($"Response sent", Context.Listener, PodeLoggingLevel.Verbose, Context);
             }
             catch (OperationCanceledException) { }
             catch (IOException) { }
@@ -171,7 +171,7 @@ namespace Pode
             }
             catch (Exception ex)
             {
-                PodeHelpers.WriteException(ex, Context.Listener);
+                PodeLogger.LogException(ex, Context.Listener);
                 throw;
             }
             finally
@@ -191,13 +191,13 @@ namespace Pode
                 return;
             }
 
-            PodeHelpers.WriteErrorMessage($"Sending response timed-out", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            PodeLogger.LogMessage($"Sending response timed-out", Context.Listener, PodeLoggingLevel.Verbose, Context);
             StatusCode = 408;
 
             try
             {
                 await SendHeaders(true).ConfigureAwait(false);
-                PodeHelpers.WriteErrorMessage($"Response timed-out sent", Context.Listener, PodeLoggingLevel.Verbose, Context);
+                PodeLogger.LogMessage($"Response timed-out sent", Context.Listener, PodeLoggingLevel.Verbose, Context);
             }
             catch (OperationCanceledException) { }
             catch (IOException) { }
@@ -207,7 +207,7 @@ namespace Pode
             }
             catch (Exception ex)
             {
-                PodeHelpers.WriteException(ex, Context.Listener);
+                PodeLogger.LogException(ex, Context.Listener);
                 throw;
             }
             finally
@@ -553,7 +553,7 @@ namespace Pode
             }
             catch (Exception ex)
             {
-                PodeHelpers.WriteException(ex, Context.Listener);
+                PodeLogger.LogException(ex, Context.Listener);
                 throw;
             }
         }
@@ -661,7 +661,7 @@ namespace Pode
                 }
                 catch (Exception ex)
                 {
-                    PodeHelpers.WriteException(ex, Context.Listener);
+                    PodeLogger.LogException(ex, Context.Listener);
                     throw;
                 }
                 finally
@@ -1173,7 +1173,7 @@ namespace Pode
 
             // no unmanaged resources to free
 
-            PodeHelpers.WriteErrorMessage($"Response disposed", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            PodeLogger.LogMessage($"Response disposed", Context.Listener, PodeLoggingLevel.Verbose, Context);
             IsDisposed = true;
         }
 

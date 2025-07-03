@@ -1,5 +1,58 @@
 using namespace Pode
 
+<#
+.SYNOPSIS
+    Initializes a new Pode context with various server configurations.
+
+.DESCRIPTION
+    This function creates and initializes a new Pode context object with server configurations, including threading, schedules, tasks, logging, and more.
+    It ensures that essential configurations are set, and it can run in different environments such as serverless or IIS.
+
+.PARAMETER ScriptBlock
+    The script block to be executed within the Pode context.
+
+.PARAMETER FilePath
+    The file path to the script block.
+
+.PARAMETER Threads
+    The number of threads to be used. Default is 1.
+
+.PARAMETER Interval
+    The interval for server operations. Default is 0.
+
+.PARAMETER ServerRoot
+    The root path for the server.
+
+.PARAMETER Name
+    The name of the server. If not provided, a random name will be generated.
+
+.PARAMETER ServerlessType
+    Specifies if the server is running in a serverless context.
+
+.PARAMETER StatusPageExceptions
+    Configuration for displaying exceptions on the status page.
+
+.PARAMETER ListenerType
+    The type of listener to be used by the server.
+
+.PARAMETER EnablePool
+    An array of pools to enable, such as 'timers', 'tasks', 'schedules', and 'websockets'.
+
+.PARAMETER DisableTermination
+    A switch to disable server termination.
+
+.PARAMETER Quiet
+    A switch to enable quiet mode, suppressing certain outputs.
+
+.PARAMETER EnableBreakpoints
+    A switch to enable debugging breakpoints.
+
+.PARAMETER Daemon
+    Configures the server to run as a daemon with minimal console interaction and output.
+
+.EXAMPLE
+    $context = New-PodeContext -ScriptBlock $script -FilePath 'path/to/file' -Threads 4 -ServerRoot 'path/to/root'
+#>
 function New-PodeContext {
     [CmdletBinding()]
     param(
@@ -79,24 +132,24 @@ function New-PodeContext {
     }
 
     # basic context object
-    $ctx = [PSCustomObject]::new() |
-        Add-Member -MemberType NoteProperty -Name Threads -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name Timers -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name Schedules -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name Tasks -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name AsyncRoutes -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name RunspacePools -Value $null -PassThru |
-        Add-Member -MemberType NoteProperty -Name Runspaces -Value $null -PassThru |
-        Add-Member -MemberType NoteProperty -Name RunspaceState -Value $null -PassThru |
-        Add-Member -MemberType NoteProperty -Name Tokens -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name LogsToProcess -Value $null -PassThru |
-        Add-Member -MemberType NoteProperty -Name Threading -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name Server -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name Metrics -Value @{} -PassThru |
-        Add-Member -MemberType NoteProperty -Name Listeners -Value @() -PassThru |
-        Add-Member -MemberType NoteProperty -Name Receivers -Value @() -PassThru |
-        Add-Member -MemberType NoteProperty -Name Watchers -Value @() -PassThru |
-        Add-Member -MemberType NoteProperty -Name Fim -Value @{} -PassThru
+    $ctx = [PSCustomObject]@{
+        Threads       = @{}
+        Timers        = @{}
+        Schedules     = @{}
+        Tasks         = @{}
+        AsyncRoutes   = @{}
+        RunspacePools = $null
+        Runspaces     = $null
+        RunspaceState = $null
+        Tokens        = @{}
+        Threading     = @{}
+        Server        = @{}
+        Metrics       = @{}
+        Listeners     = @()
+        Receivers     = @()
+        Watchers      = @()
+        Fim           = @{}
+    }
 
     # set the server name, logic and root, and other basic properties
     $ctx.Server.Name = $Name
@@ -169,8 +222,11 @@ function New-PodeContext {
 
     # basic logging setup
     $ctx.Server.Logging = @{
-        Enabled = $true
-        Types   = @{}
+        Enabled    = $true
+        Type       = @{}
+        Masking    = @{}
+        QueueLimit = 500
+        Method     = @{}
     }
 
     # set thread counts
@@ -510,9 +566,6 @@ function New-PodeContext {
     # create new cancellation tokens
     $ctx.Tokens = Initialize-PodeCancellationToken
 
-    # requests that should be logged
-    $ctx.LogsToProcess = [System.Collections.ArrayList]::new()
-
     # middleware that needs to run
     $ctx.Server.Middleware = @()
     $ctx.Server.BodyParsers = @{}
@@ -532,6 +585,7 @@ function New-PodeContext {
     $ctx.RunspacePools['Gui'] = $null
     $ctx.RunspacePools['Tasks'] = $null
     $ctx.RunspacePools['Files'] = $null
+    $ctx.RunspacePools['Logs'] = $null
     $ctx.RunspacePools['Timers'] = $null
     $ctx.RunspacePools['Service'] = $null
 
@@ -623,10 +677,17 @@ function New-PodeRunspacePool {
         LastId = 0
     }
 
+    # logs runspace - any log is running here
+    $PodeContext.RunspacePools.Logs = @{
+        Pool   = New-PodeRunspacePoolNetWrapper  -MaxRunspaces 1 -RunspaceState  $PodeContext.RunspaceState
+        State  = 'Waiting'
+        LastId = 0
+    }
+
     # web runspace - if we have any http/s endpoints
     if (Test-PodeEndpointByProtocolType -Type Http) {
         $PodeContext.RunspacePools.Web = @{
-            Pool   = [runspacefactory]::CreateRunspacePool(1, ($PodeContext.Threads.General + 1), $PodeContext.RunspaceState, $Host)
+            Pool   = New-PodeRunspacePoolNetWrapper -MaxRunspaces ($PodeContext.Threads.General + 1) -RunspaceState $PodeContext.RunspaceState
             State  = 'Waiting'
             LastId = 0
         }
@@ -748,20 +809,20 @@ function New-PodeStateContext {
         $Context
     )
 
-    return ([PSCustomObject]::new() |
-            Add-Member -MemberType NoteProperty -Name Threads -Value $Context.Threads -PassThru |
-            Add-Member -MemberType NoteProperty -Name Timers -Value $Context.Timers -PassThru |
-            Add-Member -MemberType NoteProperty -Name Schedules -Value $Context.Schedules -PassThru |
-            Add-Member -MemberType NoteProperty -Name Tasks -Value $Context.Tasks -PassThru |
-            Add-Member -MemberType NoteProperty -Name Fim -Value $Context.Fim -PassThru |
-            Add-Member -MemberType NoteProperty -Name RunspacePools -Value $Context.RunspacePools -PassThru |
-            Add-Member -MemberType NoteProperty -Name Tokens -Value $Context.Tokens -PassThru |
-            Add-Member -MemberType NoteProperty -Name Metrics -Value $Context.Metrics -PassThru |
-            Add-Member -MemberType NoteProperty -Name LogsToProcess -Value $Context.LogsToProcess -PassThru |
-            Add-Member -MemberType NoteProperty -Name Threading -Value $Context.Threading -PassThru |
-            Add-Member -MemberType NoteProperty -Name Server -Value $Context.Server -PassThru |
-            Add-Member -MemberType NoteProperty -Name AsyncRoutes -Value $Context.AsyncRoutes -PassThru
-    )
+    return [PSCustomObject]@{
+        Threads       = $Context.Threads
+        Timers        = $Context.Timers
+        Schedules     = $Context.Schedules
+        Tasks         = $Context.Tasks
+        Fim           = $Context.Fim
+        RunspacePools = $Context.RunspacePools
+        Tokens        = $Context.Tokens
+        Metrics       = $Context.Metrics
+        LogsToProcess = $Context.LogsToProcess
+        Threading     = $Context.Threading
+        Server        = $Context.Server
+        AsyncRoutes   = $Context.AsyncRoutes 
+    }
 }
 
 <#
@@ -859,14 +920,18 @@ function Set-PodeServerConfiguration {
         Files     = @()
     }
 
-    # logging
-    $Context.Server.Logging = @{
-        Enabled = (($null -eq $Configuration.Logging.Enable) -or [bool]$Configuration.Logging.Enable)
-        Masking = @{
-            Patterns = (Remove-PodeEmptyItemsFromArray -Array @($Configuration.Logging.Masking.Patterns))
-            Mask     = (Protect-PodeValue -Value $Configuration.Logging.Masking.Mask -Default '********')
+    if ($Configuration.ContainsKey('Logging')) {
+        # logging
+        if ($Configuration.Logging.ContainsKey('Enable')) {
+            $Context.Server.Logging.Enabled = ([bool]$Configuration.Logging.Enable)
         }
-        Types   = @{}
+        if ($Configuration.Logging.ContainsKey('Masking')) {
+            $Context.Server.Logging.Masking = @{
+                Patterns = (Remove-PodeEmptyItemsFromArray -Array @($Configuration.Logging.Masking.Patterns))
+                Mask     = (Protect-PodeValue -Value $Configuration.Logging.Masking.Mask -Default '********')
+            }
+        }
+        $Context.Server.Logging.QueueLimit = (Protect-PodeValue -Value $Configuration.Logging.QueueLimit $Context.Server.Logging.QueueLimit)
     }
 
     # sockets

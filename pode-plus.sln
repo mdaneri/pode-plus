@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pode", "src\Listener\Pode.csproj", "{AB6B6D7E-613E-9009-E82E-7815440FCAA7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PodeMonitor", "src\PodeMonitor\PodeMonitor.csproj", "{4DF28FE0-F0B1-3339-A0FE-42020A3EBE5B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{AB6B6D7E-613E-9009-E82E-7815440FCAA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AB6B6D7E-613E-9009-E82E-7815440FCAA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AB6B6D7E-613E-9009-E82E-7815440FCAA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AB6B6D7E-613E-9009-E82E-7815440FCAA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4DF28FE0-F0B1-3339-A0FE-42020A3EBE5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4DF28FE0-F0B1-3339-A0FE-42020A3EBE5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4DF28FE0-F0B1-3339-A0FE-42020A3EBE5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4DF28FE0-F0B1-3339-A0FE-42020A3EBE5B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{AB6B6D7E-613E-9009-E82E-7815440FCAA7} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{4DF28FE0-F0B1-3339-A0FE-42020A3EBE5B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E2996D25-5479-4994-AB86-0CDB336D7F28}
+	EndGlobalSection
+EndGlobal
