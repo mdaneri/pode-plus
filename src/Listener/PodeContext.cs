@@ -178,12 +178,15 @@ namespace Pode
             // Create HTTP/2 response if the request is HTTP/2, otherwise use standard response
             if (Request is PodeHttp2Request http2Request)
             {
+                PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/2 response for stream {http2Request.StreamId}", Listener, PodeLoggingLevel.Verbose, this);
                 var http2Response = new PodeHttp2Response(this);
                 http2Response.StreamId = http2Request.StreamId;
                 Response = http2Response;
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response created successfully", Listener, PodeLoggingLevel.Verbose, this);
             }
             else
             {
+                PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/1.x response (Request type: {Request?.GetType().Name})", Listener, PodeLoggingLevel.Verbose, this);
                 Response = new PodeResponse(this);
             }
 #else
@@ -239,14 +242,19 @@ namespace Pode
                  /// <returns>The appropriate PodeRequest object (HTTP/1.x or HTTP/2.0)</returns>
         private Task<PodeRequest> DetectHttpVersion()
         {
+            Console.WriteLine("[DEBUG] DetectHttpVersion() called");
             try
             {
 #if !NETSTANDARD2_0
+                Console.WriteLine("[DEBUG] HTTP/2 detection enabled (not NETSTANDARD2_0)");
+                
                 // Check if this is an HTTPS connection (SSL/TLS)
                 var isSecure = PodeSocket?.IsSsl == true;
+                Console.WriteLine($"[DEBUG] IsSecure: {isSecure}");
 
                 if (isSecure)
                 {
+                    Console.WriteLine("[DEBUG] HTTPS connection - defaulting to HTTP/2");
                     // For HTTPS connections, modern browsers negotiate HTTP/2 by default via ALPN
                     // We'll create an HTTP/2 request and let it handle ALPN negotiation
                     // If ALPN negotiates HTTP/1.1, the HTTP/2 request will handle it gracefully
@@ -254,18 +262,22 @@ namespace Pode
                     return Task.FromResult<PodeRequest>(new PodeHttp2Request(Socket, PodeSocket, this));
                 }
 
+                Console.WriteLine("[DEBUG] HTTP connection - peeking for HTTP/2 preface");
                 // For HTTP connections, try to peek for HTTP/2 preface
                 var buffer = new byte[24]; // HTTP/2 preface is 24 bytes
-                var bytesReceived = PeekForHttp2Preface(buffer);
+                var bytesReceived = PeekForHttp2PrefaceNonBlocking(buffer);
+                Console.WriteLine($"[DEBUG] PeekForHttp2PrefaceNonBlocking returned {bytesReceived} bytes");
 
                 if (bytesReceived > 0)
                 {
                     var requestStart = System.Text.Encoding.ASCII.GetString(buffer, 0, Math.Min(bytesReceived, 24));
+                    Console.WriteLine($"[DEBUG] Peeked data: '{requestStart}' (length: {bytesReceived})");
                     PodeHelpers.WriteErrorMessage($"Peeked data: '{requestStart}' (length: {bytesReceived})", Listener, PodeLoggingLevel.Debug, this);
 
                     // First check for immediate "PRI" - this is always HTTP/2
                     if (requestStart.StartsWith("PRI"))
                     {
+                        Console.WriteLine("[DEBUG] HTTP/2 preface detected (starts with PRI)");
                         PodeHelpers.WriteErrorMessage("HTTP/2 preface detected (starts with PRI)", Listener, PodeLoggingLevel.Debug, this);
                         return Task.FromResult<PodeRequest>(new PodeHttp2Request(Socket, PodeSocket, this));
                     }
@@ -273,6 +285,7 @@ namespace Pode
                     // Check for full HTTP/2 connection preface
                     if (bytesReceived >= 24 && IsHttp2ConnectionPreface(buffer, bytesReceived))
                     {
+                        Console.WriteLine("[DEBUG] Full HTTP/2 connection preface detected");
                         PodeHelpers.WriteErrorMessage("Full HTTP/2 connection preface detected", Listener, PodeLoggingLevel.Debug, this);
                         return Task.FromResult<PodeRequest>(new PodeHttp2Request(Socket, PodeSocket, this));
                     }
@@ -280,6 +293,7 @@ namespace Pode
                     // Check for HTTP/2 upgrade request (h2c - HTTP/2 over cleartext)
                     if (IsHttp2UpgradeRequest(buffer, bytesReceived))
                     {
+                        Console.WriteLine("[DEBUG] HTTP/2 upgrade request detected");
                         PodeHelpers.WriteErrorMessage("HTTP/2 upgrade request detected", Listener, PodeLoggingLevel.Debug, this);
                         // For upgrade requests, start with HTTP/1.1 and handle upgrade later
                         // TODO: Implement HTTP/2 upgrade handling
@@ -293,25 +307,30 @@ namespace Pode
                         requestStart.StartsWith("PATCH ") || requestStart.StartsWith("TRACE ") ||
                         requestStart.StartsWith("CONNECT "))
                     {
+                        Console.WriteLine("[DEBUG] HTTP/1.x request method detected");
                         PodeHelpers.WriteErrorMessage("HTTP/1.x request method detected", Listener, PodeLoggingLevel.Debug, this);
                         return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
                     }
 
                     // If we can't determine the protocol from the peeked data, log it for debugging
+                    Console.WriteLine($"[DEBUG] Unrecognized request start: '{requestStart}'");
                     PodeHelpers.WriteErrorMessage($"Unrecognized request start, defaulting to HTTP/1.x: '{requestStart}'", Listener, PodeLoggingLevel.Debug, this);
                 }
                 else
                 {
+                    Console.WriteLine("[DEBUG] No data available for protocol detection");
                     PodeHelpers.WriteErrorMessage("No data available for protocol detection, will use HTTP/1.x with fallback detection", Listener, PodeLoggingLevel.Debug, this);
                 }
 #endif
 
                 // Default to HTTP/1.x with enhanced error detection
+                Console.WriteLine("[DEBUG] Creating HTTP/1.x request with enhanced HTTP/2 fallback detection");
                 PodeHelpers.WriteErrorMessage("Creating HTTP/1.x request with enhanced HTTP/2 fallback detection", Listener, PodeLoggingLevel.Debug, this);
                 return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"[DEBUG] Error detecting HTTP version: {ex.Message}");
                 PodeHelpers.WriteErrorMessage($"Error detecting HTTP version: {ex.Message}", Listener, PodeLoggingLevel.Warning, this);
                 // Default to HTTP/1.x on error
                 return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
@@ -320,105 +339,67 @@ namespace Pode
 
 #if !NETSTANDARD2_0
         /// <summary>
-        /// Attempts to peek at socket data with multiple strategies to detect HTTP/2 preface.
+        /// Attempts to peek at socket data using non-blocking approach to detect HTTP/2 preface.
         /// </summary>
         /// <param name="buffer">Buffer to store peeked data</param>
         /// <returns>Number of bytes received</returns>
-        private int PeekForHttp2Preface(byte[] buffer)
+        private int PeekForHttp2PrefaceNonBlocking(byte[] buffer)
         {
-            var maxAttempts = 5;
-            var timeouts = new[] { 5, 20, 50, 100, 200 }; // Progressive timeouts in milliseconds
-
-            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            try
             {
-                try
+                // First, check if any data is immediately available
+                if (Socket.Available > 0)
                 {
-                    var bytesReceived = 0;
+                    var bytesReceived = Socket.Receive(buffer, 0, Math.Min(buffer.Length, Socket.Available), SocketFlags.Peek);
+                    PodeHelpers.WriteErrorMessage($"Non-blocking peek got {bytesReceived} bytes immediately", Listener, PodeLoggingLevel.Debug, this);
+                    return bytesReceived;
+                }
 
-                    // First try: Check if data is immediately available
+                // If no data is immediately available, wait a short time
+                var waitTime = 50; // 50ms timeout
+                var startTime = DateTime.UtcNow;
+                
+                while ((DateTime.UtcNow - startTime).TotalMilliseconds < waitTime)
+                {
                     if (Socket.Available > 0)
                     {
-                        bytesReceived = Socket.Receive(buffer, 0, Math.Min(buffer.Length, Socket.Available), SocketFlags.Peek);
-                        PodeHelpers.WriteErrorMessage($"Attempt {attempt + 1}: Immediate peek got {bytesReceived} bytes", Listener, PodeLoggingLevel.Debug, this);
-
-                        // If we got some data, check if it's enough or if we need more
-                        if (bytesReceived >= 3) // At least "PRI"
-                        {
-                            var start = System.Text.Encoding.ASCII.GetString(buffer, 0, Math.Min(bytesReceived, 3));
-                            if (start == "PRI")
-                            {
-                                // This is definitely HTTP/2, but let's try to get the full preface if possible
-                                if (bytesReceived < 24)
-                                {
-                                    // Wait a bit for more data to arrive and try again
-                                    System.Threading.Thread.Sleep(10);
-                                    if (Socket.Available >= 24)
-                                    {
-                                        var moreBytes = Socket.Receive(buffer, 0, 24, SocketFlags.Peek);
-                                        if (moreBytes > bytesReceived)
-                                        {
-                                            bytesReceived = moreBytes;
-                                            PodeHelpers.WriteErrorMessage($"Attempt {attempt + 1}: Got {bytesReceived} bytes total after waiting", Listener, PodeLoggingLevel.Debug, this);
-                                        }
-                                    }
-                                }
-                                return bytesReceived;
-                            }
-                        }
-
-                        // If we have enough bytes for HTTP/1.x check, return them
-                        if (bytesReceived >= 3)
-                        {
-                            return bytesReceived;
-                        }
-                    }
-
-                    // Second try: Use blocking socket with progressive timeout to wait for data
-                    if (bytesReceived == 0)
-                    {
-                        var originalBlocking = Socket.Blocking;
-                        var originalTimeout = Socket.ReceiveTimeout;
-
-                        try
-                        {
-                            Socket.Blocking = true;
-                            Socket.ReceiveTimeout = timeouts[attempt];
-
-                            bytesReceived = Socket.Receive(buffer, 0, buffer.Length, SocketFlags.Peek);
-                            PodeHelpers.WriteErrorMessage($"Attempt {attempt + 1}: Blocking peek got {bytesReceived} bytes (timeout: {timeouts[attempt]}ms)", Listener, PodeLoggingLevel.Debug, this);
-                        }
-                        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.TimedOut)
-                        {
-                            // Timeout, continue to next attempt
-                            PodeHelpers.WriteErrorMessage($"Attempt {attempt + 1}: Blocking peek timed out after {timeouts[attempt]}ms", Listener, PodeLoggingLevel.Debug, this);
-                            bytesReceived = 0;
-                        }
-                        finally
-                        {
-                            Socket.Blocking = originalBlocking;
-                            Socket.ReceiveTimeout = originalTimeout;
-                        }
-                    }
-
-                    if (bytesReceived > 0)
-                    {
+                        var bytesReceived = Socket.Receive(buffer, 0, Math.Min(buffer.Length, Socket.Available), SocketFlags.Peek);
+                        PodeHelpers.WriteErrorMessage($"Non-blocking peek got {bytesReceived} bytes after waiting", Listener, PodeLoggingLevel.Debug, this);
                         return bytesReceived;
                     }
-                }
-                catch (Exception ex)
-                {
-                    PodeHelpers.WriteErrorMessage($"Attempt {attempt + 1}: Error during socket peek: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
+                    
+                    // Brief sleep to avoid busy waiting
+                    System.Threading.Thread.Sleep(5);
                 }
 
-                // Brief pause before next attempt (except on last attempt)
-                if (attempt < maxAttempts - 1)
-                {
-                    System.Threading.Thread.Sleep(10);
-                }
+                PodeHelpers.WriteErrorMessage("Non-blocking peek timed out, no data available", Listener, PodeLoggingLevel.Debug, this);
+                return 0;
             }
+            catch (Exception ex)
+            {
+                PodeHelpers.WriteErrorMessage($"Error during non-blocking socket peek: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
+                return 0;
+            }
+        }
 
-            PodeHelpers.WriteErrorMessage("All peek attempts failed, no data available for protocol detection", Listener, PodeLoggingLevel.Debug, this);
-            return 0;
+        /// <summary>
+        /// Gets the ALPN negotiated protocol from the TLS connection.
+        /// </summary>
+        /// <returns>The negotiated protocol string, or null if not available</returns>
+        private string GetAlpnNegotiatedProtocol()
+        {
+            try
+            {
+                // TODO: Implement ALPN negotiation detection
+                // This would require access to the SSL/TLS stream to get the negotiated protocol
+                // For now, return null to indicate ALPN is not implemented
+                return null;
+            }
+            catch (Exception ex)
+            {
+                PodeHelpers.WriteErrorMessage($"Error getting ALPN negotiated protocol: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
+                return null;
+            }
         }
 #endif
 

@@ -87,6 +87,10 @@ Nothing to report :D
 '@
         Write-PodeTextResponse -Value $value
     }
+
+    Add-PodeRoute -Method Get -Path '/close' -ScriptBlock {
+        Close-PodeServer
+    }
     Add-PodeStaticRouteGroup -FileBrowser -Routes {
 
         Add-PodeStaticRoute -Path '/standard' -Source $using:directoryPath
@@ -111,7 +115,6 @@ Nothing to report :D
     }
 
     Add-PodeRoute -Method Get -Path '/encoding/transfer' -ScriptBlock {
-        write-podehost $webEvent -explode -ShowType -label 'Add-PodeRoute Response'
         $string = Get-Content -Path $using:directoryPath/pode.build.ps1 -raw
         $data = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($string))
         # write-podetextresponse -Value "This is a response with transfer encoding. The Accept-Encoding header was: $($WebEvent.AcceptEncoding)"
@@ -121,19 +124,20 @@ Nothing to report :D
 
     Add-PodeRoute -Method Get -Path '/'    -ScriptBlock {
         # Determine protocol version safely across framework versions
-        $protocol = "HTTP/1.1"  # Default
+        $protocol = 'HTTP/1.1'  # Default
         $requestType = $WebEvent.Request.GetType().Name
         $debugInfo = "Request type: $requestType"
-        
+
         try {
             # Try to determine if this is HTTP/2 - this will work on .NET Framework 4.6.1+ and .NET Core/.NET 5+
-            if ($WebEvent.Request.GetType().Name -eq "PodeHttp2Request") {
-                $protocol = "HTTP/2.0"
-                $debugInfo += " | Detected HTTP/2"
-            } else {
-                $debugInfo += " | Detected HTTP/1.x"
+            if ($WebEvent.Request.GetType().Name -eq 'PodeHttp2Request') {
+                $protocol = 'HTTP/2.0'
+                $debugInfo += ' | Detected HTTP/2'
             }
-            
+            else {
+                $debugInfo += ' | Detected HTTP/1.x'
+            }
+
             # Also check the protocol from the request itself
             if ($WebEvent.Request.Protocol) {
                 $debugInfo += " | Request.Protocol: $($WebEvent.Request.Protocol)"

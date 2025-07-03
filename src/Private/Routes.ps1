@@ -281,11 +281,14 @@ function Find-PodeSignalRoute {
 
 function Test-PodeRouteValidForCaching {
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [string]
         $Path
     )
-
+    if ([string]::IsNullOrEmpty($Path)) {
+        return $false
+    }
+    
     # check current state of caching
     $config = $PodeContext.Server.Web.Static.Cache
     $caching = $config.Enabled

@@ -36,21 +36,29 @@ namespace Pode
 
         /// <summary>
         /// Override the Send method to implement HTTP/2 binary framing
+        /// Ensures HTTP/1.1 response is not sent
         /// </summary>
-        public new async Task Send()
+        public override async Task Send()
         {
             if ((_sentHeaders && _sentBody) || IsDisposed || (_sentHeaders && SseEnabled))
             {
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 Send() called but response already sent or disposed", _context.Listener, PodeLoggingLevel.Verbose, _context);
                 return;
             }
 
-            PodeHelpers.WriteErrorMessage($"Sending HTTP/2 response", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 Response.Send() called - StreamId: {StreamId}, StatusCode: {StatusCode}", _context.Listener, PodeLoggingLevel.Verbose, _context);
 
             try
             {
+                // Mark headers and body as sent to prevent the base class Send() method
+                // from sending HTTP/1.1 response
+                SentHeaders = true;
+                SentBody = true;
+                
+                // Send HTTP/2 frames
                 await SendHttp2Headers().ConfigureAwait(false);
                 await SendHttp2Body().ConfigureAwait(false);
-                PodeHelpers.WriteErrorMessage($"HTTP/2 response sent", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
             catch (OperationCanceledException) { }
             catch (IOException) { }
@@ -60,6 +68,7 @@ namespace Pode
             }
             catch (Exception ex)
             {
+                PodeHelpers.WriteErrorMessage($"DEBUG: Exception in HTTP/2 Send(): {ex.Message}", _context.Listener, PodeLoggingLevel.Verbose, _context);
                 PodeHelpers.WriteException(ex, _context.Listener);
                 throw;
             }
@@ -72,6 +81,8 @@ namespace Pode
         private async Task SendHttp2Headers()
         {
             if (_sentHeaders) return;
+
+            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 headers - StreamId: {StreamId}, StatusCode: {StatusCode}", _context.Listener, PodeLoggingLevel.Verbose, _context);
 
             // Build HTTP/2 headers frame
             var headers = new List<KeyValuePair<string, string>>
@@ -89,40 +100,52 @@ namespace Pode
                 }
             }
 
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers count: {headers.Count}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+
             // Encode headers with HPACK
             var encodedHeaders = HpackEncoder.Encode(headers);
+            PodeHelpers.WriteErrorMessage($"DEBUG: Encoded headers length: {encodedHeaders.Length}", _context.Listener, PodeLoggingLevel.Verbose, _context);
 
             // Send HEADERS frame
             await SendFrame(FRAME_TYPE_HEADERS, FLAG_END_HEADERS, StreamId, encodedHeaders);
             _sentHeaders = true;
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
         }
 
         private async Task SendHttp2Body()
         {
             if (_sentBody) return;
 
+            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 body - StreamId: {StreamId}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+
             byte[] data = null;
             if (OutputStream != null && OutputStream.Length > 0)
             {
                 data = OutputStream.ToArray();
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 body data length: {data.Length}", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
 
             if (data != null && data.Length > 0)
             {
                 // Send DATA frame with END_STREAM flag
                 await SendFrame(FRAME_TYPE_DATA, FLAG_END_STREAM, StreamId, data);
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 DATA frame sent with {data.Length} bytes", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
             else
             {
                 // Send empty DATA frame with END_STREAM flag
                 await SendFrame(FRAME_TYPE_DATA, FLAG_END_STREAM, StreamId, new byte[0]);
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 empty DATA frame sent", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
 
             _sentBody = true;
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 body sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
         }
 
         private async Task SendFrame(byte type, byte flags, int streamId, byte[] payload)
         {
+            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 frame - Type: {type}, Flags: {flags}, StreamId: {streamId}, PayloadLength: {payload?.Length ?? 0}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+
             var frameHeader = new byte[9];
             var length = payload?.Length ?? 0;
 
@@ -147,6 +170,8 @@ namespace Pode
             var networkStream = GetNetworkStream();
             if (networkStream != null)
             {
+                PodeHelpers.WriteErrorMessage($"DEBUG: Writing frame header and payload to network stream", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                
                 // Send frame header
                 await networkStream.WriteAsync(frameHeader, 0, frameHeader.Length);
 
@@ -157,13 +182,37 @@ namespace Pode
                 }
 
                 await networkStream.FlushAsync();
+                PodeHelpers.WriteErrorMessage($"DEBUG: Frame sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            }
+            else
+            {
+                PodeHelpers.WriteErrorMessage($"DEBUG: Network stream is null - cannot send frame", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
         }
 
         private Stream GetNetworkStream()
         {
-            // Access the underlying network stream through the context
-            return _context.Request?.InputStream;
+            try
+            {
+                // Access the underlying socket through reflection
+                var socketField = typeof(PodeRequest).GetField("Socket", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (socketField != null)
+                {
+                    var socket = (System.Net.Sockets.Socket)socketField.GetValue(_context.Request);
+                    if (socket != null)
+                    {
+                        return new System.Net.Sockets.NetworkStream(socket);
+                    }
+                }
+                
+                // Fallback to accessing from the context
+                return _context.Request?.InputStream;
+            }
+            catch (Exception ex)
+            {
+                PodeHelpers.WriteException(ex, _context.Listener);
+                return _context.Request?.InputStream;
+            }
         }
 
         public async Task SendSettingsFrame(Dictionary<string, object> settings = null)
@@ -198,6 +247,38 @@ namespace Pode
         public async Task SendSettingsAck()
         {
             await SendFrame(FRAME_TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
+        }
+
+        /// <summary>
+        /// Override WriteBody to handle HTTP/2 framing properly
+        /// </summary>
+        public override void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        {
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 WriteBody called with {bytes?.Length ?? 0} bytes", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            
+            // Prevent duplicate response sending
+            if (_sentHeaders && _sentBody)
+            {
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response already sent, ignoring duplicate WriteBody call", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                return;
+            }
+            
+            // Store the body data in the OutputStream
+            if (bytes != null && bytes.Length > 0)
+            {
+                OutputStream.Write(bytes, 0, bytes.Length);
+            }
+            
+            // Send the HTTP/2 response using the Send method
+            Send().GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Override WriteBody to handle HTTP/2 framing properly
+        /// </summary>
+        public override void WriteBody(byte[] bytes, PodeCompressionType compression = PodeCompressionType.none)
+        {
+            WriteBody(bytes, null, compression);
         }
 
         public async Task SendPingResponse(byte[] pingData)
@@ -249,6 +330,28 @@ namespace Pode
                 default:
                     return 0;
             }
+        }
+
+        /// <summary>
+        /// Prevent the HTTP/1.1 headers and body from being sent in Send() method
+        /// by providing custom implementations that do nothing
+        /// </summary>
+        private Task SendHeaders(bool timeout)
+        {
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 SendHeaders is no-op, headers will be sent via frames", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            // Do nothing - HTTP/2 headers are sent via HEADERS frames in SendHttp2Headers
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Prevent the HTTP/1.1 body from being sent in Send() method
+        /// by providing a custom implementation that does nothing
+        /// </summary>
+        private Task SendBody(bool timeout)
+        {
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 SendBody is no-op, body will be sent via frames", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            // Do nothing - HTTP/2 body is sent via DATA frames in SendHttp2Body
+            return Task.CompletedTask;
         }
     }
 

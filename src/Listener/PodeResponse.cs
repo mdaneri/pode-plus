@@ -34,8 +34,8 @@ namespace Pode
             get => SseScope != PodeSseScope.None;
         }
 
-        public bool SentHeaders { get; private set; }
-        public bool SentBody { get; private set; }
+        public bool SentHeaders { get; protected set; }
+        public bool SentBody { get; protected set; }
         public bool Sent
         {
             get => SentHeaders && SentBody;
@@ -165,7 +165,7 @@ namespace Pode
         /// Sends the complete HTTP response, including headers and body, to the client.
         /// </summary>
         /// <returns>A task representing the asynchronous operation.</returns>
-        public async Task Send()
+        public virtual async Task Send()
         {
             if (Sent || IsDisposed || (SentHeaders && SseEnabled))
             {
@@ -754,14 +754,14 @@ namespace Pode
             }
         }
 
-        public void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        public virtual void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteByteAsync(bytes, ranges, compression).GetAwaiter().GetResult();
         }
 
 
 
-        public void WriteBody(byte[] bytes, PodeCompressionType compression = PodeCompressionType.none)
+        public virtual void WriteBody(byte[] bytes, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteByteAsync(bytes, null, compression).GetAwaiter().GetResult();
         }
@@ -817,7 +817,7 @@ namespace Pode
         /// <param name="encoding">Optional encoding to use when converting the string to bytes.</param>
         /// <param name="ranges">Optional array of hashtables representing byte ranges to write.</param>
         /// <param name="compression">Optional compression type to apply to the output.</param>
-        public void WriteBody(string content, Encoding encoding = null, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        public virtual void WriteBody(string content, Encoding encoding = null, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteStringAsync(content, encoding, ranges, compression).GetAwaiter().GetResult();
         }
@@ -834,7 +834,7 @@ namespace Pode
         /// <param name="content">The string content to write.</param>
         /// <param name="encoding">Optional encoding to use when converting the string to bytes.</param>
         /// <param name="compression">Optional compression type to apply to the output.</param>
-        public void WriteBody(string content, Encoding encoding = null, PodeCompressionType compression = PodeCompressionType.none)
+        public virtual void WriteBody(string content, Encoding encoding = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteStringAsync(content, encoding, null, compression).GetAwaiter().GetResult();
         }
@@ -846,7 +846,7 @@ namespace Pode
         /// </summary>
         /// <param name="content">The string content to write.</param>
         /// <param name="compression">Optional compression type to apply to the output.</param>
-        public void WriteBody(string content, PodeCompressionType compression = PodeCompressionType.none)
+        public virtual void WriteBody(string content, PodeCompressionType compression = PodeCompressionType.none)
         {
             WriteStringAsync(content, null, null, compression).GetAwaiter().GetResult();
         }
