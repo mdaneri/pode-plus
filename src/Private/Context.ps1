@@ -55,6 +55,9 @@ function New-PodeContext {
         [string]
         $ConfigFile,
 
+        [System.Collections.Concurrent.ConcurrentDictionary[string, object]]
+        $Watchdog,
+
         [string]
         $ApplicationName,
 
@@ -119,6 +122,13 @@ function New-PodeContext {
     if ($null -ne $Service) {
         $ctx.Server.Service = $Service
     }
+
+    if ($Watchdog) {
+        $ctx.Server.Watchdog = @{
+            Client = $Watchdog
+        }
+    }
+
     # list of created listeners/receivers
     $ctx.Listeners = @()
     $ctx.Receivers = @()
@@ -183,6 +193,7 @@ function New-PodeContext {
         AsyncRoutes = 0
         Timers      = 1
         Service     = 0
+        Watchers    = 0
     }
 
     # set socket details for pode server
@@ -534,6 +545,7 @@ function New-PodeContext {
     $ctx.RunspacePools['Files'] = $null
     $ctx.RunspacePools['Timers'] = $null
     $ctx.RunspacePools['Service'] = $null
+    $ctx.RunspacePools['Watchdog'] = $null
 
     # threading locks, etc.
     $ctx.Threading.Lockables = @{
@@ -723,6 +735,14 @@ function New-PodeRunspacePool {
             Pool   = [runspacefactory]::CreateRunspacePool(1, 1, $PodeContext.RunspaceState, $Host)
             State  = 'Waiting'
             LastId = 0
+        }
+    }
+
+    if (Test-PodeWatchdogEnabled ) {
+        $PodeContext.Threads['Watchdog'] = Get-PodeWatchdogRunspaceCount
+        $PodeContext.RunspacePools.Watchdog = @{
+            Pool  = [runspacefactory]::CreateRunspacePool(1, $PodeContext.Threads['Watchdog'], $PodeContext.RunspaceState, $Host)
+            State = 'Waiting'
         }
     }
 }

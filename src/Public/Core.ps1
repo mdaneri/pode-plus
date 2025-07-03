@@ -268,7 +268,27 @@ function Start-PodeServer {
                     ConfigFile          = $PodeService.ConfigFile
                     IgnoreServerConfig  = $PodeService.IgnoreServerConfig
                 }
-                Write-PodeHost $PodeService -Explode -Force            }
+            }
+        }
+
+        # check if podeWatchdog is configured
+        if ($PodeWatchdog) {
+            if ($null -ne $PodeWatchdog.DisableTermination -or
+                $null -ne $PodeWatchdog.Quiet -or
+                $null -ne $PodeWatchdog.PipeName -or
+                $null -ne $PodeWatchdog.Interval
+            ) {
+                if ($PodeWatchdog -is [hashtable]) {
+                    $watchdogClient = ConvertTo-PodeConcurrentStructure -InputObject $PodeWatchdog
+                }
+                else {
+                    $watchdogClient = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $PodeWatchdog | Get-Member -MemberType Properties | ForEach-Object {
+                        $watchdogClient[$_.Name] = $PodeWatchdog.$($_.Name) }
+                }
+                $DisableTermination = [switch]$watchdogClient.DisableTermination
+                $Quiet = [switch]$watchdogClient.Quiet
+            }
         }
 
         try {
@@ -310,6 +330,7 @@ function Start-PodeServer {
                 ConfigFile           = $ConfigFile
                 ApplicationName      = $ApplicationName
                 Service              = $monitorService
+                Watchdog             = $watchdogClient
                 Daemon               = $Daemon
             }
 
@@ -400,6 +421,7 @@ function Start-PodeServer {
             # clean the session
             $PodeContext = $null
             $PodeLocale = $null
+            $PodeWatchdog = $null
         }
     }
 }
