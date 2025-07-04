@@ -64,7 +64,7 @@ namespace Pode
         private bool _hasReceivedPreface;
         private bool _isHeadersComplete;
         private MemoryStream _bodyStream;
-        private SimpleHpackDecoder _hpackDecoder;
+        private RobustHpackDecoder _hpackDecoder;
         private List<byte> _incompleteFrame;
 
         private string _body = string.Empty;
@@ -97,7 +97,7 @@ namespace Pode
             Type = PodeProtocolType.Http;
             Streams = new Dictionary<int, Http2Stream>();
             Settings = new Dictionary<string, object>();
-            _hpackDecoder = new SimpleHpackDecoder();
+            _hpackDecoder = new RobustHpackDecoder();
             _incompleteFrame = new List<byte>();
             ContentEncoding = System.Text.Encoding.UTF8;
 
@@ -216,11 +216,13 @@ namespace Pode
 
                 // Check if we have preface data from the HTTP/1.1 parser that detected the upgrade
                 byte[] actualBytes = bytes;
+                bool usingStoredPreface = false;
                 if (!_hasReceivedPreface && Context.Data.ContainsKey("Http2PrefaceData"))
                 {
                     var prefaceData = (byte[])Context.Data["Http2PrefaceData"];
                     Console.WriteLine($"[DEBUG] Using stored preface data ({prefaceData.Length} bytes) instead of reading from stream");
                     actualBytes = prefaceData;
+                    usingStoredPreface = true;
                     // Remove the stored data so we don't use it again
                     Context.Data.Remove("Http2PrefaceData");
                 }
@@ -255,12 +257,14 @@ namespace Pode
                     actualBytes = remainingBytes;
                     Console.WriteLine($"[DEBUG] Preface removed, remaining bytes: {remainingBytes.Length}");
 
-                    // If we used stored preface data and there are no remaining bytes from the original parse call,
-                    // we should process any additional bytes that came in the original call
-                    if (Context.Data.ContainsKey("Http2PrefaceData") && remainingBytes.Length == 0 && bytes.Length > 0)
+                    // If we used stored preface data, also process the original bytes from this Parse call
+                    if (usingStoredPreface && bytes.Length > 0)
                     {
                         Console.WriteLine($"[DEBUG] Processing original {bytes.Length} bytes after handling stored preface");
-                        actualBytes = bytes;
+                        var combinedBytes = new List<byte>(actualBytes);
+                        combinedBytes.AddRange(bytes);
+                        actualBytes = combinedBytes.ToArray();
+                        Console.WriteLine($"[DEBUG] Combined data length: {actualBytes.Length}");
                     }
                 }
 
@@ -744,6 +748,9 @@ namespace Pode
             _isHeadersComplete = true;
             AwaitingBody = ContentLength > 0 && !EndOfStream;
 
+            Console.WriteLine($"[DEBUG] FinalizeHeaders complete: _isHeadersComplete={_isHeadersComplete}, ContentLength={ContentLength}, EndOfStream={EndOfStream}, AwaitingBody={AwaitingBody}");
+            Console.WriteLine($"[DEBUG] FinalizeHeaders - HttpMethod='{HttpMethod}', Host='{Host}', Url='{Url}'");
+
             return Task.CompletedTask;
         }
 
@@ -987,6 +994,62 @@ namespace Pode
             }
             return result.ToString();
         }
+
+        // Handle stored preface data in ValidateInput instead of overriding Receive
+        private bool _hasProcessedStoredPreface = false;
+
+        public override async Task<bool> Receive(CancellationToken cancellationToken)
+        {
+            Console.WriteLine("[DEBUG] PodeHttp2Request.Receive() called");
+
+            // Check if we have stored preface data from the HTTP/1.1 parser
+            if (Context.Data.ContainsKey("Http2PrefaceData"))
+            {
+                Console.WriteLine("[DEBUG] Found stored preface data, processing it first");
+                var prefaceData = (byte[])Context.Data["Http2PrefaceData"];
+                Console.WriteLine($"[DEBUG] Processing {prefaceData.Length} bytes of stored preface data");
+
+                // Process the stored preface data
+                try
+                {
+                    if (ValidateInput(prefaceData))
+                    {
+                        Console.WriteLine("[DEBUG] Stored preface data validation passed, calling Parse");
+                        if (await Parse(prefaceData, cancellationToken).ConfigureAwait(false))
+                        {
+                            Console.WriteLine("[DEBUG] Stored preface data parsed successfully");
+                            // Remove the stored data so we don't use it again
+                            Context.Data.Remove("Http2PrefaceData");
+
+                            // If parsing was successful and we have a complete request, return false (don't close)
+                            if (IsProcessable)
+                            {
+                                Console.WriteLine("[DEBUG] Request is processable, returning false (don't close connection)");
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("[DEBUG] Stored preface data parsing returned false, continuing with normal receive");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("[DEBUG] Stored preface data validation failed, continuing with normal receive");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DEBUG] Error processing stored preface data: {ex.Message}");
+                    // Continue with normal receive if there's an error
+                }
+            }
+
+            // Continue with normal receive processing
+            Console.WriteLine("[DEBUG] Continuing with base Receive method");
+            return await base.Receive(cancellationToken).ConfigureAwait(false);
+        }
+
     }
 
     // Supporting classes
@@ -1009,113 +1072,112 @@ namespace Pode
     }
 
     // RFC 7541 compliant HPACK decoder
-    public class SimpleHpackDecoder
+    public class RobustHpackDecoder
     {
         private readonly List<KeyValuePair<string, string>> _dynamicTable;
-        private int _maxTableSize = 4096;
-        private int _currentTableSize = 0;
+        private int _maxDynamicTableSize = 4096;
+        private int _currentDynamicTableSize = 0;
 
-        // Complete HPACK static table from RFC 7541 Appendix B
-        private static readonly Dictionary<int, KeyValuePair<string, string>> StaticTable =
-            new Dictionary<int, KeyValuePair<string, string>>
-            {
-                { 1, new KeyValuePair<string, string>(":authority", "") },
-                { 2, new KeyValuePair<string, string>(":method", "GET") },
-                { 3, new KeyValuePair<string, string>(":method", "POST") },
-                { 4, new KeyValuePair<string, string>(":path", "/") },
-                { 5, new KeyValuePair<string, string>(":path", "/index.html") },
-                { 6, new KeyValuePair<string, string>(":scheme", "http") },
-                { 7, new KeyValuePair<string, string>(":scheme", "https") },
-                { 8, new KeyValuePair<string, string>(":status", "200") },
-                { 9, new KeyValuePair<string, string>(":status", "204") },
-                { 10, new KeyValuePair<string, string>(":status", "206") },
-                { 11, new KeyValuePair<string, string>(":status", "304") },
-                { 12, new KeyValuePair<string, string>(":status", "400") },
-                { 13, new KeyValuePair<string, string>(":status", "404") },
-                { 14, new KeyValuePair<string, string>(":status", "500") },
-                { 15, new KeyValuePair<string, string>("accept-charset", "") },
-                { 16, new KeyValuePair<string, string>("accept-encoding", "gzip, deflate") },
-                { 17, new KeyValuePair<string, string>("accept-language", "") },
-                { 18, new KeyValuePair<string, string>("accept-ranges", "") },
-                { 19, new KeyValuePair<string, string>("accept", "") },
-                { 20, new KeyValuePair<string, string>("access-control-allow-origin", "") },
-                { 21, new KeyValuePair<string, string>("age", "") },
-                { 22, new KeyValuePair<string, string>("allow", "") },
-                { 23, new KeyValuePair<string, string>("authorization", "") },
-                { 24, new KeyValuePair<string, string>("cache-control", "") },
-                { 25, new KeyValuePair<string, string>("content-disposition", "") },
-                { 26, new KeyValuePair<string, string>("content-encoding", "") },
-                { 27, new KeyValuePair<string, string>("content-language", "") },
-                { 28, new KeyValuePair<string, string>("content-length", "") },
-                { 29, new KeyValuePair<string, string>("content-location", "") },
-                { 30, new KeyValuePair<string, string>("content-range", "") },
-                { 31, new KeyValuePair<string, string>("content-type", "") },
-                { 32, new KeyValuePair<string, string>("cookie", "") },
-                { 33, new KeyValuePair<string, string>("date", "") },
-                { 34, new KeyValuePair<string, string>("etag", "") },
-                { 35, new KeyValuePair<string, string>("expect", "") },
-                { 36, new KeyValuePair<string, string>("expires", "") },
-                { 37, new KeyValuePair<string, string>("from", "") },
-                { 38, new KeyValuePair<string, string>("host", "") },
-                { 39, new KeyValuePair<string, string>("if-match", "") },
-                { 40, new KeyValuePair<string, string>("if-modified-since", "") },
-                { 41, new KeyValuePair<string, string>("if-none-match", "") },
-                { 42, new KeyValuePair<string, string>("if-range", "") },
-                { 43, new KeyValuePair<string, string>("if-unmodified-since", "") },
-                { 44, new KeyValuePair<string, string>("last-modified", "") },
-                { 45, new KeyValuePair<string, string>("link", "") },
-                { 46, new KeyValuePair<string, string>("location", "") },
-                { 47, new KeyValuePair<string, string>("max-forwards", "") },
-                { 48, new KeyValuePair<string, string>("proxy-authenticate", "") },
-                { 49, new KeyValuePair<string, string>("proxy-authorization", "") },
-                { 50, new KeyValuePair<string, string>("range", "") },
-                { 51, new KeyValuePair<string, string>("referer", "") },
-                { 52, new KeyValuePair<string, string>("refresh", "") },
-                { 53, new KeyValuePair<string, string>("retry-after", "") },
-                { 54, new KeyValuePair<string, string>("server", "") },
-                { 55, new KeyValuePair<string, string>("set-cookie", "") },
-                { 56, new KeyValuePair<string, string>("strict-transport-security", "") },
-                { 57, new KeyValuePair<string, string>("transfer-encoding", "") },
-                { 58, new KeyValuePair<string, string>("user-agent", "") },
-                { 59, new KeyValuePair<string, string>("vary", "") },
-                { 60, new KeyValuePair<string, string>("via", "") },
-                { 61, new KeyValuePair<string, string>("www-authenticate", "") }
-            };
+        // Static table as defined in RFC 7541 Appendix B
+        private static readonly Dictionary<int, KeyValuePair<string, string>> StaticTable = new Dictionary<int, KeyValuePair<string, string>>()
+        {
+            {1, new KeyValuePair<string, string>(":authority", "")},
+            {2, new KeyValuePair<string, string>(":method", "GET")},
+            {3, new KeyValuePair<string, string>(":method", "POST")},
+            {4, new KeyValuePair<string, string>(":path", "/")},
+            {5, new KeyValuePair<string, string>(":path", "/index.html")},
+            {6, new KeyValuePair<string, string>(":scheme", "http")},
+            {7, new KeyValuePair<string, string>(":scheme", "https")},
+            {8, new KeyValuePair<string, string>(":status", "200")},
+            {9, new KeyValuePair<string, string>(":status", "204")},
+            {10, new KeyValuePair<string, string>(":status", "206")},
+            {11, new KeyValuePair<string, string>(":status", "304")},
+            {12, new KeyValuePair<string, string>(":status", "400")},
+            {13, new KeyValuePair<string, string>(":status", "404")},
+            {14, new KeyValuePair<string, string>(":status", "500")},
+            {15, new KeyValuePair<string, string>("accept-charset", "")},
+            {16, new KeyValuePair<string, string>("accept-encoding", "gzip, deflate")},
+            {17, new KeyValuePair<string, string>("accept-language", "")},
+            {18, new KeyValuePair<string, string>("accept-ranges", "")},
+            {19, new KeyValuePair<string, string>("accept", "")},
+            {20, new KeyValuePair<string, string>("access-control-allow-origin", "")},
+            {21, new KeyValuePair<string, string>("age", "")},
+            {22, new KeyValuePair<string, string>("allow", "")},
+            {23, new KeyValuePair<string, string>("authorization", "")},
+            {24, new KeyValuePair<string, string>("cache-control", "")},
+            {25, new KeyValuePair<string, string>("content-disposition", "")},
+            {26, new KeyValuePair<string, string>("content-encoding", "")},
+            {27, new KeyValuePair<string, string>("content-language", "")},
+            {28, new KeyValuePair<string, string>("content-length", "")},
+            {29, new KeyValuePair<string, string>("content-location", "")},
+            {30, new KeyValuePair<string, string>("content-range", "")},
+            {31, new KeyValuePair<string, string>("content-type", "")},
+            {32, new KeyValuePair<string, string>("cookie", "")},
+            {33, new KeyValuePair<string, string>("date", "")},
+            {34, new KeyValuePair<string, string>("etag", "")},
+            {35, new KeyValuePair<string, string>("expect", "")},
+            {36, new KeyValuePair<string, string>("expires", "")},
+            {37, new KeyValuePair<string, string>("from", "")},
+            {38, new KeyValuePair<string, string>("host", "")},
+            {39, new KeyValuePair<string, string>("if-match", "")},
+            {40, new KeyValuePair<string, string>("if-modified-since", "")},
+            {41, new KeyValuePair<string, string>("if-none-match", "")},
+            {42, new KeyValuePair<string, string>("if-range", "")},
+            {43, new KeyValuePair<string, string>("if-unmodified-since", "")},
+            {44, new KeyValuePair<string, string>("last-modified", "")},
+            {45, new KeyValuePair<string, string>("link", "")},
+            {46, new KeyValuePair<string, string>("location", "")},
+            {47, new KeyValuePair<string, string>("max-forwards", "")},
+            {48, new KeyValuePair<string, string>("proxy-authenticate", "")},
+            {49, new KeyValuePair<string, string>("proxy-authorization", "")},
+            {50, new KeyValuePair<string, string>("range", "")},
+            {51, new KeyValuePair<string, string>("referer", "")},
+            {52, new KeyValuePair<string, string>("refresh", "")},
+            {53, new KeyValuePair<string, string>("retry-after", "")},
+            {54, new KeyValuePair<string, string>("server", "")},
+            {55, new KeyValuePair<string, string>("set-cookie", "")},
+            {56, new KeyValuePair<string, string>("strict-transport-security", "")},
+            {57, new KeyValuePair<string, string>("transfer-encoding", "")},
+            {58, new KeyValuePair<string, string>("user-agent", "")},
+            {59, new KeyValuePair<string, string>("vary", "")},
+            {60, new KeyValuePair<string, string>("via", "")},
+            {61, new KeyValuePair<string, string>("www-authenticate", "")}
+        };
 
-        public SimpleHpackDecoder()
+        // Huffman decoding tables from RFC 7541 Appendix B
+        private static readonly HuffmanNode HuffmanRoot = BuildHuffmanTree();
+
+        public RobustHpackDecoder()
         {
             _dynamicTable = new List<KeyValuePair<string, string>>();
         }
 
-        public List<KeyValuePair<string, string>> Decode(byte[] headerBlock)
+        public List<KeyValuePair<string, string>> Decode(byte[] data)
         {
             var headers = new List<KeyValuePair<string, string>>();
-            var offset = 0;
+            int offset = 0;
 
-            Console.WriteLine($"[DEBUG] Starting HPACK decode of {headerBlock.Length} bytes");
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Starting decode of {data.Length} bytes");
 
-            while (offset < headerBlock.Length)
+            try
             {
-                var prevOffset = offset;
-                var header = DecodeHeader(headerBlock, ref offset);
-                if (header.HasValue)
+                while (offset < data.Length)
                 {
-                    // Only add non-empty headers
-                    if (!string.IsNullOrEmpty(header.Value.Key) || !string.IsNullOrEmpty(header.Value.Value))
+                    var header = DecodeHeader(data, ref offset);
+                    if (header.HasValue)
                     {
                         headers.Add(header.Value);
+                        Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decoded header: {header.Value.Key} = {header.Value.Value}");
                     }
                 }
-
-                // Prevent infinite loops if offset doesn't advance
-                if (offset == prevOffset)
-                {
-                    Console.WriteLine($"[ERROR] HPACK decode stuck at offset {offset}, skipping byte");
-                    offset++;
-                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: Exception during decode: {ex.Message}");
+                // Return what we have so far
             }
 
-            Console.WriteLine($"[DEBUG] HPACK decode complete: {headers.Count} headers");
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decode complete, {headers.Count} headers");
             return headers;
         }
 
@@ -1123,856 +1185,429 @@ namespace Pode
         {
             if (offset >= data.Length) return null;
 
-            var firstByte = data[offset];
-            Console.WriteLine($"[DEBUG] DecodeHeader: firstByte=0x{firstByte:X2}, offset={offset}");
+            byte firstByte = data[offset];
 
-            // Indexed Header Field (starts with 1)
+            // Indexed Header Field (1xxxxxxx)
             if ((firstByte & 0x80) != 0)
             {
-                var index = DecodeInt(data, ref offset, 7);
-                Console.WriteLine($"[DEBUG] Indexed header field: index={index}");
-
-                if (index == 0)
-                {
-                    Console.WriteLine($"[ERROR] Invalid indexed header field: index 0 (RFC 7541 violation)");
-                    // According to RFC 7541, index 0 is not used and must be treated as a decoding error
-                    // Skip this malformed entry and continue parsing
-                    return null; // Don't return empty header, just skip it
-                }
-
-                var header = GetHeaderFromIndex(index);
-                if (header.HasValue)
-                {
-                    // Validate that response pseudo-headers don't appear in requests
-                    if (header.Value.Key == ":status")
-                    {
-                        Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
-                        return null;
-                    }
-
-                    Console.WriteLine($"[DEBUG] Indexed header: {header.Value.Key} = {header.Value.Value}");
-                    Console.WriteLine($"[DEBUG] Decoded header: {header.Value.Key} = {header.Value.Value}");
-                    return header;
-                }
-                else
-                {
-                    Console.WriteLine($"[ERROR] Invalid table index: {index}");
-                    return null; // Skip invalid entries
-                }
+                int index = DecodeInteger(data, ref offset, 7);
+                return GetIndexedHeader(index);
             }
-            // Literal Header Field with Incremental Indexing (starts with 01)
-            else if ((firstByte & 0x40) != 0)
+
+            // Literal Header Field with Incremental Indexing (01xxxxxx)
+            if ((firstByte & 0xC0) == 0x40)
             {
-                var nameIndex = DecodeInt(data, ref offset, 6);
-                Console.WriteLine($"[DEBUG] Literal header field (incremental): nameIndex={nameIndex}");
-                string name;
-
-                if (nameIndex == 0)
-                {
-                    // New name
-                    name = DecodeLiteralString(data, ref offset);
-                    Console.WriteLine($"[DEBUG] New name: '{name}'");
-                }
-                else
-                {
-                    var nameHeader = GetHeaderFromIndex(nameIndex);
-                    if (nameHeader.HasValue)
-                    {
-                        name = nameHeader.Value.Key;
-                        Console.WriteLine($"[DEBUG] Indexed name: '{name}'");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[ERROR] Invalid table index: {nameIndex}");
-                        return null; // Skip invalid entries
-                    }
-                }
-
-                var value = DecodeLiteralString(data, ref offset);
-                Console.WriteLine($"[DEBUG] Literal header (incremental): {name} = {value}");
-
-                // Validate header name and value
-                if (string.IsNullOrEmpty(name) || IsInvalidHeaderName(name))
-                {
-                    Console.WriteLine($"[ERROR] Invalid header name: '{name}' - skipping");
-                    return null;
-                }
-
-                // Validate that response pseudo-headers don't appear in requests
-                if (name == ":status")
-                {
-                    Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
-                    return null;
-                }
-
-                // Sanitize header value to prevent binary garbage
-                value = SanitizeHeaderValue(value);
-
-                var header = new KeyValuePair<string, string>(name, value);
-                Console.WriteLine($"[DEBUG] Decoded header: {name} = {value}");
-
-                // Add to dynamic table if name is valid
-                if (!string.IsNullOrEmpty(name) && !IsInvalidHeaderName(name))
-                {
-                    AddToDynamicTable(header);
-                }
-
-                return header;
+                return DecodeLiteralHeader(data, ref offset, 6, true);
             }
-            // Dynamic Table Size Update (starts with 001)
-            else if ((firstByte & 0xE0) == 0x20)
+
+            // Dynamic Table Size Update (001xxxxx)
+            if ((firstByte & 0xE0) == 0x20)
             {
-                var newSize = DecodeInt(data, ref offset, 5);
-                Console.WriteLine($"[DEBUG] Dynamic table size update: {newSize}");
+                int newSize = DecodeInteger(data, ref offset, 5);
                 UpdateDynamicTableSize(newSize);
-                return null; // Size updates don't produce headers
+                return null;
             }
-            // Literal Header Field Never Indexed (starts with 0001)
-            else if ((firstByte & 0x10) != 0)
+
+            // Literal Header Field Never Indexed (0001xxxx)
+            if ((firstByte & 0xF0) == 0x10)
             {
-                var nameIndex = DecodeInt(data, ref offset, 4);
-                Console.WriteLine($"[DEBUG] Literal header field (never indexed): nameIndex={nameIndex}");
-                string name;
-
-                if (nameIndex == 0)
-                {
-                    // New name
-                    name = DecodeLiteralString(data, ref offset);
-                    Console.WriteLine($"[DEBUG] New name: '{name}'");
-                }
-                else
-                {
-                    var nameHeader = GetHeaderFromIndex(nameIndex);
-                    if (nameHeader.HasValue)
-                    {
-                        name = nameHeader.Value.Key;
-                        Console.WriteLine($"[DEBUG] Indexed name: '{name}'");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[ERROR] Invalid table index: {nameIndex}");
-                        return null; // Skip invalid entries
-                    }
-                }
-
-                var value = DecodeLiteralString(data, ref offset);
-                Console.WriteLine($"[DEBUG] Literal header (never indexed): {name} = {value}");
-
-                // Validate header name and value
-                if (string.IsNullOrEmpty(name) || IsInvalidHeaderName(name))
-                {
-                    Console.WriteLine($"[ERROR] Invalid header name: '{name}' - skipping");
-                    return null;
-                }
-
-                // Validate that response pseudo-headers don't appear in requests
-                if (name == ":status")
-                {
-                    Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
-                    return null;
-                }
-
-                // Sanitize header value to prevent binary garbage
-                value = SanitizeHeaderValue(value);
-
-                Console.WriteLine($"[DEBUG] Decoded header: {name} = {value}");
-                return new KeyValuePair<string, string>(name, value);
+                return DecodeLiteralHeader(data, ref offset, 4, false);
             }
-            // Literal Header Field without Indexing (starts with 0000)
+
+            // Literal Header Field without Indexing (0000xxxx)
+            return DecodeLiteralHeader(data, ref offset, 4, false);
+        }
+
+        private KeyValuePair<string, string>? GetIndexedHeader(int index)
+        {
+            if (index == 0) return null;
+
+            if (index <= StaticTable.Count)
+            {
+                if (StaticTable.TryGetValue(index, out var staticHeader))
+                {
+                    return staticHeader;
+                }
+            }
             else
             {
-                var nameIndex = DecodeInt(data, ref offset, 4);
-                Console.WriteLine($"[DEBUG] Literal header field (no indexing): nameIndex={nameIndex}");
-                string name;
-
-                if (nameIndex == 0)
+                int dynamicIndex = index - StaticTable.Count - 1;
+                if (dynamicIndex >= 0 && dynamicIndex < _dynamicTable.Count)
                 {
-                    // New name
-                    name = DecodeLiteralString(data, ref offset);
-                    Console.WriteLine($"[DEBUG] New name: '{name}'");
+                    return _dynamicTable[dynamicIndex];
                 }
-                else
-                {
-                    var nameHeader = GetHeaderFromIndex(nameIndex);
-                    if (nameHeader.HasValue)
-                    {
-                        name = nameHeader.Value.Key;
-                        Console.WriteLine($"[DEBUG] Indexed name: '{name}'");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[ERROR] Invalid table index: {nameIndex}");
-                        return null; // Skip invalid entries
-                    }
-                }
+            }
 
-                var value = DecodeLiteralString(data, ref offset);
-                Console.WriteLine($"[DEBUG] Literal header (no indexing): {name} = {value}");
+            Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid table index: {index}");
+            return null;
+        }
 
-                // Validate header name and value
-                if (string.IsNullOrEmpty(name) || IsInvalidHeaderName(name))
+        private KeyValuePair<string, string>? DecodeLiteralHeader(byte[] data, ref int offset, int prefixBits, bool addToIndex)
+        {
+            int nameIndex = DecodeInteger(data, ref offset, prefixBits);
+
+            string name;
+            if (nameIndex == 0)
+            {
+                // New name
+                name = DecodeLiteralString(data, ref offset);
+            }
+            else
+            {
+                // Indexed name
+                var indexedHeader = GetIndexedHeader(nameIndex);
+                if (!indexedHeader.HasValue)
                 {
-                    Console.WriteLine($"[ERROR] Invalid header name: '{name}' - skipping");
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid name index: {nameIndex}");
                     return null;
                 }
+                name = indexedHeader.Value.Key;
+            }
 
-                // Validate that response pseudo-headers don't appear in requests
-                if (name == ":status")
-                {
-                    Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
-                    return null;
-                }
+            string value = DecodeLiteralString(data, ref offset);
 
-                // Sanitize header value to prevent binary garbage
-                value = SanitizeHeaderValue(value);
+            // Validate the header
+            if (string.IsNullOrEmpty(name) || !IsValidHeaderName(name))
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: Invalid header name: '{name}' - skipping");
+                return null;
+            }
 
-                Console.WriteLine($"[DEBUG] Decoded header: {name} = {value}");
-                return new KeyValuePair<string, string>(name, value);
+            var header = new KeyValuePair<string, string>(name, value ?? "");
+
+            if (addToIndex)
+            {
+                AddToDynamicTable(header);
+            }
+
+            return header;
+        }
+
+        private string DecodeLiteralString(byte[] data, ref int offset)
+        {
+            if (offset >= data.Length) return "";
+
+            byte firstByte = data[offset];
+            bool isHuffmanEncoded = (firstByte & 0x80) != 0;
+            int length = DecodeInteger(data, ref offset, 7);
+
+            if (offset + length > data.Length)
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: String length {length} exceeds available data");
+                return "";
+            }
+
+            if (length == 0) return "";
+
+            byte[] stringData = new byte[length];
+            Array.Copy(data, offset, stringData, 0, length);
+            offset += length;
+
+            if (isHuffmanEncoded)
+            {
+                return DecodeHuffmanString(stringData);
+            }
+            else
+            {
+                return Encoding.UTF8.GetString(stringData);
             }
         }
 
-        private KeyValuePair<string, string>? GetHeaderFromIndex(int index)
+        private int DecodeInteger(byte[] data, ref int offset, int prefixBits)
         {
-            if (index <= 0) return null;
+            if (offset >= data.Length) return 0;
 
-            // Static table entries (1-61)
-            if (StaticTable.ContainsKey(index))
+            int mask = (1 << prefixBits) - 1;
+            int value = data[offset] & mask;
+            offset++;
+
+            if (value < mask)
             {
-                return StaticTable[index];
+                return value;
             }
 
-            // Dynamic table entries (62+)
-            var dynamicIndex = index - StaticTable.Count;
-            if (dynamicIndex > 0 && dynamicIndex <= _dynamicTable.Count)
+            int m = 0;
+            while (offset < data.Length)
             {
-                return _dynamicTable[dynamicIndex - 1];
+                byte b = data[offset];
+                offset++;
+
+                value += (b & 0x7F) << m;
+                m += 7;
+
+                if ((b & 0x80) == 0)
+                {
+                    break;
+                }
+
+                if (m >= 32) // Prevent integer overflow
+                {
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Integer encoding overflow");
+                    break;
+                }
             }
 
-            return null;
+            return value;
+        }
+
+        private string DecodeHuffmanString(byte[] data)
+        {
+            try
+            {
+                var result = new StringBuilder();
+                var node = HuffmanRoot;
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    byte b = data[i];
+
+                    for (int bit = 7; bit >= 0; bit--)
+                    {
+                        bool isOne = (b & (1 << bit)) != 0;
+                        node = isOne ? node.One : node.Zero;
+
+                        if (node == null)
+                        {
+                            Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid Huffman sequence");
+                            return Encoding.UTF8.GetString(data); // Fallback to plain decoding
+                        }
+
+                        if (node.Value != null)
+                        {
+                            result.Append(node.Value);
+                            node = HuffmanRoot;
+                        }
+                    }
+                }
+
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: Huffman decode error: {ex.Message}");
+                return Encoding.UTF8.GetString(data); // Fallback to plain decoding
+            }
         }
 
         private void AddToDynamicTable(KeyValuePair<string, string> header)
         {
-            // Calculate entry size (name + value + 32 bytes overhead per RFC 7541)
-            var entrySize = Encoding.UTF8.GetByteCount(header.Key) +
-                           Encoding.UTF8.GetByteCount(header.Value) + 32;
+            int headerSize = 32 + Encoding.UTF8.GetByteCount(header.Key) + Encoding.UTF8.GetByteCount(header.Value);
 
-            // Remove entries if necessary to make room
-            while (_currentTableSize + entrySize > _maxTableSize && _dynamicTable.Count > 0)
+            // Evict entries if necessary
+            while (_currentDynamicTableSize + headerSize > _maxDynamicTableSize && _dynamicTable.Count > 0)
             {
-                var removedHeader = _dynamicTable[_dynamicTable.Count - 1];
+                var evicted = _dynamicTable[_dynamicTable.Count - 1];
                 _dynamicTable.RemoveAt(_dynamicTable.Count - 1);
-                var removedSize = Encoding.UTF8.GetByteCount(removedHeader.Key) +
-                                Encoding.UTF8.GetByteCount(removedHeader.Value) + 32;
-                _currentTableSize -= removedSize;
+                int evictedSize = 32 + Encoding.UTF8.GetByteCount(evicted.Key) + Encoding.UTF8.GetByteCount(evicted.Value);
+                _currentDynamicTableSize -= evictedSize;
             }
 
-            // Add new entry if it fits
-            if (entrySize <= _maxTableSize)
+            if (headerSize <= _maxDynamicTableSize)
             {
                 _dynamicTable.Insert(0, header);
-                _currentTableSize += entrySize;
-                Console.WriteLine($"[DEBUG] Added to dynamic table: {header.Key}={header.Value} (size: {entrySize}, total: {_currentTableSize})");
+                _currentDynamicTableSize += headerSize;
             }
         }
 
         private void UpdateDynamicTableSize(int newSize)
         {
-            _maxTableSize = newSize;
+            _maxDynamicTableSize = newSize;
 
-            // Remove entries if current size exceeds new maximum
-            while (_currentTableSize > _maxTableSize && _dynamicTable.Count > 0)
+            while (_currentDynamicTableSize > _maxDynamicTableSize && _dynamicTable.Count > 0)
             {
-                var removedHeader = _dynamicTable[_dynamicTable.Count - 1];
+                var evicted = _dynamicTable[_dynamicTable.Count - 1];
                 _dynamicTable.RemoveAt(_dynamicTable.Count - 1);
-                var removedSize = Encoding.UTF8.GetByteCount(removedHeader.Key) +
-                                Encoding.UTF8.GetByteCount(removedHeader.Value) + 32;
-                _currentTableSize -= removedSize;
-            }
-
-            Console.WriteLine($"[DEBUG] Updated dynamic table max size to: {newSize}");
-        }
-
-        private int DecodeInt(byte[] data, ref int offset, int prefixBits)
-        {
-            if (offset >= data.Length)
-            {
-                Console.WriteLine($"[DEBUG] DecodeInt: No data at offset {offset}");
-                return 0;
-            }
-
-            var mask = (1 << prefixBits) - 1;
-            var value = data[offset] & mask;
-            Console.WriteLine($"[DEBUG] DecodeInt: byte=0x{data[offset]:X2}, mask=0x{mask:X2}, initial_value={value}, prefixBits={prefixBits}");
-            offset++;
-
-            if (value < mask)
-            {
-                Console.WriteLine($"[DEBUG] DecodeInt: returning simple value {value}");
-                return value;
-            }
-
-            // Variable length integer decoding per RFC 7541 Section 5.1
-            Console.WriteLine($"[DEBUG] DecodeInt: entering variable-length decoding, value={value}, mask={mask}");
-            var m = 0;
-            while (offset < data.Length)
-            {
-                var b = data[offset++];
-                Console.WriteLine($"[DEBUG] DecodeInt: processing byte 0x{b:X2}, m={m}");
-                value += (b & 0x7F) << m;
-                m += 7;
-                if ((b & 0x80) == 0)
-                {
-                    Console.WriteLine($"[DEBUG] DecodeInt: variable-length complete, final value={value}");
-                    break;
-                }
-
-                // Safety check to prevent infinite loops
-                if (m > 28) // 32-bit integer, max 5 bytes
-                {
-                    Console.WriteLine($"[DEBUG] DecodeInt: ERROR - variable-length integer too large, m={m}");
-                    return 0;
-                }
-            }
-
-            Console.WriteLine($"[DEBUG] DecodeInt: returning variable-length value {value}");
-            return value;
-        }
-
-        private string DecodeLiteralString(byte[] data, ref int offset)
-        {
-            if (offset >= data.Length)
-            {
-                Console.WriteLine($"[WARNING] DecodeLiteralString: No data at offset {offset}");
-                return "";
-            }
-
-            var firstByte = data[offset];
-            var isHuffmanCoded = (firstByte & 0x80) != 0;
-            var length = DecodeInt(data, ref offset, 7);
-
-            Console.WriteLine($"[DEBUG] DecodeLiteralString: offset={offset}, isHuffmanCoded={isHuffmanCoded}, length={length}");
-
-            if (length == 0)
-            {
-                Console.WriteLine($"[DEBUG] DecodeLiteralString: Zero-length string");
-                return "";
-            }
-
-            // Sanity check for reasonable string lengths
-            if (length > 16384) // 16KB max for a single header string
-            {
-                Console.WriteLine($"[ERROR] DecodeLiteralString: String length too large ({length}), truncating to 16KB");
-                length = 16384;
-            }
-
-            if (offset + length > data.Length)
-            {
-                Console.WriteLine($"[ERROR] DecodeLiteralString: Not enough bytes for string (need {length}, have {data.Length - offset})");
-                // Return what we can instead of failing completely
-                var availableLength = Math.Max(0, data.Length - offset);
-                if (availableLength > 0)
-                {
-                    var partialBytes = new byte[availableLength];
-                    Array.Copy(data, offset, partialBytes, 0, availableLength);
-                    offset += availableLength;
-
-                    try
-                    {
-                        var partialResult = isHuffmanCoded ? DecodeHuffman(partialBytes) : Encoding.UTF8.GetString(partialBytes);
-                        return SanitizeHeaderValue(partialResult);
-                    }
-                    catch
-                    {
-                        return "";
-                    }
-                }
-                return "";
-            }
-
-            // Copy the exact number of bytes specified by length
-            var stringBytes = new byte[length];
-            Array.Copy(data, offset, stringBytes, 0, length);
-            offset += length;
-
-            string result;
-            if (isHuffmanCoded)
-            {
-                // Decode Huffman-coded string
-                result = DecodeHuffman(stringBytes);
-                Console.WriteLine($"[DEBUG] DecodeLiteralString: Huffman decoded '{result}' from {BitConverter.ToString(stringBytes)}");
-            }
-            else
-            {
-                try
-                {
-                    result = Encoding.UTF8.GetString(stringBytes);
-                    Console.WriteLine($"[DEBUG] DecodeLiteralString: Plain string '{result}' from {BitConverter.ToString(stringBytes)}");
-                }
-                catch
-                {
-                    Console.WriteLine($"[ERROR] DecodeLiteralString: UTF-8 decoding failed, returning sanitized version");
-                    result = SanitizeHeaderValue(Encoding.ASCII.GetString(stringBytes));
-                }
-            }
-
-            // Always sanitize the result to prevent binary garbage
-            result = SanitizeHeaderValue(result ?? "");
-            return result;
-        }
-
-        // RFC 7541 compliant Huffman decoder for HTTP/2 HPACK
-        private string DecodeHuffman(byte[] data)
-        {
-            try
-            {
-                var result = new StringBuilder();
-                var bitAccumulator = 0UL;
-                var bitsAccumulated = 0;
-                var decodedCount = 0;
-                const int maxOutputLength = 8192; // Prevent excessive output
-
-                foreach (var b in data)
-                {
-                    // Accumulate bits from MSB
-                    bitAccumulator = (bitAccumulator << 8) | b;
-                    bitsAccumulated += 8;
-
-                    // Decode as many symbols as possible
-                    while (bitsAccumulated >= 5) // Minimum symbol length is 5 bits
-                    {
-                        var symbolFound = false;
-
-                        // Try to match symbols from longest to shortest (to get greedy matching)
-                        for (int testLength = Math.Min(30, bitsAccumulated); testLength >= 5; testLength--)
-                        {
-                            // Extract the most significant testLength bits
-                            var extractedBits = bitAccumulator >> (bitsAccumulated - testLength);
-                            var key = (extractedBits, testLength);
-
-                            if (HuffmanDecodeTable.TryGetValue(key, out var symbol))
-                            {
-                                // Validate the symbol is printable ASCII or common characters
-                                if (symbol >= 0 && symbol <= 255)
-                                {
-                                    var ch = (char)symbol;
-                                    if (ch >= 32 && ch <= 126) // Printable ASCII
-                                    {
-                                        result.Append(ch);
-                                        decodedCount++;
-                                    }
-                                    else if (ch == '\t' || ch == '\n' || ch == '\r') // Allow some control chars
-                                    {
-                                        result.Append(ch);
-                                        decodedCount++;
-                                    }
-                                    // Skip other control characters to prevent corruption
-                                }
-
-                                // Remove the decoded bits from accumulator
-                                var remainingBits = bitsAccumulated - testLength;
-                                bitAccumulator &= (1UL << remainingBits) - 1;
-                                bitsAccumulated = remainingBits;
-
-                                symbolFound = true;
-                                break;
-                            }
-                        }
-
-                        if (!symbolFound)
-                        {
-                            // No symbol found, either we need more data or it's padding
-                            break;
-                        }
-
-                        // Prevent excessive output that could be caused by malformed data
-                        if (decodedCount >= maxOutputLength)
-                        {
-                            Console.WriteLine($"[WARNING] Huffman decoder hit max output length ({maxOutputLength}), truncating");
-                            break;
-                        }
-                    }
-
-                    // Safety check to prevent infinite loops with malformed data
-                    if (decodedCount >= maxOutputLength) break;
-                }
-
-                // RFC 7541: Padding should be most-significant bits of EOS (all 1s)
-                // Only validate padding if we have remaining bits and decoded something
-                if (bitsAccumulated > 0 && decodedCount > 0)
-                {
-                    // EOS (End of String) symbol for padding is all 1s
-                    var paddingValue = (1UL << bitsAccumulated) - 1;
-                    if (bitAccumulator > paddingValue)
-                    {
-                        Console.WriteLine($"[WARNING] Invalid Huffman padding detected (ignoring): {bitAccumulator:X} vs expected max {paddingValue:X}");
-                        // Don't fail on padding issues - just log and continue
-                    }
-                }
-
-                var decodedResult = result.ToString();
-
-                // Validate the decoded result
-                if (string.IsNullOrEmpty(decodedResult) && data.Length > 0)
-                {
-                    Console.WriteLine($"[WARNING] Huffman decoding produced empty result, using fallback");
-                    return SanitizeHeaderValue(Encoding.UTF8.GetString(data));
-                }
-
-                // Check for obvious corruption
-                if (ContainsCorruptedData(decodedResult))
-                {
-                    Console.WriteLine($"[WARNING] Huffman decoding produced corrupted text: {decodedResult}");
-                    return SanitizeHeaderValue(Encoding.UTF8.GetString(data));
-                }
-
-                return decodedResult;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR] Huffman decoding error: {ex.Message}");
-                // Fallback: try to decode as raw UTF-8, but sanitize it
-                try
-                {
-                    var fallbackResult = Encoding.UTF8.GetString(data);
-                    return SanitizeHeaderValue(fallbackResult);
-                }
-                catch
-                {
-                    return ""; // Last resort: empty string
-                }
+                int evictedSize = 32 + Encoding.UTF8.GetByteCount(evicted.Key) + Encoding.UTF8.GetByteCount(evicted.Value);
+                _currentDynamicTableSize -= evictedSize;
             }
         }
 
-        private bool ContainsCorruptedData(string text)
+        private bool IsValidHeaderName(string name)
         {
-            // Check for obvious signs of corruption
-            if (string.IsNullOrEmpty(text))
-                return false;
+            if (string.IsNullOrEmpty(name)) return false;
 
-            // Count non-printable characters (excluding common control chars like \r, \n, \t)
-            int nonPrintableCount = 0;
-            foreach (char c in text)
+            // Basic validation - header names should be lowercase and contain valid characters
+            foreach (char c in name)
             {
-                if (c < 32 && c != '\r' && c != '\n' && c != '\t')
-                    nonPrintableCount++;
-                else if (c > 126 && c < 160) // Common non-printable range
-                    nonPrintableCount++;
+                if (c >= 'A' && c <= 'Z') return false; // Should be lowercase
+                if (c < 32 || c > 126) return false; // Should be printable ASCII
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return false; // No whitespace
             }
 
-            // If more than 20% of characters are non-printable, likely corrupted
-            return nonPrintableCount > (text.Length * 0.2);
+            return true;
         }
 
-        private string SanitizeHeaderValue(string value)
+        private static HuffmanNode BuildHuffmanTree()
         {
-            if (string.IsNullOrEmpty(value))
-                return value;
+            var root = new HuffmanNode();
 
-            var result = new StringBuilder();
-            foreach (char c in value)
+            // RFC 7541 Appendix B - HPACK Huffman Code Table
+            // This is the actual table from the specification
+            var huffmanTable = new (int symbol, string bits)[]
             {
-                // Only include printable ASCII and common control characters
-                if ((c >= 32 && c <= 126) || c == '\t' || c == '\r' || c == '\n')
+                (0, "1111111111000"),
+                (1, "11111111111111111011000"),
+                (2, "1111111111111111111111100010"),
+                (3, "1111111111111111111111100011"),
+                (4, "1111111111111111111111100100"),
+                (5, "1111111111111111111111100101"),
+                (6, "1111111111111111111111100110"),
+                (7, "1111111111111111111111100111"),
+                (8, "1111111111111111111111101000"),
+                (9, "111111111111111111101010"),
+                (10, "1111111111111111111111111110"),
+                (11, "1111111111111111111111101001"),
+                (12, "1111111111111111111111101010"),
+                (13, "1111111111111111111111111111"),
+                (14, "1111111111111111111111101011"),
+                (15, "1111111111111111111111101100"),
+                (16, "1111111111111111111111101101"),
+                (17, "1111111111111111111111101110"),
+                (18, "1111111111111111111111101111"),
+                (19, "1111111111111111111111110000"),
+                (20, "1111111111111111111111110001"),
+                (21, "1111111111111111111111110010"),
+                (22, "1111111111111111111111110011"),
+                (23, "1111111111111111111111110100"),
+                (24, "1111111111111111111111110101"),
+                (25, "1111111111111111111111110110"),
+                (26, "1111111111111111111111110111"),
+                (27, "1111111111111111111111111000"),
+                (28, "1111111111111111111111111001"),
+                (29, "1111111111111111111111111010"),
+                (30, "1111111111111111111111111011"),
+                (31, "1111111111111111111111111100"),
+                (32, "010100"),  // ' ' (space)
+                (33, "1111111000"),  // '!'
+                (34, "1111111001"),  // '"'
+                (35, "111111111010"),  // '#'
+                (36, "1111111111001"),  // '$'
+                (37, "010101"),  // '%'
+                (38, "11111000"),  // '&'
+                (39, "11111111010"),  // '''
+                (40, "1111111010"),  // '('
+                (41, "1111111011"),  // ')'
+                (42, "1111111100"),  // '*'
+                (43, "11111111011"),  // '+'
+                (44, "11111111100"),  // ','
+                (45, "010110"),  // '-'
+                (46, "010111"),  // '.'
+                (47, "011000"),  // '/'
+                (48, "00000"),  // '0'
+                (49, "00001"),  // '1'
+                (50, "00010"),  // '2'
+                (51, "011001"),  // '3'
+                (52, "011010"),  // '4'
+                (53, "011011"),  // '5'
+                (54, "011100"),  // '6'
+                (55, "011101"),  // '7'
+                (56, "011110"),  // '8'
+                (57, "011111"),  // '9'
+                (58, "1011100"),  // ':'
+                (59, "11111111101"),  // ';'
+                (60, "1111111111010"),  // '<'
+                (61, "1111111111011"),  // '='
+                (62, "1111111111100"),  // '>'
+                (63, "11111111111100"),  // '?'
+                (64, "11111111111101"),  // '@'
+                (65, "1100"),  // 'A'
+                (66, "11111111111110"),  // 'B'
+                (67, "100000"),  // 'C'
+                (68, "1011101"),  // 'D'
+                (69, "1100000"),  // 'E'
+                (70, "1100001"),  // 'F'
+                (71, "1100010"),  // 'G'
+                (72, "1100011"),  // 'H'
+                (73, "1100100"),  // 'I'
+                (74, "1100101"),  // 'J'
+                (75, "1100110"),  // 'K'
+                (76, "1100111"),  // 'L'
+                (77, "1101000"),  // 'M'
+                (78, "1101001"),  // 'N'
+                (79, "1101010"),  // 'O'
+                (80, "1101011"),  // 'P'
+                (81, "1101100"),  // 'Q'
+                (82, "1101101"),  // 'R'
+                (83, "1101110"),  // 'S'
+                (84, "1101111"),  // 'T'
+                (85, "1110000"),  // 'U'
+                (86, "1110001"),  // 'V'
+                (87, "1110010"),  // 'W'
+                (88, "11111001"),  // 'X'
+                (89, "1110011"),  // 'Y'
+                (90, "11111010"),  // 'Z'
+                (91, "11111111111111"),  // '['
+                (92, "100001"),  // '\'
+                (93, "111111111111110"),  // ']'
+                (94, "11111111111111"),  // '^'
+                (95, "1111111111101"),  // '_'
+                (96, "111111111111111"),  // '`'
+                (97, "00011"),  // 'a'
+                (98, "100010"),  // 'b'
+                (99, "00100"),  // 'c'
+                (100, "100011"),  // 'd'
+                (101, "00101"),  // 'e'
+                (102, "100100"),  // 'f'
+                (103, "100101"),  // 'g'
+                (104, "100110"),  // 'h'
+                (105, "00110"),  // 'i'
+                (106, "1110100"),  // 'j'
+                (107, "1110101"),  // 'k'
+                (108, "101000"),  // 'l'
+                (109, "101001"),  // 'm'
+                (110, "101010"),  // 'n'
+                (111, "00111"),  // 'o'
+                (112, "101011"),  // 'p'
+                (113, "1110110"),  // 'q'
+                (114, "101100"),  // 'r'
+                (115, "01000"),  // 's'
+                (116, "01001"),  // 't'
+                (117, "101101"),  // 'u'
+                (118, "1110111"),  // 'v'
+                (119, "1111000"),  // 'w'
+                (120, "1111001"),  // 'x'
+                (121, "1111010"),  // 'y'
+                (122, "1111011"),  // 'z'
+                (123, "111111111111100"),  // '{'
+                (124, "11111011"),  // '|'
+                (125, "11111111111111110"),  // '}'
+                (126, "11111111111101"),  // '~'
+                (127, "1111111111111111111111111101"),  // DEL
+            };
+
+            // Build the Huffman tree
+            foreach (var (symbol, bits) in huffmanTable)
+            {
+                AddHuffmanSymbol(root, bits, (char)symbol);
+            }
+
+            return root;
+        }
+
+        private static void AddHuffmanSymbol(HuffmanNode root, string bits, char symbol)
+        {
+            var node = root;
+            foreach (char bit in bits)
+            {
+                if (bit == '0')
                 {
-                    result.Append(c);
+                    if (node.Zero == null) node.Zero = new HuffmanNode();
+                    node = node.Zero;
                 }
                 else
                 {
-                    result.Append('?'); // Replace invalid characters with ?
+                    if (node.One == null) node.One = new HuffmanNode();
+                    node = node.One;
                 }
             }
-            return result.ToString();
+            node.Value = symbol;
         }
 
-        private static readonly Dictionary<(ulong bits, int length), int> HuffmanDecodeTable =
-            new Dictionary<(ulong bits, int length), int>
-            {
-                // Complete Huffman table from RFC 7541 Appendix B
-                { (0x1ff8, 13), 0 },      // (  0)
-                { (0x7fffd8, 23), 1 },    // (  1)
-                { (0xfffffe2, 28), 2 },   // (  2)
-                { (0xfffffe3, 28), 3 },   // (  3)
-                { (0xfffffe4, 28), 4 },   // (  4)
-                { (0xfffffe5, 28), 5 },   // (  5)
-                { (0xfffffe6, 28), 6 },   // (  6)
-                { (0xfffffe7, 28), 7 },   // (  7)
-                { (0xfffffe8, 28), 8 },   // (  8)
-                { (0xffffea, 24), 9 },    // (  9) '\t'
-                { (0x3ffffec, 30), 10 },  // ( 10) '\n'
-                { (0xfffffe9, 28), 11 },  // ( 11)
-                { (0xfffffea, 28), 12 },  // ( 12)
-                { (0x3ffffed, 30), 13 },  // ( 13) '\r'
-                { (0xfffffeb, 28), 14 },  // ( 14)
-                { (0xfffffec, 28), 15 },  // ( 15)
-                { (0xfffffed, 28), 16 },  // ( 16)
-                { (0xfffffee, 28), 17 },  // ( 17)
-                { (0xfffffef, 28), 18 },  // ( 18)
-                { (0xffffff0, 28), 19 },  // ( 19)
-                { (0xffffff1, 28), 20 },  // ( 20)
-                { (0xffffff2, 28), 21 },  // ( 21)
-                { (0x3ffffee, 30), 22 },  // ( 22)
-                { (0xffffff3, 28), 23 },  // ( 23)
-                { (0xffffff4, 28), 24 },  // ( 24)
-                { (0xffffff5, 28), 25 },  // ( 25)
-                { (0xffffff6, 28), 26 },  // ( 26)
-                { (0xffffff7, 28), 27 },  // ( 27)
-                { (0xffffff8, 28), 28 },  // ( 28)
-                { (0xffffff9, 28), 29 },  // ( 29)
-                { (0xffffffa, 28), 30 },  // ( 30)
-                { (0xffffffb, 28), 31 },  // ( 31)
-                { (0x14, 6), 32 },        // ( 32) ' '
-                { (0x3f8, 10), 33 },      // ( 33) '!'
-                { (0x3f9, 10), 34 },      // ( 34) '"'
-                { (0xffa, 12), 35 },      // ( 35) '#'
-                { (0x1ff9, 13), 36 },     // ( 36) '$'
-                { (0x15, 6), 37 },        // ( 37) '%'
-                { (0xf8, 8), 38 },        // ( 38) '&'
-                { (0x7fa, 11), 39 },      // ( 39) '''
-                { (0x3fa, 10), 40 },      // ( 40) '('
-                { (0x3fb, 10), 41 },      // ( 41) ')'
-                { (0xf9, 8), 42 },        // ( 42) '*'
-                { (0x7fb, 11), 43 },      // ( 43) '+'
-                { (0xfa, 8), 44 },        // ( 44) ','
-                { (0x16, 6), 45 },        // ( 45) '-'
-                { (0x17, 6), 46 },        // ( 46) '.'
-                { (0x18, 6), 47 },        // ( 47) '/'
-                { (0x0, 5), 48 },         // ( 48) '0'
-                { (0x1, 5), 49 },         // ( 49) '1'
-                { (0x2, 5), 50 },         // ( 50) '2'
-                { (0x19, 6), 51 },        // ( 51) '3'
-                { (0x1a, 6), 52 },        // ( 52) '4'
-                { (0x1b, 6), 53 },        // ( 53) '5'
-                { (0x1c, 6), 54 },        // ( 54) '6'
-                { (0x1d, 6), 55 },        // ( 55) '7'
-                { (0x1e, 6), 56 },        // ( 56) '8'
-                { (0x1f, 6), 57 },        // ( 57) '9'
-                { (0x5c, 8), 58 },        // ( 58) ':'
-                { (0xfb, 8), 59 },        // ( 59) ';'
-                { (0x7ffc, 15), 60 },     // ( 60) '<'
-                { (0x20, 6), 61 },        // ( 61) '='
-                { (0xffb, 12), 62 },      // ( 62) '>'
-                { (0x3fc, 10), 63 },      // ( 63) '?'
-                { (0x1ffa, 13), 64 },     // ( 64) '@'
-                { (0x21, 6), 65 },        // ( 65) 'A'
-                { (0x5d, 8), 66 },        // ( 66) 'B'
-                { (0x5e, 8), 67 },        // ( 67) 'C'
-                { (0x5f, 8), 68 },        // ( 68) 'D'
-                { (0x60, 8), 69 },        // ( 69) 'E'
-                { (0x61, 8), 70 },        // ( 70) 'F'
-                { (0x62, 8), 71 },        // ( 71) 'G'
-                { (0x63, 8), 72 },        // ( 72) 'H'
-                { (0x64, 8), 73 },        // ( 73) 'I'
-                { (0x65, 8), 74 },        // ( 74) 'J'
-                { (0x66, 8), 75 },        // ( 75) 'K'
-                { (0x67, 8), 76 },        // ( 76) 'L'
-                { (0x68, 8), 77 },        // ( 77) 'M'
-                { (0x69, 8), 78 },        // ( 78) 'N'
-                { (0x6a, 8), 79 },        // ( 79) 'O'
-                { (0x6b, 8), 80 },        // ( 80) 'P'
-                { (0x6c, 8), 81 },        // ( 81) 'Q'
-                { (0x6d, 8), 82 },        // ( 82) 'R'
-                { (0x6e, 8), 83 },        // ( 83) 'S'
-                { (0x6f, 8), 84 },        // ( 84) 'T'
-                { (0x70, 8), 85 },        // ( 85) 'U'
-                { (0x71, 8), 86 },        // ( 86) 'V'
-                { (0x72, 8), 87 },        // ( 87) 'W'
-                { (0xfc, 8), 88 },        // ( 88) 'X'
-                { (0x73, 8), 89 },        // ( 89) 'Y'
-                { (0xfd, 8), 90 },        // ( 90) 'Z'
-                { (0x1ffb, 13), 91 },     // ( 91) '['
-                { (0x7fff0, 19), 92 },    // ( 92) '\'
-                { (0x1ffc, 13), 93 },     // ( 93) ']'
-                { (0x3ffc, 14), 94 },     // ( 94) '^'
-                { (0x22, 6), 95 },        // ( 95) '_'
-                { (0x7ffd, 15), 96 },     // ( 96) '`'
-                { (0x3, 5), 97 },         // ( 97) 'a'
-                { (0x23, 6), 98 },        // ( 98) 'b'
-                { (0x4, 5), 99 },         // ( 99) 'c'
-                { (0x24, 6), 100 },       // (100) 'd'
-                { (0x5, 5), 101 },        // (101) 'e'
-                { (0x25, 6), 102 },       // (102) 'f'
-                { (0x26, 6), 103 },       // (103) 'g'
-                { (0x27, 6), 104 },       // (104) 'h'
-                { (0x6, 5), 105 },        // (105) 'i'
-                { (0x74, 8), 106 },       // (106) 'j'
-                { (0x75, 8), 107 },       // (107) 'k'
-                { (0x28, 6), 108 },       // (108) 'l'
-                { (0x29, 6), 109 },       // (109) 'm'
-                { (0x2a, 6), 110 },       // (110) 'n'
-                { (0x7, 5), 111 },        // (111) 'o'
-                { (0x2b, 6), 112 },       // (112) 'p'
-                { (0x76, 8), 113 },       // (113) 'q'
-                { (0x2c, 6), 114 },       // (114) 'r'
-                { (0x8, 5), 115 },        // (115) 's'
-                { (0x9, 5), 116 },        // (116) 't'
-                { (0x2d, 6), 117 },       // (117) 'u'
-                { (0x77, 8), 118 },       // (118) 'v'
-                { (0x78, 8), 119 },       // (119) 'w'
-                { (0x79, 8), 120 },       // (120) 'x'
-                { (0x7a, 8), 121 },       // (121) 'y'
-                { (0x7b, 8), 122 },       // (122) 'z'
-                { (0x7ffe, 15), 123 },    // (123) '{'
-                { (0x7fc, 11), 124 },     // (124) '|'
-                { (0x3ffd, 14), 125 },    // (125) '}'
-                { (0x1ffd, 13), 126 },    // (126) '~'
-                { (0xffffffc, 28), 127 }, // (127)
-                { (0xfffe6, 20), 128 },   // (128)
-                { (0x3fffd2, 22), 129 },  // (129)
-                { (0xfffe7, 20), 130 },   // (130)
-                { (0xfffe8, 20), 131 },   // (131)
-                { (0x3fffd3, 22), 132 },  // (132)
-                { (0x3fffd4, 22), 133 },  // (133)
-                { (0x3fffd5, 22), 134 },  // (134)
-                { (0x7fffd9, 23), 135 },  // (135)
-                { (0x3fffd6, 22), 136 },  // (136)
-                { (0x7fffda, 23), 137 },  // (137)
-                { (0x7fffdb, 23), 138 },  // (138)
-                { (0x7fffdc, 23), 139 },  // (139)
-                { (0x7fffdd, 23), 140 },  // (140)
-                { (0x7fffde, 23), 141 },  // (141)
-                { (0xffffeb, 24), 142 },  // (142)
-                { (0x7fffdf, 23), 143 },  // (143)
-                { (0xffffec, 24), 144 },  // (144)
-                { (0xffffed, 24), 145 },  // (145)
-                { (0x3fffd7, 22), 146 },  // (146)
-                { (0x7fffe0, 23), 147 },  // (147)
-                { (0xffffee, 24), 148 },  // (148)
-                { (0x7fffe1, 23), 149 },  // (149)
-                { (0x7fffe2, 23), 150 },  // (150)
-                { (0x7fffe3, 23), 151 },  // (151)
-                { (0x7fffe4, 23), 152 },  // (152)
-                { (0x1fffdc, 21), 153 },  // (153)
-                { (0x3fffd8, 22), 154 },  // (154)
-                { (0x7fffe5, 23), 155 },  // (155)
-                { (0x3fffd9, 22), 156 },  // (156)
-                { (0x7fffe6, 23), 157 },  // (157)
-                { (0x7fffe7, 23), 158 },  // (158)
-                { (0xffffef, 24), 159 },  // (159)
-                { (0x3fffda, 22), 160 },  // (160)
-                { (0x1fffdd, 21), 161 },  // (161)
-                { (0xfffe9, 20), 162 },   // (162)
-                { (0x3fffdb, 22), 163 },  // (163)
-                { (0x3fffdc, 22), 164 },  // (164)
-                { (0x7fffe8, 23), 165 },  // (165)
-                { (0x7fffe9, 23), 166 },  // (166)
-                { (0x1fffde, 21), 167 },  // (167)
-                { (0x7fffea, 23), 168 },  // (168)
-                { (0x3fffdd, 22), 169 },  // (169)
-                { (0x3fffde, 22), 170 },  // (170)
-                { (0xfffff0, 24), 171 },  // (171)
-                { (0x1fffdf, 21), 172 },  // (172)
-                { (0x3fffdf, 22), 173 },  // (173)
-                { (0x7fffeb, 23), 174 },  // (174)
-                { (0x7fffec, 23), 175 },  // (175)
-                { (0x1fffe0, 21), 176 },  // (176)
-                { (0x1fffe1, 21), 177 },  // (177)
-                { (0x3fffe0, 22), 178 },  // (178)
-                { (0x1fffe2, 21), 179 },  // (179)
-                { (0x7fffed, 23), 180 },  // (180)
-                { (0x3fffe1, 22), 181 },  // (181)
-                { (0x7fffee, 23), 182 },  // (182)
-                { (0x7fffef, 23), 183 },  // (183)
-                { (0xfffea, 20), 184 },   // (184)
-                { (0x3fffe2, 22), 185 },  // (185)
-                { (0x3fffe3, 22), 186 },  // (186)
-                { (0x3fffe4, 22), 187 },  // (187)
-                { (0x7ffff0, 23), 188 },  // (188)
-                { (0x3fffe5, 22), 189 },  // (189)
-                { (0x3fffe6, 22), 190 },  // (190)
-                { (0x7ffff1, 23), 191 },  // (191)
-                { (0x3ffffe0, 26), 192 }, // (192)
-                { (0x3ffffe1, 26), 193 }, // (193)
-                { (0xfffeb, 20), 194 },   // (194)
-                { (0x7fff1, 19), 195 },   // (195)
-                { (0x3fffe7, 22), 196 },  // (196)
-                { (0x7ffff2, 23), 197 },  // (197)
-                { (0x3fffe8, 22), 198 },  // (198)
-                { (0x1ffffec, 25), 199 }, // (199)
-                { (0x3ffffe2, 26), 200 }, // (200)
-                { (0x3ffffe3, 26), 201 }, // (201)
-                { (0x3ffffe4, 26), 202 }, // (202)
-                { (0x7ffffde, 27), 203 }, // (203)
-                { (0x7ffffdf, 27), 204 }, // (204)
-                { (0x3ffffe5, 26), 205 }, // (205)
-                { (0xfffff1, 24), 206 },  // (206)
-                { (0x1ffffed, 25), 207 }, // (207)
-                { (0x7fff2, 19), 208 },   // (208)
-                { (0x1fffe3, 21), 209 },  // (209)
-                { (0x3ffffe6, 26), 210 }, // (210)
-                { (0x7ffffe0, 27), 211 }, // (211)
-                { (0x7ffffe1, 27), 212 }, // (212)
-                { (0x3ffffe7, 26), 213 }, // (213)
-                { (0x7ffffe2, 27), 214 }, // (214)
-                { (0xfffff2, 24), 215 },  // (215)
-                { (0x1fffe4, 21), 216 },  // (216)
-                { (0x1fffe5, 21), 217 },  // (217)
-                { (0x3ffffe8, 26), 218 }, // (218)
-                { (0x3ffffe9, 26), 219 }, // (219)
-                { (0xffffffd, 28), 220 }, // (220)
-                { (0x7ffffe3, 27), 221 }, // (221)
-                { (0x7ffffe4, 27), 222 }, // (222)
-                { (0x7ffffe5, 27), 223 }, // (223)
-                { (0xfffec, 20), 224 },   // (224)
-                { (0xfffff3, 24), 225 },  // (225)
-                { (0xfffed, 20), 226 },   // (226)
-                { (0x1fffe6, 21), 227 },  // (227)
-                { (0x3fffe9, 22), 228 },  // (228)
-                { (0x1fffe7, 21), 229 },  // (229)
-                { (0x1fffe8, 21), 230 },  // (230)
-                { (0x7ffff3, 23), 231 },  // (231)
-                { (0x3fffea, 22), 232 },  // (232)
-                { (0x3fffeb, 22), 233 },  // (233)
-                { (0x1ffffee, 25), 234 }, // (234)
-                { (0x1ffffef, 25), 235 }, // (235)
-                { (0xfffff4, 24), 236 },  // (236)
-                { (0xfffff5, 24), 237 },  // (237)
-                { (0x3ffffea, 26), 238 }, // (238)
-                { (0x7ffff4, 23), 239 },  // (239)
-                { (0x3ffffeb, 26), 240 }, // (240)
-                { (0x7ffffe6, 27), 241 }, // (241)
-                { (0x3ffffec, 26), 242 }, // (242)
-                { (0x3ffffed, 26), 243 }, // (243)
-                { (0x7ffffe7, 27), 244 }, // (244)
-                { (0x7ffffe8, 27), 245 }, // (245)
-                { (0x7ffffe9, 27), 246 }, // (246)
-                { (0x7ffffea,  27), 247 }, // (247)
-                { (0x7ffffeb, 27), 248 }, // (248)
-                { (0xffffffe, 28), 249 }, // (249)
-                { (0x7ffffec, 27), 250 }, // (250)
-                { (0x7ffffed, 27), 251 }, // (251)
-                { (0x7ffffee, 27), 252 }, // (252)
-                { (0x7ffffef, 27), 253 }, // (253)
-                { (0x7fffff0, 27), 254 }, // (254)
-                { (0x3ffffef, 26), 255 }, // (255)
-            };
-
-        private bool IsInvalidHeaderName(string name)
+        private class HuffmanNode
         {
-            // Check for invalid header names (empty, contains non-ASCII, etc.)
-            if (string.IsNullOrWhiteSpace(name)) return true;
-
-            // HTTP/2 header names must be lowercase
-            if (name != name.ToLowerInvariant()) return true;
-
-            // Allow pseudo-headers (start with ':') for HTTP/2 requests
-            if (name.StartsWith(":"))
-            {
-                // Only allow valid HTTP/2 pseudo-headers for requests
-                var validPseudoHeaders = new[] { ":method", ":path", ":scheme", ":authority" };
-                return !validPseudoHeaders.Contains(name);
-            }
-
-            // Check for invalid characters in regular header names
-            foreach (char c in name)
-            {
-                if (c < 0x21 || c > 0x7E || "()<>@,;\\\"/[]?={} \t".Contains(c))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            public HuffmanNode Zero { get; set; }
+            public HuffmanNode One { get; set; }
+            public char? Value { get; set; }
         }
     }
 }

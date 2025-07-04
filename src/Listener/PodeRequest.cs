@@ -333,7 +333,7 @@ namespace Pode
         /// </summary>
         /// <param name="cancellationToken">Token to monitor for cancellation requests.</param>
         /// <returns>A Task representing the async operation, with a boolean indicating whether the connection should be closed.</returns>
-        public async Task<bool> Receive(CancellationToken cancellationToken)
+        public virtual async Task<bool> Receive(CancellationToken cancellationToken)
         {
             try
             {

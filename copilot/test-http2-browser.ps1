@@ -1,6 +1,6 @@
 param(
     [string]$BrowserPath = "msedge",  # Default to Microsoft Edge
-    [string]$Host = "localhost",
+    [string]$ServerHost = "localhost",
     [int]$Port = 8081
 )
 
@@ -35,7 +35,7 @@ function Start-PodeServer {
         return $false
     }
 
-    Write-ColorOutput "Starting FileBrowser server on $Host`:$Port..." $colors.Info
+    Write-ColorOutput "Starting FileBrowser server on $ServerHost`:$Port..." $colors.Info
 
     # Start the server as a background job
     $currentPath = $PWD.Path
@@ -67,7 +67,7 @@ function Test-Http2WithBrowser {
         [int]$ServerJobId
     )
 
-    $url = "http://$Host`:$Port"
+    $url = "http://$ServerHost`:$Port"
 
     Write-ColorOutput "`n=========================================================" $colors.Header
     Write-ColorOutput "  TESTING HTTP/2 WITH BROWSER" $colors.Header
@@ -113,7 +113,7 @@ function Test-Http2WithBrowser {
 
     # Now run our HTTP/2 verification script
     Write-ColorOutput "`nRunning HTTP/2 verification test..." $colors.Info
-    & "$PSScriptRoot\test-http2-verify.ps1" -HostName $Host -Port $Port
+    & "$PSScriptRoot\test-http2-verify.ps1" -HostName $ServerHost -Port $Port
 }
 
 function Stop-PodeServer {

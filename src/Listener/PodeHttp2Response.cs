@@ -61,10 +61,19 @@ namespace Pode
                 SentBody = true;
 
                 Console.WriteLine($"[DEBUG] About to call SendHttp2Headers()");
+                // Calculate content length first
+                int contentLength = 0;
+                byte[] bodyData = null;
+                if (OutputStream != null && OutputStream.Length > 0)
+                {
+                    bodyData = OutputStream.ToArray();
+                    contentLength = bodyData.Length;
+                }
+
                 // Send HTTP/2 frames
-                await SendHttp2Headers().ConfigureAwait(false);
+                await SendHttp2Headers(contentLength).ConfigureAwait(false);
                 Console.WriteLine($"[DEBUG] SendHttp2Headers() completed, about to call SendHttp2Body()");
-                await SendHttp2Body().ConfigureAwait(false);
+                await SendHttp2Body(bodyData).ConfigureAwait(false);
                 Console.WriteLine($"[DEBUG] SendHttp2Body() completed successfully");
                 PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
@@ -96,7 +105,7 @@ namespace Pode
             }
         }
 
-        private async Task SendHttp2Headers()
+        private async Task SendHttp2Headers(int contentLength = -1)
         {
             Console.WriteLine($"[DEBUG] SendHttp2Headers() called - _sentHeaders: {_sentHeaders}");
             if (_sentHeaders)
@@ -166,16 +175,11 @@ namespace Pode
                     }
                 }
 
-                if (!hasContentLength)
+                if (!hasContentLength && contentLength >= 0)
                 {
-                    // Estimate content length (will be updated when body is sent)
-                    var contentLength = 0;
-                    if (!string.IsNullOrEmpty(ContentType) && ContentType.Contains("html"))
-                    {
-                        contentLength = 100; // Default for HTML responses
-                    }
+                    // Add the correct Content-Length header based on actual body size
                     headers.Add(new KeyValuePair<string, string>("content-length", contentLength.ToString()));
-                    Console.WriteLine($"[DEBUG] Added default content-length header: {contentLength}");
+                    Console.WriteLine($"[DEBUG] Added correct content-length header: {contentLength}");
                 }
             }
 
@@ -196,7 +200,7 @@ namespace Pode
             PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
         }
 
-        private async Task SendHttp2Body()
+        private async Task SendHttp2Body(byte[] bodyData = null)
         {
             Console.WriteLine($"[DEBUG] SendHttp2Body() called - _sentBody: {_sentBody}");
             if (_sentBody)
@@ -208,10 +212,14 @@ namespace Pode
             Console.WriteLine($"[DEBUG] Sending HTTP/2 body - StreamId: {StreamId}");
             PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 body - StreamId: {StreamId}", _context.Listener, PodeLoggingLevel.Verbose, _context);
 
-            byte[] data = null;
-            if (OutputStream != null && OutputStream.Length > 0)
+            byte[] data = bodyData;
+            if (data == null && OutputStream != null && OutputStream.Length > 0)
             {
                 data = OutputStream.ToArray();
+            }
+
+            if (data != null)
+            {
                 Console.WriteLine($"[DEBUG] HTTP/2 body data length: {data.Length}");
                 PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 body data length: {data.Length}", _context.Listener, PodeLoggingLevel.Verbose, _context);
             }
