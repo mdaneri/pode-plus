@@ -1050,6 +1050,166 @@ namespace Pode
             return await base.Receive(cancellationToken).ConfigureAwait(false);
         }
 
+        private bool IsCleanerPseudoHeader(string newValue, string existingValue)
+        {
+            // Prefer non-empty values
+            if (string.IsNullOrEmpty(existingValue) && !string.IsNullOrEmpty(newValue))
+                return true;
+            if (!string.IsNullOrEmpty(existingValue) && string.IsNullOrEmpty(newValue))
+                return false;
+                
+            // Both have values, compare quality
+            int newCorruption = CountCorruptedChars(newValue);
+            int existingCorruption = CountCorruptedChars(existingValue);
+            
+            // Prefer the value with fewer corrupted characters
+            if (newCorruption < existingCorruption)
+                return true;
+            if (newCorruption > existingCorruption)
+                return false;
+                
+            // If corruption is equal, prefer shorter reasonable values
+            if (newValue.Length < existingValue.Length && newValue.Length > 0 && newValue.Length < 256)
+                return true;
+                
+            return false;
+        }
+
+        private int CountCorruptedChars(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return 0;
+                
+            int count = 0;
+            foreach (char c in value)
+            {
+                if (c < 32 || c > 126) // Non-printable ASCII
+                    count++;
+                if (c == '�') // Unicode replacement character
+                    count += 5; // Heavy penalty
+            }
+            return count;
+        }
+
+        private void EnsureEssentialPseudoHeaders(List<KeyValuePair<string, string>> headers)
+        {
+            var pseudoHeaders = new Dictionary<string, string>();
+            
+            // Collect existing pseudo-headers
+            foreach (var header in headers)
+            {
+                if (header.Key.StartsWith(":"))
+                {
+                    pseudoHeaders[header.Key] = header.Value;
+                }
+            }
+            
+            // Add missing essential pseudo-headers
+            if (!pseudoHeaders.ContainsKey(":method"))
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No method header found, adding GET fallback");
+                headers.Insert(0, new KeyValuePair<string, string>(":method", "GET"));
+            }
+            
+            if (!pseudoHeaders.ContainsKey(":scheme"))
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No scheme header found, adding https fallback");
+                headers.Insert(0, new KeyValuePair<string, string>(":scheme", "https"));
+            }
+            
+            if (!pseudoHeaders.ContainsKey(":path"))
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No path header found, adding / fallback");
+                headers.Insert(0, new KeyValuePair<string, string>(":path", "/"));
+            }
+            
+            if (!pseudoHeaders.ContainsKey(":authority"))
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No authority header found, adding fallback");
+                headers.Add(new KeyValuePair<string, string>(":authority", "localhost"));
+            }
+            else
+            {
+                // Check if authority value is corrupted
+                string authorityValue = pseudoHeaders[":authority"];
+                if (string.IsNullOrEmpty(authorityValue) || 
+                    authorityValue.Any(c => c < 32 || c > 126) ||
+                    authorityValue.Contains("\0") ||
+                    authorityValue.Contains("�") || // Unicode replacement character
+                    authorityValue.Length > 253) // Max domain name length
+                {
+                    Console.WriteLine($"[WARNING] RobustHpackDecoder: Authority header appears corrupted: '{authorityValue}'");
+                    
+                    // Replace with fallback
+                    for (int i = 0; i < headers.Count; i++)
+                    {
+                        if (headers[i].Key == ":authority")
+                        {
+                            headers[i] = new KeyValuePair<string, string>(":authority", "localhost");
+                            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Replaced corrupted authority with fallback: 'localhost'");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void CleanupCorruptedHeaders(List<KeyValuePair<string, string>> headers)
+        {
+            // Clean up any other corrupted headers
+            for (int i = headers.Count - 1; i >= 0; i--)
+            {
+                var header = headers[i];
+                bool isCorrupted = false;
+                
+                // Check header name
+                if (string.IsNullOrEmpty(header.Key) || 
+                    header.Key.Any(c => c < 32 || c > 126) ||
+                    header.Key.Contains("�"))
+                {
+                    isCorrupted = true;
+                }
+                
+                // Check header value (be more lenient, but filter out obvious corruption)
+                if (header.Value != null && 
+                    (header.Value.Contains("�") || // Unicode replacement character
+                     header.Value.Any(c => c < 9 || (c > 13 && c < 32)) || // Control characters except tab, LF, CR
+                     header.Value.Length > 8192)) // Unreasonably long header value
+                {
+                    // For non-critical headers, just clean the value
+                    if (!header.Key.StartsWith(":"))
+                    {
+                        Console.WriteLine($"[WARNING] RobustHpackDecoder: Cleaning corrupted header value for '{header.Key}'");
+                        var cleanValue = new string(header.Value.Where(c => c >= 32 && c <= 126).ToArray());
+                        if (cleanValue.Length > 0 && cleanValue.Length < header.Value.Length * 0.5)
+                        {
+                            // Too much corruption, remove the header
+                            isCorrupted = true;
+                        }
+                        else
+                        {
+                            headers[i] = new KeyValuePair<string, string>(header.Key, cleanValue);
+                        }
+                    }
+                    else
+                    {
+                        // For pseudo-headers, don't clean - they should be handled by EnsureEssentialPseudoHeaders
+                        if (CountCorruptedChars(header.Value) > header.Value.Length * 0.3)
+                        {
+                            isCorrupted = true;
+                        }
+                    }
+                }
+                
+                if (isCorrupted)
+                {
+                    Console.WriteLine($"[WARNING] RobustHpackDecoder: Removing corrupted header: '{header.Key}' = '{header.Value}'");
+                    headers.RemoveAt(i);
+                }
+            }
+        }
+
+        // ...existing code...
     }
 
     // Supporting classes
@@ -1158,52 +1318,257 @@ namespace Pode
             int offset = 0;
 
             Console.WriteLine($"[DEBUG] RobustHpackDecoder: Starting decode of {data.Length} bytes");
+            Console.WriteLine($"[DEBUG] Raw data: {BitConverter.ToString(data)}");
+
+            // Keep track of essential headers
+            bool hasMethod = false;
+            bool hasScheme = false;
+            bool hasPath = false;
+            bool hasAuthority = false;
 
             try
             {
                 while (offset < data.Length)
                 {
-                    var header = DecodeHeader(data, ref offset);
-                    if (header.HasValue)
+                    int startOffset = offset;
+                    
+                    try
                     {
-                        headers.Add(header.Value);
-                        Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decoded header: {header.Value.Key} = {header.Value.Value}");
+                        var header = DecodeHeader(data, ref offset);
+                        if (header.HasValue)
+                        {
+                            headers.Add(header.Value);
+                            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decoded header: {header.Value.Key} = {header.Value.Value}");
+                            
+                            // Track essential headers
+                            switch (header.Value.Key.ToLowerInvariant())
+                            {
+                                case ":method":
+                                    hasMethod = true;
+                                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Found method header: {header.Value.Value}");
+                                    break;
+                                case ":scheme":
+                                    hasScheme = true;
+                                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Found scheme header: {header.Value.Value}");
+                                    break;
+                                case ":path":
+                                    hasPath = true;
+                                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Found path header: {header.Value.Value}");
+                                    break;
+                                case ":authority":
+                                    hasAuthority = true;
+                                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Found authority header: {header.Value.Value}");
+                                    break;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[DEBUG] RobustHpackDecoder: No header decoded (possibly table size update)");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ERROR] RobustHpackDecoder: Error decoding header at offset {startOffset}: {ex.Message}");
+                        
+                        // Try to recover by skipping problematic bytes
+                        if (offset <= startOffset)
+                        {
+                            offset = startOffset + 1; // Skip at least one byte to avoid infinite loop
+                            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Skipping to offset {offset} for recovery");
+                        }
+                        
+                        if (offset >= data.Length)
+                        {
+                            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Reached end of data during recovery");
+                            break;
+                        }
+                    }
+                    
+                    // Safety check to prevent infinite loops
+                    if (offset <= startOffset)
+                    {
+                        Console.WriteLine($"[ERROR] RobustHpackDecoder: Offset not advancing (start: {startOffset}, current: {offset})");
+                        offset = startOffset + 1;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] RobustHpackDecoder: Exception during decode: {ex.Message}");
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: Fatal exception during decode: {ex.Message}");
                 // Return what we have so far
             }
 
-            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decode complete, {headers.Count} headers");
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decode complete, {headers.Count} headers decoded");
+            Console.WriteLine($"[DEBUG] Essential headers: method={hasMethod}, scheme={hasScheme}, path={hasPath}, authority={hasAuthority}");
+            
+            // Add essential fallback headers if missing
+            if (!hasMethod)
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No method header found, adding GET fallback");
+                headers.Insert(0, new KeyValuePair<string, string>(":method", "GET"));
+            }
+            
+            if (!hasScheme)
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No scheme header found, adding https fallback");
+                headers.Insert(0, new KeyValuePair<string, string>(":scheme", "https"));
+            }
+            
+            if (!hasPath)
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No path header found, adding / fallback");
+                headers.Insert(0, new KeyValuePair<string, string>(":path", "/"));
+            }
+            
+            // Add fallback for authority header if missing or corrupted
+            string authorityValue = null;
+            int authorityIndex = -1;
+            
+            for (int i = 0; i < headers.Count; i++)
+            {
+                if (headers[i].Key == ":authority")
+                {
+                    hasAuthority = true;
+                    authorityValue = headers[i].Value;
+                    authorityIndex = i;
+                    
+                    // Check if authority value looks corrupted (contains non-printable or suspicious characters)
+                    if (string.IsNullOrEmpty(authorityValue) || 
+                        authorityValue.Any(c => c < 32 || c > 126) ||
+                        authorityValue.Contains("\0") ||
+                        authorityValue.Contains("�") || // Unicode replacement character
+                        authorityValue.Length > 253) // Max domain name length
+                    {
+                        Console.WriteLine($"[WARNING] RobustHpackDecoder: Authority header appears corrupted: '{authorityValue}'");
+                        
+                        // Replace with fallback
+                        var fallbackHeader = new KeyValuePair<string, string>(":authority", "localhost");
+                        headers[i] = fallbackHeader;
+                        Console.WriteLine($"[DEBUG] RobustHpackDecoder: Replaced corrupted authority with fallback: 'localhost'");
+                    }
+                    break;
+                }
+            }
+            
+            if (!hasAuthority)
+            {
+                Console.WriteLine($"[WARNING] RobustHpackDecoder: No authority header found, adding fallback");
+                headers.Add(new KeyValuePair<string, string>(":authority", "localhost"));
+            }
+            
+            // Clean up any other corrupted headers
+            for (int i = headers.Count - 1; i >= 0; i--)
+            {
+                var header = headers[i];
+                bool isCorrupted = false;
+                
+                // Check header name
+                if (string.IsNullOrEmpty(header.Key) || 
+                    header.Key.Any(c => c < 32 || c > 126) ||
+                    header.Key.Contains("�"))
+                {
+                    isCorrupted = true;
+                }
+                
+                // Check header value (be more lenient, but filter out obvious corruption)
+                if (header.Value != null && 
+                    (header.Value.Contains("�") || // Unicode replacement character
+                     header.Value.Any(c => c < 9 || (c > 13 && c < 32)) || // Control characters except tab, LF, CR
+                     header.Value.Length > 8192)) // Unreasonably long header value
+                {
+                    // For non-critical headers, just clean the value
+                    if (!header.Key.StartsWith(":"))
+                    {
+                        Console.WriteLine($"[WARNING] RobustHpackDecoder: Cleaning corrupted header value for '{header.Key}'");
+                        var cleanValue = new string(header.Value.Where(c => c >= 32 && c <= 126).ToArray());
+                        if (cleanValue.Length > 0 && cleanValue.Length < header.Value.Length * 0.5)
+                        {
+                            // Too much corruption, remove the header
+                            isCorrupted = true;
+                        }
+                        else
+                        {
+                            headers[i] = new KeyValuePair<string, string>(header.Key, cleanValue);
+                        }
+                    }
+                    else
+                    {
+                        // For critical pseudo-headers, only remove if completely corrupted
+                        if (header.Key == ":method" || header.Key == ":scheme" || header.Key == ":path" || header.Key == ":authority")
+                        {
+                            Console.WriteLine($"[WARNING] RobustHpackDecoder: Critical header {header.Key} has corrupted value, keeping it anyway");
+                        }
+                        else
+                        {
+                            isCorrupted = true;
+                        }
+                    }
+                }
+                
+                if (isCorrupted)
+                {
+                    Console.WriteLine($"[WARNING] RobustHpackDecoder: Removing corrupted header: '{header.Key}' = '{header.Value}'");
+                    headers.RemoveAt(i);
+                }
+            }
+            
             return headers;
         }
 
         private KeyValuePair<string, string>? DecodeHeader(byte[] data, ref int offset)
         {
-            if (offset >= data.Length) return null;
+            if (offset >= data.Length) 
+            {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: DecodeHeader reached end of data at offset {offset}");
+                return null;
+            }
 
             byte firstByte = data[offset];
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Processing byte at offset {offset}: 0x{firstByte:X2}");
 
             // Indexed Header Field (1xxxxxxx)
             if ((firstByte & 0x80) != 0)
             {
+                int startOffset = offset;
                 int index = DecodeInteger(data, ref offset, 7);
-                return GetIndexedHeader(index);
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Indexed header field with index {index}");
+                
+                if (index == 0)
+                {
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid indexed header field with index 0");
+                    return null;
+                }
+
+                var header = GetIndexedHeader(index);
+                if (header.HasValue)
+                {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Successfully decoded indexed header: {header.Value.Key} = {header.Value.Value}");
+                }
+                else
+                {
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Failed to get indexed header {index}");
+                }
+                return header;
             }
 
             // Literal Header Field with Incremental Indexing (01xxxxxx)
             if ((firstByte & 0xC0) == 0x40)
             {
-                return DecodeLiteralHeader(data, ref offset, 6, true);
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Literal header field with incremental indexing");
+                var header = DecodeLiteralHeader(data, ref offset, 6, true);
+                if (header.HasValue)
+                {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Successfully decoded literal header with indexing: {header.Value.Key} = {header.Value.Value}");
+                }
+                return header;
             }
 
             // Dynamic Table Size Update (001xxxxx)
             if ((firstByte & 0xE0) == 0x20)
             {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Dynamic table size update");
                 int newSize = DecodeInteger(data, ref offset, 5);
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: New dynamic table size: {newSize}");
                 UpdateDynamicTableSize(newSize);
                 return null;
             }
@@ -1211,22 +1576,44 @@ namespace Pode
             // Literal Header Field Never Indexed (0001xxxx)
             if ((firstByte & 0xF0) == 0x10)
             {
-                return DecodeLiteralHeader(data, ref offset, 4, false);
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Literal header field never indexed");
+                var header = DecodeLiteralHeader(data, ref offset, 4, false);
+                if (header.HasValue)
+                {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Successfully decoded never indexed header: {header.Value.Key} = {header.Value.Value}");
+                }
+                return header;
             }
 
             // Literal Header Field without Indexing (0000xxxx)
-            return DecodeLiteralHeader(data, ref offset, 4, false);
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Literal header field without indexing");
+            var finalHeader = DecodeLiteralHeader(data, ref offset, 4, false);
+            if (finalHeader.HasValue)
+            {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Successfully decoded literal header without indexing: {finalHeader.Value.Key} = {finalHeader.Value.Value}");
+            }
+            return finalHeader;
         }
 
         private KeyValuePair<string, string>? GetIndexedHeader(int index)
         {
-            if (index == 0) return null;
+            if (index == 0) 
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid table index 0");
+                return null;
+            }
 
             if (index <= StaticTable.Count)
             {
                 if (StaticTable.TryGetValue(index, out var staticHeader))
                 {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Found static table entry {index}: {staticHeader.Key} = {staticHeader.Value}");
                     return staticHeader;
+                }
+                else
+                {
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Static table index {index} not found");
+                    return null;
                 }
             }
             else
@@ -1234,27 +1621,36 @@ namespace Pode
                 int dynamicIndex = index - StaticTable.Count - 1;
                 if (dynamicIndex >= 0 && dynamicIndex < _dynamicTable.Count)
                 {
-                    return _dynamicTable[dynamicIndex];
+                    var dynamicHeader = _dynamicTable[dynamicIndex];
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Found dynamic table entry {index} (dynamic index {dynamicIndex}): {dynamicHeader.Key} = {dynamicHeader.Value}");
+                    return dynamicHeader;
+                }
+                else
+                {
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Dynamic table index {index} (dynamic index {dynamicIndex}) out of range (table size: {_dynamicTable.Count})");
+                    return null;
                 }
             }
-
-            Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid table index: {index}");
-            return null;
         }
 
         private KeyValuePair<string, string>? DecodeLiteralHeader(byte[] data, ref int offset, int prefixBits, bool addToIndex)
         {
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: DecodeLiteralHeader - prefixBits: {prefixBits}, addToIndex: {addToIndex}");
+            
             int nameIndex = DecodeInteger(data, ref offset, prefixBits);
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Name index: {nameIndex}");
 
             string name;
             if (nameIndex == 0)
             {
                 // New name
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decoding new name");
                 name = DecodeLiteralString(data, ref offset);
             }
             else
             {
                 // Indexed name
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Using indexed name {nameIndex}");
                 var indexedHeader = GetIndexedHeader(nameIndex);
                 if (!indexedHeader.HasValue)
                 {
@@ -1264,7 +1660,10 @@ namespace Pode
                 name = indexedHeader.Value.Key;
             }
 
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Header name: '{name}'");
+            
             string value = DecodeLiteralString(data, ref offset);
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Header value: '{value}'");
 
             // Validate the header
             if (string.IsNullOrEmpty(name) || !IsValidHeaderName(name))
@@ -1277,6 +1676,7 @@ namespace Pode
 
             if (addToIndex)
             {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Adding header to dynamic table: '{header.Key}' = '{header.Value}'");
                 AddToDynamicTable(header);
             }
 
@@ -1285,66 +1685,123 @@ namespace Pode
 
         private string DecodeLiteralString(byte[] data, ref int offset)
         {
-            if (offset >= data.Length) return "";
+            if (offset >= data.Length) 
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: DecodeLiteralString called with offset {offset} >= data length {data.Length}");
+                return "";
+            }
 
             byte firstByte = data[offset];
             bool isHuffmanEncoded = (firstByte & 0x80) != 0;
             int length = DecodeInteger(data, ref offset, 7);
 
-            if (offset + length > data.Length)
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Decoding literal string - Huffman: {isHuffmanEncoded}, Length: {length}");
+
+            if (length < 0)
             {
-                Console.WriteLine($"[ERROR] RobustHpackDecoder: String length {length} exceeds available data");
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid string length: {length}");
                 return "";
             }
 
-            if (length == 0) return "";
+            if (length == 0) 
+            {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Empty string");
+                return "";
+            }
+
+            if (offset + length > data.Length)
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: String length {length} exceeds available data (offset: {offset}, total: {data.Length})");
+                return "";
+            }
+
+            if (length > 8192) // Reasonable limit to prevent DoS
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: String length {length} exceeds reasonable limit");
+                return "";
+            }
 
             byte[] stringData = new byte[length];
             Array.Copy(data, offset, stringData, 0, length);
             offset += length;
 
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: String data: {BitConverter.ToString(stringData)}");
+
             if (isHuffmanEncoded)
             {
-                return DecodeHuffmanString(stringData);
+                string decoded = DecodeHuffmanString(stringData);
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Huffman decoded: '{decoded}'");
+                return decoded;
             }
             else
             {
-                return Encoding.UTF8.GetString(stringData);
+                string decoded = Encoding.UTF8.GetString(stringData);
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Plain decoded: '{decoded}'");
+                return decoded;
             }
         }
 
         private int DecodeInteger(byte[] data, ref int offset, int prefixBits)
         {
-            if (offset >= data.Length) return 0;
+            if (offset >= data.Length) 
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: DecodeInteger called with offset {offset} >= data length {data.Length}");
+                return 0;
+            }
 
             int mask = (1 << prefixBits) - 1;
             int value = data[offset] & mask;
             offset++;
 
+            Console.WriteLine($"[DEBUG] RobustHpackDecoder: DecodeInteger prefixBits={prefixBits}, initial value={value}, mask=0x{mask:X2}");
+
             if (value < mask)
             {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Small integer value: {value}");
                 return value;
             }
 
             int m = 0;
-            while (offset < data.Length)
+            int bytesProcessed = 0;
+            const int maxBytes = 5; // Prevent infinite loops
+            
+            while (offset < data.Length && bytesProcessed < maxBytes)
             {
                 byte b = data[offset];
                 offset++;
+                bytesProcessed++;
 
-                value += (b & 0x7F) << m;
+                int additionalValue = (b & 0x7F) << m;
+                
+                // Check for overflow before adding
+                if (value > int.MaxValue - additionalValue)
+                {
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Integer encoding overflow detected");
+                    return 0;
+                }
+                
+                value += additionalValue;
                 m += 7;
+
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Processing byte 0x{b:X2}, value now {value}, m={m}");
 
                 if ((b & 0x80) == 0)
                 {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Final integer value: {value}");
                     break;
                 }
 
                 if (m >= 32) // Prevent integer overflow
                 {
-                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Integer encoding overflow");
-                    break;
+                    Console.WriteLine($"[ERROR] RobustHpackDecoder: Integer encoding overflow - too many bits");
+                    return 0;
                 }
+            }
+
+            if (bytesProcessed >= maxBytes)
+            {
+                Console.WriteLine($"[ERROR] RobustHpackDecoder: Integer encoding too long - possible malformed data");
+                return 0;
             }
 
             return value;
@@ -1356,6 +1813,8 @@ namespace Pode
             {
                 var result = new StringBuilder();
                 var node = HuffmanRoot;
+                int bitCount = 0;
+                bool hasValidDecoding = false;
 
                 for (int i = 0; i < data.Length; i++)
                 {
@@ -1364,29 +1823,191 @@ namespace Pode
                     for (int bit = 7; bit >= 0; bit--)
                     {
                         bool isOne = (b & (1 << bit)) != 0;
+                        bitCount++;
+
+                        if (node == null)
+                        {
+                            Console.WriteLine($"[ERROR] RobustHpackDecoder: Huffman tree traversal failed at bit {bitCount}");
+                            return TryCleanFallback(data, result.ToString());
+                        }
+
                         node = isOne ? node.One : node.Zero;
 
                         if (node == null)
                         {
-                            Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid Huffman sequence");
-                            return Encoding.UTF8.GetString(data); // Fallback to plain decoding
+                            // Check if we're looking at padding
+                            if (isOne)
+                            {
+                                // This could be padding - check if remaining bits are all 1s
+                                bool isPadding = true;
+                                
+                                // Check remaining bits in current byte
+                                for (int j = bit - 1; j >= 0; j--)
+                                {
+                                    if ((b & (1 << j)) == 0)
+                                    {
+                                        isPadding = false;
+                                        break;
+                                    }
+                                }
+                                
+                                // Check remaining bytes are all 0xFF
+                                if (isPadding)
+                                {
+                                    for (int k = i + 1; k < data.Length; k++)
+                                    {
+                                        if (data[k] != 0xFF)
+                                        {
+                                            isPadding = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                if (isPadding)
+                                {
+                                    // Valid padding found, we're done
+                                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Valid Huffman padding detected at bit {bitCount}");
+                                    string validResult = result.ToString();
+                                    if (hasValidDecoding && IsCleanString(validResult))
+                                    {
+                                        return validResult;
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine($"[WARNING] RobustHpackDecoder: No clean symbols decoded, trying fallback");
+                                        return TryCleanFallback(data, validResult);
+                                    }
+                                }
+                            }
+                            
+                            Console.WriteLine($"[ERROR] RobustHpackDecoder: Invalid Huffman sequence at bit {bitCount}");
+                            Console.WriteLine($"[ERROR] Data: {BitConverter.ToString(data)}");
+                            
+                            // Return clean fallback
+                            return TryCleanFallback(data, result.ToString());
                         }
 
                         if (node.Value != null)
                         {
-                            result.Append(node.Value);
+                            char decodedChar = node.Value.Value;
+                            
+                            // Only add printable characters
+                            if (IsValidCharacter(decodedChar))
+                            {
+                                result.Append(decodedChar);
+                                hasValidDecoding = true;
+                            }
+                            else
+                            {
+                                Console.WriteLine($"[WARNING] RobustHpackDecoder: Huffman produced invalid character: 0x{(int)decodedChar:X2}");
+                            }
+                            
                             node = HuffmanRoot;
                         }
                     }
                 }
 
-                return result.ToString();
+                // Check final state
+                if (node != HuffmanRoot && node?.Value == null)
+                {
+                    // We ended in an incomplete symbol
+                    string partialResult = result.ToString();
+                    if (hasValidDecoding && IsCleanString(partialResult))
+                    {
+                        Console.WriteLine($"[WARNING] RobustHpackDecoder: Huffman string ended in incomplete symbol, returning clean partial: '{partialResult}'");
+                        return partialResult;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[WARNING] RobustHpackDecoder: Huffman string ended in incomplete symbol with no clean decoding");
+                        return TryCleanFallback(data, partialResult);
+                    }
+                }
+
+                string decoded = result.ToString();
+                
+                // Final validation
+                if (IsCleanString(decoded))
+                {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Huffman decoded clean string: '{decoded}' from {data.Length} bytes");
+                    return decoded;
+                }
+                else
+                {
+                    Console.WriteLine($"[WARNING] RobustHpackDecoder: Huffman decoded string contains invalid characters");
+                    return TryCleanFallback(data, decoded);
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ERROR] RobustHpackDecoder: Huffman decode error: {ex.Message}");
-                return Encoding.UTF8.GetString(data); // Fallback to plain decoding
+                Console.WriteLine($"[ERROR] Data: {BitConverter.ToString(data)}");
+                return TryCleanFallback(data, "");
             }
+        }
+
+        private bool IsValidCharacter(char c)
+        {
+            // Allow printable ASCII, common whitespace, and some extended characters
+            if (c >= 32 && c <= 126) return true; // Standard printable ASCII
+            if (c == '\t' || c == '\n' || c == '\r') return true; // Basic whitespace
+            if (c >= 160 && c <= 255) return true; // Extended ASCII (but be careful)
+            return false;
+        }
+
+        private bool IsCleanString(string str)
+        {
+            if (string.IsNullOrEmpty(str)) return false;
+            
+            foreach (char c in str)
+            {
+                if (!IsValidCharacter(c)) return false;
+            }
+            return true;
+        }
+
+        private string TryCleanFallback(byte[] data, string partialResult)
+        {
+            // First, try to use partial result if it's clean
+            if (!string.IsNullOrEmpty(partialResult) && IsCleanString(partialResult))
+            {
+                Console.WriteLine($"[DEBUG] RobustHpackDecoder: Using clean partial result: '{partialResult}'");
+                return partialResult;
+            }
+
+            // Try to decode as UTF-8, but validate the result
+            try
+            {
+                string utf8Result = Encoding.UTF8.GetString(data);
+                if (IsCleanString(utf8Result))
+                {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Using clean UTF-8 fallback: '{utf8Result}'");
+                    return utf8Result;
+                               }
+            }
+            catch
+            {
+                // UTF-8 decode failed
+            }
+
+            // Try ASCII decode
+            try
+            {
+                string asciiResult = Encoding.ASCII.GetString(data);
+                if (IsCleanString(asciiResult))
+                {
+                    Console.WriteLine($"[DEBUG] RobustHpackDecoder: Using clean ASCII fallback: '{asciiResult}'");
+                    return asciiResult;
+                }
+            }
+            catch
+            {
+                // ASCII decode failed
+            }
+
+            Console.WriteLine($"[WARNING] RobustHpackDecoder: All fallback methods failed or produced garbage, returning empty string");
+            return ""; // Return empty string instead of garbage
         }
 
         private void AddToDynamicTable(KeyValuePair<string, string> header)
