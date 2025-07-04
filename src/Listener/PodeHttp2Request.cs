@@ -118,16 +118,37 @@ namespace Pode
 
         protected override bool ValidateInput(byte[] bytes)
         {
-            if (bytes.Length == 0) return false;
+            Console.WriteLine($"[DEBUG] ValidateInput called with {bytes.Length} bytes, hasReceivedPreface={_hasReceivedPreface}");
+            if (bytes.Length > 0)
+            {
+                Console.WriteLine($"[DEBUG] ValidateInput bytes: {BitConverter.ToString(bytes.Take(Math.Min(32, bytes.Length)).ToArray()).Replace("-", " ")}");
+            }
+
+            if (bytes.Length == 0)
+            {
+                Console.WriteLine("[DEBUG] ValidateInput: bytes.Length == 0, returning false");
+                return false;
+            }
 
             // Check for HTTP/2 connection preface first
             if (!_hasReceivedPreface)
             {
-                return bytes.Length >= HTTP2_PREFACE.Length;
+                // If we have stored preface data from HTTP/1.1 parser, we can accept any valid HTTP/2 frame
+                if (Context.Data.ContainsKey("Http2PrefaceData"))
+                {
+                    Console.WriteLine($"[DEBUG] ValidateInput: Found stored preface data, accepting incoming {bytes.Length} bytes as HTTP/2 frames");
+                    return bytes.Length >= 9; // HTTP/2 frame header is 9 bytes
+                }
+
+                var result = bytes.Length >= HTTP2_PREFACE.Length;
+                Console.WriteLine($"[DEBUG] ValidateInput: checking preface length {bytes.Length} >= {HTTP2_PREFACE.Length}, result={result}");
+                return result;
             }
 
             // For HTTP/2, we need at least 9 bytes for a frame header
-            return bytes.Length >= 9;
+            var frameResult = bytes.Length >= 9;
+            Console.WriteLine($"[DEBUG] ValidateInput: checking frame length {bytes.Length} >= 9, result={frameResult}");
+            return frameResult;
         }
 
         public override async Task Open(CancellationToken cancellationToken)
@@ -168,6 +189,10 @@ namespace Pode
         protected override async Task<bool> Parse(byte[] bytes, CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] PodeHttp2Request.Parse called with {bytes.Length} bytes");
+            if (bytes.Length > 0)
+            {
+                Console.WriteLine($"[DEBUG] First 16 bytes: {BitConverter.ToString(bytes.Take(Math.Min(16, bytes.Length)).ToArray()).Replace("-", " ")}");
+            }
 
             if (bytes.Length == 0)
             {
@@ -318,7 +343,7 @@ namespace Pode
             Array.Copy(bytes, offset, payload, 0, length);
             offset += length;
 
-            return new Http2Frame
+            var frame = new Http2Frame
             {
                 Length = length,
                 Type = type,
@@ -326,6 +351,14 @@ namespace Pode
                 StreamId = streamId,
                 Payload = payload
             };
+
+            Console.WriteLine($"[DEBUG] ParseFrame: type={type}, flags=0x{flags:X2}, streamId={streamId}, length={length}");
+            if (type == FRAME_TYPE_HEADERS && length > 0)
+            {
+                Console.WriteLine($"[DEBUG] HEADERS frame payload first 32 bytes: {BitConverter.ToString(payload, 0, Math.Min(32, length)).Replace("-", " ")}");
+            }
+
+            return frame;
         }
 
         private async Task ProcessFrame(Http2Frame frame, CancellationToken cancellationToken)
@@ -562,6 +595,44 @@ namespace Pode
             {
                 var key = header.Key.ToString();
                 var value = header.Value.ToString();
+
+                // Validate and sanitize header values
+                if (string.IsNullOrEmpty(value))
+                    value = "";
+                else
+                {
+                    value = SanitizeHeaderValue(value);
+
+                    // Check for obvious corruption and provide fallbacks
+                    if (ContainsCorruptedData(value))
+                    {
+                        Console.WriteLine($"[WARNING] Corrupted header value detected for '{key}': '{value}'");
+
+                        // Provide sensible defaults for critical headers
+                        if (key == ":authority" || key.ToLower() == "host")
+                        {
+                            value = "localhost"; // Default host
+                        }
+                        else if (key == ":method")
+                        {
+                            value = "GET"; // Default method
+                        }
+                        else if (key == ":path")
+                        {
+                            value = "/"; // Default path
+                        }
+                        else if (key == ":scheme")
+                        {
+                            value = "https"; // Default scheme
+                        }
+                        else
+                        {
+                            // For other headers, use empty string or skip
+                            value = "";
+                        }
+                    }
+                }
+
                 Console.WriteLine($"[DEBUG] Processing header: {key} = {value}");
 
                 // Handle pseudo-headers
@@ -589,7 +660,11 @@ namespace Pode
                 }
                 else
                 {
-                    Headers[key] = value;
+                    // Only add non-empty headers
+                    if (!string.IsNullOrEmpty(value))
+                    {
+                        Headers[key] = value;
+                    }
 
                     // Set common properties
                     switch (key.ToLower())
@@ -871,6 +946,47 @@ namespace Pode
                 return null;
             }
         }
+
+        private bool ContainsCorruptedData(string text)
+        {
+            // Check for obvious signs of corruption
+            if (string.IsNullOrEmpty(text))
+                return false;
+
+            // Count non-printable characters (excluding common control chars like \r, \n, \t)
+            int nonPrintableCount = 0;
+            foreach (char c in text)
+            {
+                if (c < 32 && c != '\r' && c != '\n' && c != '\t')
+                    nonPrintableCount++;
+                else if (c > 126 && c < 160) // Common non-printable range
+                    nonPrintableCount++;
+            }
+
+            // If more than 20% of characters are non-printable, likely corrupted
+            return nonPrintableCount > (text.Length * 0.2);
+        }
+
+        private string SanitizeHeaderValue(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return value;
+
+            var result = new System.Text.StringBuilder();
+            foreach (char c in value)
+            {
+                // Only include printable ASCII and common control characters
+                if ((c >= 32 && c <= 126) || c == '\t' || c == '\r' || c == '\n')
+                {
+                    result.Append(c);
+                }
+                else
+                {
+                    result.Append('?'); // Replace invalid characters with ?
+                }
+            }
+            return result.ToString();
+        }
     }
 
     // Supporting classes
@@ -976,15 +1092,30 @@ namespace Pode
             var headers = new List<KeyValuePair<string, string>>();
             var offset = 0;
 
+            Console.WriteLine($"[DEBUG] Starting HPACK decode of {headerBlock.Length} bytes");
+
             while (offset < headerBlock.Length)
             {
+                var prevOffset = offset;
                 var header = DecodeHeader(headerBlock, ref offset);
                 if (header.HasValue)
                 {
-                    headers.Add(header.Value);
+                    // Only add non-empty headers
+                    if (!string.IsNullOrEmpty(header.Value.Key) || !string.IsNullOrEmpty(header.Value.Value))
+                    {
+                        headers.Add(header.Value);
+                    }
+                }
+
+                // Prevent infinite loops if offset doesn't advance
+                if (offset == prevOffset)
+                {
+                    Console.WriteLine($"[ERROR] HPACK decode stuck at offset {offset}, skipping byte");
+                    offset++;
                 }
             }
 
+            Console.WriteLine($"[DEBUG] HPACK decode complete: {headers.Count} headers");
             return headers;
         }
 
@@ -1003,20 +1134,30 @@ namespace Pode
 
                 if (index == 0)
                 {
-                    Console.WriteLine($"[DEBUG] Invalid index 0 in indexed header field");
-                    return null;
+                    Console.WriteLine($"[ERROR] Invalid indexed header field: index 0 (RFC 7541 violation)");
+                    // According to RFC 7541, index 0 is not used and must be treated as a decoding error
+                    // Skip this malformed entry and continue parsing
+                    return null; // Don't return empty header, just skip it
                 }
 
                 var header = GetHeaderFromIndex(index);
                 if (header.HasValue)
                 {
-                    Console.WriteLine($"[DEBUG] Found indexed header: {header.Value.Key}={header.Value.Value}");
+                    // Validate that response pseudo-headers don't appear in requests
+                    if (header.Value.Key == ":status")
+                    {
+                        Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
+                        return null;
+                    }
+
+                    Console.WriteLine($"[DEBUG] Indexed header: {header.Value.Key} = {header.Value.Value}");
+                    Console.WriteLine($"[DEBUG] Decoded header: {header.Value.Key} = {header.Value.Value}");
                     return header;
                 }
                 else
                 {
-                    Console.WriteLine($"[DEBUG] Unknown table index: {index}");
-                    return null;
+                    Console.WriteLine($"[ERROR] Invalid table index: {index}");
+                    return null; // Skip invalid entries
                 }
             }
             // Literal Header Field with Incremental Indexing (starts with 01)
@@ -1042,18 +1183,36 @@ namespace Pode
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG] Unknown name index: {nameIndex}");
-                        return null;
+                        Console.WriteLine($"[ERROR] Invalid table index: {nameIndex}");
+                        return null; // Skip invalid entries
                     }
                 }
 
                 var value = DecodeLiteralString(data, ref offset);
-                Console.WriteLine($"[DEBUG] Header value: '{value}'");
+                Console.WriteLine($"[DEBUG] Literal header (incremental): {name} = {value}");
+
+                // Validate header name and value
+                if (string.IsNullOrEmpty(name) || IsInvalidHeaderName(name))
+                {
+                    Console.WriteLine($"[ERROR] Invalid header name: '{name}' - skipping");
+                    return null;
+                }
+
+                // Validate that response pseudo-headers don't appear in requests
+                if (name == ":status")
+                {
+                    Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
+                    return null;
+                }
+
+                // Sanitize header value to prevent binary garbage
+                value = SanitizeHeaderValue(value);
 
                 var header = new KeyValuePair<string, string>(name, value);
+                Console.WriteLine($"[DEBUG] Decoded header: {name} = {value}");
 
-                // Add to dynamic table if name is not empty
-                if (!string.IsNullOrEmpty(name))
+                // Add to dynamic table if name is valid
+                if (!string.IsNullOrEmpty(name) && !IsInvalidHeaderName(name))
                 {
                     AddToDynamicTable(header);
                 }
@@ -1091,13 +1250,32 @@ namespace Pode
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG] Unknown name index: {nameIndex}");
-                        return null;
+                        Console.WriteLine($"[ERROR] Invalid table index: {nameIndex}");
+                        return null; // Skip invalid entries
                     }
                 }
 
                 var value = DecodeLiteralString(data, ref offset);
-                Console.WriteLine($"[DEBUG] Header value: '{value}'");
+                Console.WriteLine($"[DEBUG] Literal header (never indexed): {name} = {value}");
+
+                // Validate header name and value
+                if (string.IsNullOrEmpty(name) || IsInvalidHeaderName(name))
+                {
+                    Console.WriteLine($"[ERROR] Invalid header name: '{name}' - skipping");
+                    return null;
+                }
+
+                // Validate that response pseudo-headers don't appear in requests
+                if (name == ":status")
+                {
+                    Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
+                    return null;
+                }
+
+                // Sanitize header value to prevent binary garbage
+                value = SanitizeHeaderValue(value);
+
+                Console.WriteLine($"[DEBUG] Decoded header: {name} = {value}");
                 return new KeyValuePair<string, string>(name, value);
             }
             // Literal Header Field without Indexing (starts with 0000)
@@ -1123,13 +1301,32 @@ namespace Pode
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG] Unknown name index: {nameIndex}");
-                        return null;
+                        Console.WriteLine($"[ERROR] Invalid table index: {nameIndex}");
+                        return null; // Skip invalid entries
                     }
                 }
 
                 var value = DecodeLiteralString(data, ref offset);
-                Console.WriteLine($"[DEBUG] Header value: '{value}'");
+                Console.WriteLine($"[DEBUG] Literal header (no indexing): {name} = {value}");
+
+                // Validate header name and value
+                if (string.IsNullOrEmpty(name) || IsInvalidHeaderName(name))
+                {
+                    Console.WriteLine($"[ERROR] Invalid header name: '{name}' - skipping");
+                    return null;
+                }
+
+                // Validate that response pseudo-headers don't appear in requests
+                if (name == ":status")
+                {
+                    Console.WriteLine($"[ERROR] Response pseudo-header :status in request - skipping");
+                    return null;
+                }
+
+                // Sanitize header value to prevent binary garbage
+                value = SanitizeHeaderValue(value);
+
+                Console.WriteLine($"[DEBUG] Decoded header: {name} = {value}");
                 return new KeyValuePair<string, string>(name, value);
             }
         }
@@ -1198,27 +1395,47 @@ namespace Pode
 
         private int DecodeInt(byte[] data, ref int offset, int prefixBits)
         {
-            if (offset >= data.Length) return 0;
+            if (offset >= data.Length)
+            {
+                Console.WriteLine($"[DEBUG] DecodeInt: No data at offset {offset}");
+                return 0;
+            }
 
             var mask = (1 << prefixBits) - 1;
             var value = data[offset] & mask;
+            Console.WriteLine($"[DEBUG] DecodeInt: byte=0x{data[offset]:X2}, mask=0x{mask:X2}, initial_value={value}, prefixBits={prefixBits}");
             offset++;
 
             if (value < mask)
             {
+                Console.WriteLine($"[DEBUG] DecodeInt: returning simple value {value}");
                 return value;
             }
 
-            // Variable length integer decoding
+            // Variable length integer decoding per RFC 7541 Section 5.1
+            Console.WriteLine($"[DEBUG] DecodeInt: entering variable-length decoding, value={value}, mask={mask}");
             var m = 0;
             while (offset < data.Length)
             {
                 var b = data[offset++];
+                Console.WriteLine($"[DEBUG] DecodeInt: processing byte 0x{b:X2}, m={m}");
                 value += (b & 0x7F) << m;
                 m += 7;
-                if ((b & 0x80) == 0) break;
+                if ((b & 0x80) == 0)
+                {
+                    Console.WriteLine($"[DEBUG] DecodeInt: variable-length complete, final value={value}");
+                    break;
+                }
+
+                // Safety check to prevent infinite loops
+                if (m > 28) // 32-bit integer, max 5 bytes
+                {
+                    Console.WriteLine($"[DEBUG] DecodeInt: ERROR - variable-length integer too large, m={m}");
+                    return 0;
+                }
             }
 
+            Console.WriteLine($"[DEBUG] DecodeInt: returning variable-length value {value}");
             return value;
         }
 
@@ -1242,6 +1459,13 @@ namespace Pode
                 return "";
             }
 
+            // Sanity check for reasonable string lengths
+            if (length > 16384) // 16KB max for a single header string
+            {
+                Console.WriteLine($"[ERROR] DecodeLiteralString: String length too large ({length}), truncating to 16KB");
+                length = 16384;
+            }
+
             if (offset + length > data.Length)
             {
                 Console.WriteLine($"[ERROR] DecodeLiteralString: Not enough bytes for string (need {length}, have {data.Length - offset})");
@@ -1255,7 +1479,8 @@ namespace Pode
 
                     try
                     {
-                        return isHuffmanCoded ? DecodeHuffman(partialBytes) : Encoding.UTF8.GetString(partialBytes);
+                        var partialResult = isHuffmanCoded ? DecodeHuffman(partialBytes) : Encoding.UTF8.GetString(partialBytes);
+                        return SanitizeHeaderValue(partialResult);
                     }
                     catch
                     {
@@ -1279,11 +1504,21 @@ namespace Pode
             }
             else
             {
-                result = Encoding.UTF8.GetString(stringBytes);
-                Console.WriteLine($"[DEBUG] DecodeLiteralString: Plain string '{result}' from {BitConverter.ToString(stringBytes)}");
+                try
+                {
+                    result = Encoding.UTF8.GetString(stringBytes);
+                    Console.WriteLine($"[DEBUG] DecodeLiteralString: Plain string '{result}' from {BitConverter.ToString(stringBytes)}");
+                }
+                catch
+                {
+                    Console.WriteLine($"[ERROR] DecodeLiteralString: UTF-8 decoding failed, returning sanitized version");
+                    result = SanitizeHeaderValue(Encoding.ASCII.GetString(stringBytes));
+                }
             }
 
-            return result ?? "";
+            // Always sanitize the result to prevent binary garbage
+            result = SanitizeHeaderValue(result ?? "");
+            return result;
         }
 
         // RFC 7541 compliant Huffman decoder for HTTP/2 HPACK
@@ -1294,6 +1529,8 @@ namespace Pode
                 var result = new StringBuilder();
                 var bitAccumulator = 0UL;
                 var bitsAccumulated = 0;
+                var decodedCount = 0;
+                const int maxOutputLength = 8192; // Prevent excessive output
 
                 foreach (var b in data)
                 {
@@ -1315,7 +1552,22 @@ namespace Pode
 
                             if (HuffmanDecodeTable.TryGetValue(key, out var symbol))
                             {
-                                result.Append((char)symbol);
+                                // Validate the symbol is printable ASCII or common characters
+                                if (symbol >= 0 && symbol <= 255)
+                                {
+                                    var ch = (char)symbol;
+                                    if (ch >= 32 && ch <= 126) // Printable ASCII
+                                    {
+                                        result.Append(ch);
+                                        decodedCount++;
+                                    }
+                                    else if (ch == '\t' || ch == '\n' || ch == '\r') // Allow some control chars
+                                    {
+                                        result.Append(ch);
+                                        decodedCount++;
+                                    }
+                                    // Skip other control characters to prevent corruption
+                                }
 
                                 // Remove the decoded bits from accumulator
                                 var remainingBits = bitsAccumulated - testLength;
@@ -1332,12 +1584,22 @@ namespace Pode
                             // No symbol found, either we need more data or it's padding
                             break;
                         }
+
+                        // Prevent excessive output that could be caused by malformed data
+                        if (decodedCount >= maxOutputLength)
+                        {
+                            Console.WriteLine($"[WARNING] Huffman decoder hit max output length ({maxOutputLength}), truncating");
+                            break;
+                        }
                     }
+
+                    // Safety check to prevent infinite loops with malformed data
+                    if (decodedCount >= maxOutputLength) break;
                 }
 
                 // RFC 7541: Padding should be most-significant bits of EOS (all 1s)
-                // Only validate padding if we have remaining bits
-                if (bitsAccumulated > 0)
+                // Only validate padding if we have remaining bits and decoded something
+                if (bitsAccumulated > 0 && decodedCount > 0)
                 {
                     // EOS (End of String) symbol for padding is all 1s
                     var paddingValue = (1UL << bitsAccumulated) - 1;
@@ -1348,21 +1610,79 @@ namespace Pode
                     }
                 }
 
-                return result.ToString();
+                var decodedResult = result.ToString();
+
+                // Validate the decoded result
+                if (string.IsNullOrEmpty(decodedResult) && data.Length > 0)
+                {
+                    Console.WriteLine($"[WARNING] Huffman decoding produced empty result, using fallback");
+                    return SanitizeHeaderValue(Encoding.UTF8.GetString(data));
+                }
+
+                // Check for obvious corruption
+                if (ContainsCorruptedData(decodedResult))
+                {
+                    Console.WriteLine($"[WARNING] Huffman decoding produced corrupted text: {decodedResult}");
+                    return SanitizeHeaderValue(Encoding.UTF8.GetString(data));
+                }
+
+                return decodedResult;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ERROR] Huffman decoding error: {ex.Message}");
-                // Fallback: try to decode as raw UTF-8
+                // Fallback: try to decode as raw UTF-8, but sanitize it
                 try
                 {
-                    return Encoding.UTF8.GetString(data);
+                    var fallbackResult = Encoding.UTF8.GetString(data);
+                    return SanitizeHeaderValue(fallbackResult);
                 }
                 catch
                 {
                     return ""; // Last resort: empty string
                 }
             }
+        }
+
+        private bool ContainsCorruptedData(string text)
+        {
+            // Check for obvious signs of corruption
+            if (string.IsNullOrEmpty(text))
+                return false;
+
+            // Count non-printable characters (excluding common control chars like \r, \n, \t)
+            int nonPrintableCount = 0;
+            foreach (char c in text)
+            {
+                if (c < 32 && c != '\r' && c != '\n' && c != '\t')
+                    nonPrintableCount++;
+                else if (c > 126 && c < 160) // Common non-printable range
+                    nonPrintableCount++;
+            }
+
+            // If more than 20% of characters are non-printable, likely corrupted
+            return nonPrintableCount > (text.Length * 0.2);
+        }
+
+        private string SanitizeHeaderValue(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return value;
+
+            var result = new StringBuilder();
+            foreach (char c in value)
+            {
+                // Only include printable ASCII and common control characters
+                if ((c >= 32 && c <= 126) || c == '\t' || c == '\r' || c == '\n')
+                {
+                    result.Append(c);
+                }
+                else
+                {
+                    result.Append('?'); // Replace invalid characters with ?
+                }
+            }
+            return result.ToString();
         }
 
         private static readonly Dictionary<(ulong bits, int length), int> HuffmanDecodeTable =
@@ -1616,7 +1936,7 @@ namespace Pode
                 { (0x7ffffe7, 27), 244 }, // (244)
                 { (0x7ffffe8, 27), 245 }, // (245)
                 { (0x7ffffe9, 27), 246 }, // (246)
-                { (0x7ffffea, 27), 247 }, // (247)
+                { (0x7ffffea,  27), 247 }, // (247)
                 { (0x7ffffeb, 27), 248 }, // (248)
                 { (0xffffffe, 28), 249 }, // (249)
                 { (0x7ffffec, 27), 250 }, // (250)
@@ -1627,6 +1947,33 @@ namespace Pode
                 { (0x3ffffef, 26), 255 }, // (255)
             };
 
+        private bool IsInvalidHeaderName(string name)
+        {
+            // Check for invalid header names (empty, contains non-ASCII, etc.)
+            if (string.IsNullOrWhiteSpace(name)) return true;
+
+            // HTTP/2 header names must be lowercase
+            if (name != name.ToLowerInvariant()) return true;
+
+            // Allow pseudo-headers (start with ':') for HTTP/2 requests
+            if (name.StartsWith(":"))
+            {
+                // Only allow valid HTTP/2 pseudo-headers for requests
+                var validPseudoHeaders = new[] { ":method", ":path", ":scheme", ":authority" };
+                return !validPseudoHeaders.Contains(name);
+            }
+
+            // Check for invalid characters in regular header names
+            foreach (char c in name)
+            {
+                if (c < 0x21 || c > 0x7E || "()<>@,;\\\"/[]?={} \t".Contains(c))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }
 #endif

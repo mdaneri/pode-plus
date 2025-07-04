@@ -178,14 +178,17 @@ namespace Pode
             // Create HTTP/2 response if the request is HTTP/2, otherwise use standard response
             if (Request is PodeHttp2Request http2Request)
             {
+                Console.WriteLine($"[DEBUG] Creating HTTP/2 response for stream {http2Request.StreamId} in NewResponse()");
                 PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/2 response for stream {http2Request.StreamId}", Listener, PodeLoggingLevel.Verbose, this);
                 var http2Response = new PodeHttp2Response(this);
                 http2Response.StreamId = http2Request.StreamId;
                 Response = http2Response;
+                Console.WriteLine($"[DEBUG] HTTP/2 response created successfully with StreamId: {http2Response.StreamId}, Type: {Response.GetType().Name}");
                 PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response created successfully", Listener, PodeLoggingLevel.Verbose, this);
             }
             else
             {
+                Console.WriteLine($"[DEBUG] Creating HTTP/1.x response (Request type: {Request?.GetType().Name}) in NewResponse()");
                 PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/1.x response (Request type: {Request?.GetType().Name})", Listener, PodeLoggingLevel.Verbose, this);
                 Response = new PodeResponse(this);
             }
@@ -651,7 +654,14 @@ namespace Pode
                     {
                         Response.Dispose();
                     }
-                    Response = new PodeResponse(this);
+                    // Create HTTP/2 response for the HTTP/2 request
+                    var http2Response = new PodeHttp2Response(this);
+                    if (Request is PodeHttp2Request http2Request)
+                    {
+                        http2Response.StreamId = http2Request.StreamId;
+                        Console.WriteLine($"[DEBUG] Created HTTP/2 response for stream {http2Request.StreamId}");
+                    }
+                    Response = http2Response;
 
                     // Try opening the new HTTP/2 request
                     Console.WriteLine("[DEBUG] About to call Request.Open() on HTTP/2 request...");
@@ -662,6 +672,14 @@ namespace Pode
                     Console.WriteLine("[DEBUG] About to call Request.Receive() on HTTP/2 request...");
                     var close = await Request.Receive(ContextTimeoutToken.Token).ConfigureAwait(false);
                     Console.WriteLine("[DEBUG] Request.Receive() completed successfully");
+
+                    // Update the HTTP/2 response with the correct stream ID after the request is processed
+                    if (Response is PodeHttp2Response http2ResponseUpdate && Request is PodeHttp2Request http2RequestUpdate)
+                    {
+                        http2ResponseUpdate.StreamId = http2RequestUpdate.StreamId;
+                        Console.WriteLine($"[DEBUG] Updated HTTP/2 response stream ID to {http2RequestUpdate.StreamId}");
+                    }
+
                     SetContextType();
                     await EndReceive(close).ConfigureAwait(false);
                 }
