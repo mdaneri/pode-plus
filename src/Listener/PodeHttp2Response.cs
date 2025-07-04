@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using hpack;
 
 namespace Pode
 {
@@ -23,14 +24,16 @@ namespace Pode
         private const byte FLAG_END_HEADERS = 0x4;
 
         public int StreamId { get; set; }
-        public SimpleHpackEncoder HpackEncoder { get; private set; }
+        //  public SimpleHpackEncoder HpackEncoder { get; private set; }
+        public hpack.Encoder HpackEncoder { get; }
         private readonly PodeContext _context;
         private bool _sentHeaders = false;
         private bool _sentBody = false;
 
         public PodeHttp2Response(PodeContext context) : base(context)
         {
-            HpackEncoder = new SimpleHpackEncoder();
+            //HpackEncoder = new SimpleHpackEncoder();
+            HpackEncoder = new hpack.Encoder(4096);   // headerTableSize
             _context = context;
         }
 
@@ -69,7 +72,7 @@ namespace Pode
                     bodyData = OutputStream.ToArray();
                     contentLength = bodyData.Length;
                 }
-
+                Console.WriteLine($"[DEBUG] Send() bodyData length: {bodyData?.Length ?? 0}, contentLength: {contentLength}");
                 // Send HTTP/2 frames
                 await SendHttp2Headers(contentLength).ConfigureAwait(false);
                 Console.WriteLine($"[DEBUG] SendHttp2Headers() completed, about to call SendHttp2Body()");
@@ -188,7 +191,18 @@ namespace Pode
 
             // Encode headers with HPACK
             Console.WriteLine($"[DEBUG] About to encode headers with HPACK");
-            var encodedHeaders = HpackEncoder.Encode(headers);
+            //   var encodedHeaders = HpackEncoder.Encode(headers);
+            byte[] encodedHeaders;
+            using (var ms = new MemoryStream())
+            using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+            {
+                foreach (var (name, value) in headers)
+                {
+                    // Always lowercase names to stay RFC-7541 compliant
+                    HpackEncoder.EncodeHeader(bw, name.ToLowerInvariant(), value);
+                }
+                encodedHeaders = ms.ToArray();
+            }
             Console.WriteLine($"[DEBUG] Encoded headers length: {encodedHeaders.Length}");
             PodeHelpers.WriteErrorMessage($"DEBUG: Encoded headers length: {encodedHeaders.Length}", _context.Listener, PodeLoggingLevel.Verbose, _context);
 
@@ -320,39 +334,7 @@ namespace Pode
             }
         }
 
-        public async Task SendSettingsFrame(Dictionary<string, object> settings = null)
-        {
-            var payload = new List<byte>();
 
-            if (settings != null)
-            {
-                foreach (var setting in settings)
-                {
-                    var settingId = GetSettingId(setting.Key);
-                    if (settingId > 0)
-                    {
-                        var value = Convert.ToUInt32(setting.Value);
-
-                        // Setting ID (2 bytes)
-                        payload.Add((byte)((settingId >> 8) & 0xFF));
-                        payload.Add((byte)(settingId & 0xFF));
-
-                        // Setting Value (4 bytes)
-                        payload.Add((byte)((value >> 24) & 0xFF));
-                        payload.Add((byte)((value >> 16) & 0xFF));
-                        payload.Add((byte)((value >> 8) & 0xFF));
-                        payload.Add((byte)(value & 0xFF));
-                    }
-                }
-            }
-
-            await SendFrame(FRAME_TYPE_SETTINGS, 0, 0, payload.ToArray());
-        }
-
-        public async Task SendSettingsAck()
-        {
-            await SendFrame(FRAME_TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
-        }
 
         /// <summary>
         /// Override WriteBody to handle HTTP/2 framing properly
@@ -466,61 +448,5 @@ namespace Pode
         }
     }
 
-    // Simplified HPACK encoder
-    public class SimpleHpackEncoder
-    {
-        private static readonly Dictionary<KeyValuePair<string, string>, int> StaticTable =
-            new Dictionary<KeyValuePair<string, string>, int>
-            {
-                { new KeyValuePair<string, string>(":authority", ""), 1 },
-                { new KeyValuePair<string, string>(":method", "GET"), 2 },
-                { new KeyValuePair<string, string>(":method", "POST"), 3 },
-                { new KeyValuePair<string, string>(":path", "/"), 4 },
-                { new KeyValuePair<string, string>(":path", "/index.html"), 5 },
-                { new KeyValuePair<string, string>(":scheme", "http"), 6 },
-                { new KeyValuePair<string, string>(":scheme", "https"), 7 },
-                { new KeyValuePair<string, string>(":status", "200"), 8 },
-                { new KeyValuePair<string, string>(":status", "204"), 9 },
-                { new KeyValuePair<string, string>(":status", "206"), 10 },
-                { new KeyValuePair<string, string>(":status", "304"), 11 },
-                { new KeyValuePair<string, string>(":status", "400"), 12 },
-                { new KeyValuePair<string, string>(":status", "404"), 13 },
-                { new KeyValuePair<string, string>(":status", "500"), 14 }
-            };
-
-        public byte[] Encode(List<KeyValuePair<string, string>> headers)
-        {
-            var encoded = new List<byte>();
-
-            foreach (var header in headers)
-            {
-                var headerPair = new KeyValuePair<string, string>(header.Key.ToLower(), header.Value);
-
-                // Check if header is in static table
-                if (StaticTable.ContainsKey(headerPair))
-                {
-                    var index = StaticTable[headerPair];
-                    encoded.Add((byte)(0x80 | index)); // Indexed header field
-                }
-                else
-                {
-                    // Literal header field with incremental indexing
-                    encoded.Add(0x40); // 01000000
-
-                    // Encode name
-                    var nameBytes = Encoding.UTF8.GetBytes(header.Key.ToLower());
-                    encoded.Add((byte)nameBytes.Length);
-                    encoded.AddRange(nameBytes);
-
-                    // Encode value
-                    var valueBytes = Encoding.UTF8.GetBytes(header.Value);
-                    encoded.Add((byte)valueBytes.Length);
-                    encoded.AddRange(valueBytes);
-                }
-            }
-
-            return encoded.ToArray();
-        }
-    }
 }
 #endif
