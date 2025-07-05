@@ -30,11 +30,28 @@ namespace Pode
         private bool _sentHeaders = false;
         private bool _sentBody = false;
 
+
+        private int MaxFrameSize
+        {
+            get
+            {
+                if (_context?.Request is PodeHttp2Request req)
+                    return req.PeerMaxFrameSize;
+                return 16384;                  // safe fallback
+            }
+        }
+
+
         public PodeHttp2Response(PodeContext context) : base(context)
         {
             //HpackEncoder = new SimpleHpackEncoder();
             HpackEncoder = new hpack.Encoder(4096);   // headerTableSize
             _context = context;
+        }
+
+        public PodeHttp2Response(PodeContext context, int streamId) : this(context)
+        {
+            StreamId = streamId;
         }
 
         /// <summary>
@@ -43,6 +60,12 @@ namespace Pode
         /// </summary>
         public override async Task Send()
         {
+            if (StreamId == 0)
+            {
+                Console.WriteLine($"[DEBUG] HTTP/2 Send() called with StreamId 0, returning early");
+                return;
+            }
+
             Console.WriteLine($"[DEBUG] HTTP/2 Send() method called - StreamId: {StreamId}, _sentHeaders: {_sentHeaders}, _sentBody: {_sentBody}, IsDisposed: {IsDisposed}, SseEnabled: {SseEnabled}");
 
             if ((_sentHeaders && _sentBody) || IsDisposed || (_sentHeaders && SseEnabled))
@@ -214,51 +237,69 @@ namespace Pode
             PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
         }
 
+
+        //---------------------------------------------------------------------
+        //  SendHttp2Body — chunks DATA frames ≤ MaxFrameSize
+        //  with full Console diagnostics.
+        //---------------------------------------------------------------------
         private async Task SendHttp2Body(byte[] bodyData = null)
         {
             Console.WriteLine($"[DEBUG] SendHttp2Body() called - _sentBody: {_sentBody}");
             if (_sentBody)
             {
-                Console.WriteLine($"[DEBUG] SendHttp2Body() returning early - body already sent");
+                Console.WriteLine("[DEBUG] SendHttp2Body() returning early – body already sent");
                 return;
             }
-
             Console.WriteLine($"[DEBUG] Sending HTTP/2 body - StreamId: {StreamId}");
             PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 body - StreamId: {StreamId}", _context.Listener, PodeLoggingLevel.Verbose, _context);
 
             byte[] data = bodyData;
             if (data == null && OutputStream != null && OutputStream.Length > 0)
-            {
                 data = OutputStream.ToArray();
-            }
 
             if (data != null)
-            {
                 Console.WriteLine($"[DEBUG] HTTP/2 body data length: {data.Length}");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 body data length: {data.Length}", _context.Listener, PodeLoggingLevel.Verbose, _context);
-            }
 
+            Console.WriteLine($"[DEBUG] Using peer MaxFrameSize: {MaxFrameSize}");
+
+            // 2. Send DATA frames
             if (data != null && data.Length > 0)
             {
-                Console.WriteLine($"[DEBUG] About to send DATA frame with {data.Length} bytes");
-                // Send DATA frame with END_STREAM flag
-                await SendFrame(FRAME_TYPE_DATA, FLAG_END_STREAM, StreamId, data);
-                Console.WriteLine($"[DEBUG] DATA frame sent successfully with {data.Length} bytes");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 DATA frame sent with {data.Length} bytes", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                int offset = 0;
+                int frameNo = 1;
+
+                while (offset < data.Length)
+                {
+                    int chunk = Math.Min(MaxFrameSize, data.Length - offset);
+                    byte flags = (offset + chunk == data.Length) ? FLAG_END_STREAM : (byte)0x0;
+
+                    Console.WriteLine($"[DEBUG] ➜ Sending DATA frame #{frameNo} " +
+                                      $"({chunk} bytes) flags=0x{flags:X2}");
+
+                    await SendFrame(
+                        FRAME_TYPE_DATA,
+                        flags,
+                        StreamId,
+                        new ArraySegment<byte>(data, offset, chunk).ToArray());
+
+                    Console.WriteLine($"[DEBUG]   DATA #{frameNo} sent OK");
+
+                    offset += chunk;
+                    frameNo++;
+                }
             }
             else
             {
-                Console.WriteLine($"[DEBUG] About to send empty DATA frame");
-                // Send empty DATA frame with END_STREAM flag
-                await SendFrame(FRAME_TYPE_DATA, FLAG_END_STREAM, StreamId, new byte[0]);
-                Console.WriteLine($"[DEBUG] Empty DATA frame sent successfully");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 empty DATA frame sent", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                Console.WriteLine("[DEBUG] ➜ Sending empty DATA frame with END_STREAM");
+                await SendFrame(FRAME_TYPE_DATA, FLAG_END_STREAM, StreamId, Array.Empty<byte>());
+                Console.WriteLine("[DEBUG]   Empty DATA frame sent OK");
             }
 
             _sentBody = true;
-            Console.WriteLine($"[DEBUG] HTTP/2 body sending completed successfully");
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 body sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            Console.WriteLine("[DEBUG] HTTP/2 body sending completed successfully");
         }
+
+
 
         private async Task SendFrame(byte type, byte flags, int streamId, byte[] payload)
         {
@@ -312,6 +353,7 @@ namespace Pode
         {
             try
             {
+
                 // For HTTP/2, use the existing input stream from the request
                 // This is crucial because:
                 // 1. For SSL/TLS connections, this is the SslStream that handles encryption

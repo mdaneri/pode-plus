@@ -269,10 +269,10 @@ namespace Pode
                             .ConfigureAwait(false); Context.Data["AlpnNegotiatedHttp2"] = false;
                     }
 #else
-                // Fallback to HTTP/1.1 only authentication for netstandard2.0
-                await ssl.AuthenticateAsServerAsync(Certificate, AllowClientCertificate, Protocols, false)
-                    .ConfigureAwait(false);
-                Context.Data["AlpnNegotiatedHttp2"] = false;
+                    // Fallback to HTTP/1.1 only authentication for netstandard2.0
+                    await ssl.AuthenticateAsServerAsync(Certificate, AllowClientCertificate, Protocols, false)
+                        .ConfigureAwait(false);
+                    Context.Data["AlpnNegotiatedHttp2"] = false;
 #endif
                 }
 

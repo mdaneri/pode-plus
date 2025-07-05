@@ -176,12 +176,11 @@ namespace Pode
         {
 #if !NETSTANDARD2_0
             // Create HTTP/2 response if the request is HTTP/2, otherwise use standard response
-            if (Request is PodeHttp2Request http2Request)
+            if (Request is PodeHttp2Request http2Request && http2Request.StreamId != 0)
             {
                 Console.WriteLine($"[DEBUG] Creating HTTP/2 response for stream {http2Request.StreamId} in NewResponse()");
                 PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/2 response for stream {http2Request.StreamId}", Listener, PodeLoggingLevel.Verbose, this);
-                var http2Response = new PodeHttp2Response(this);
-                http2Response.StreamId = http2Request.StreamId;
+                var http2Response = new PodeHttp2Response(this, http2Request.StreamId);
                 Response = http2Response;
                 Console.WriteLine($"[DEBUG] HTTP/2 response created successfully with StreamId: {http2Response.StreamId}, Type: {Response.GetType().Name}");
                 PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response created successfully", Listener, PodeLoggingLevel.Verbose, this);

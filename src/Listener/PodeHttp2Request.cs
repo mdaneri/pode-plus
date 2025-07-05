@@ -5,11 +5,13 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.IO;
 using System.Net.Sockets;
+using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
 using System.Net.Security;
+using System.Buffers.Binary;
 using hpack;
 
 namespace Pode
@@ -38,11 +40,32 @@ namespace Pode
         // HTTP/2 Connection Preface
         private static readonly byte[] HTTP2_PREFACE = System.Text.Encoding.ASCII.GetBytes("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
+        // RFC 7540 §7 – Error codes
+        internal enum Http2ErrorCode : uint
+        {
+            NoError = 0x0,
+            ProtocolError = 0x1,
+            InternalError = 0x2,
+            FlowControlError = 0x3,
+            SettingsTimeout = 0x4,
+            StreamClosed = 0x5,
+            FrameSizeError = 0x6,
+            RefusedStream = 0x7,
+            Cancel = 0x8,
+            CompressionError = 0x9,
+            ConnectError = 0xA,
+            EnhanceYourCalm = 0xB,
+            InadequateSecurity = 0xC,
+            Http11Required = 0xD
+        }
+
+
         // HTTP/2 Properties
         public string HttpMethod { get; private set; }
         public NameValueCollection QueryString { get; private set; }
         public string Protocol { get; private set; } = "HTTP/2.0";
         public string ProtocolVersion { get; private set; } = "2.0";
+        internal int PeerMaxFrameSize { get; private set; } = 16384; // default 2^14
         public string ContentType { get; private set; }
         public int ContentLength { get; private set; }
         public Encoding ContentEncoding { get; private set; }
@@ -91,12 +114,16 @@ namespace Pode
 
         public override bool CloseImmediately
         {
-            get => !IsHttpMethodValid();
+            get => StreamId != 0 && !IsHttpMethodValid();
         }
 
+        // A request becomes “processable” only once we have complete headers.
         public override bool IsProcessable
         {
-            get => !CloseImmediately && !AwaitingBody && _isHeadersComplete;
+            get => StreamId != 0 &&
+           !CloseImmediately &&
+           !AwaitingBody &&
+           _isHeadersComplete;
         }
 
         public PodeHttp2Request(Socket socket, PodeSocket podeSocket, PodeContext context)
@@ -394,7 +421,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_SETTINGS:
                     Console.WriteLine("[DEBUG] Processing SETTINGS frame");
-                    ProcessSettingsFrame(frame);
+                    await ProcessSettingsFrame(frame);
                     break;
                 case FRAME_TYPE_PRIORITY:
                     Console.WriteLine("[DEBUG] Processing PRIORITY frame");
@@ -507,34 +534,68 @@ namespace Pode
         //  NOTE: very similar to the version in PodeHttp2Response, but we
         //  keep it local so the request can send RST_STREAM when needed.
         // ---------------------------------------------------------------
-        private async Task SendFrame(byte type, byte flags, int streamId, byte[] payload)
+        private async Task SendFrame(byte type, byte flags, int streamId, ReadOnlyMemory<byte> payload, CancellationToken ct = default)
         {
-            var networkStream = GetNetworkStream();
-            if (networkStream == null)
+            var stream = GetNetworkStream();
+            if (stream == null || !stream.CanWrite)
+            {
+                Console.WriteLine("[DEBUG] SendFrame: network stream unavailable");
                 return;
+            }
 
-            int length = payload?.Length ?? 0;
+            int length = payload.Length;
+            if (length > 0xFFFFFF)
+                throw new ArgumentOutOfRangeException(nameof(payload), "Frame larger than 16 MB");
+
+            // --- build 9-byte header ------------------------------------------------
             var header = new byte[9];
 
-            // 24-bit length
             header[0] = (byte)((length >> 16) & 0xFF);
             header[1] = (byte)((length >> 8) & 0xFF);
             header[2] = (byte)(length & 0xFF);
 
-            // type & flags
             header[3] = type;
             header[4] = flags;
 
-            // 31-bit stream ID (R bit = 0)
-            header[5] = (byte)((streamId >> 24) & 0x7F);
-            header[6] = (byte)((streamId >> 16) & 0xFF);
-            header[7] = (byte)((streamId >> 8) & 0xFF);
-            header[8] = (byte)(streamId & 0xFF);
+            int sid31 = streamId & 0x7FFF_FFFF;        // clear the reserved R-bit
+            header[5] = (byte)((sid31 >> 24) & 0xFF);
+            header[6] = (byte)((sid31 >> 16) & 0xFF);
+            header[7] = (byte)((sid31 >> 8) & 0xFF);
+            header[8] = (byte)(sid31 & 0xFF);
 
-            await networkStream.WriteAsync(header, 0, header.Length);
-            if (length > 0)
-                await networkStream.WriteAsync(payload, 0, length);
+            // --- single buffer so header+payload leave in one TLS record -----------
+            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(9 + length);
+            try
+            {
+                System.Buffer.BlockCopy(header, 0, buffer, 0, 9);
+
+                if (length != 0)
+                {
+                    // fast path when the payload is already backed by an array
+                    if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(
+                            payload, out ArraySegment<byte> seg))
+                    {
+                        System.Buffer.BlockCopy(seg.Array, seg.Offset, buffer, 9, length);
+                    }
+                    else
+                    {
+                        // fallback (rare) – copy via Span
+                        payload.Span.CopyTo(buffer.AsSpan(9, length));
+                    }
+                }
+
+                await stream.WriteAsync(buffer, 0, 9 + length, ct).ConfigureAwait(false);
+                await stream.FlushAsync(ct).ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[DEBUG] Sent frame: T=0x{type:X2} F=0x{flags:X2} SID={streamId} Len={length}");
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
+
 
         // ---------------------------------------------------------------
         //  Convenience wrapper for RST_STREAM (errorCode = HTTP/2 code).
@@ -572,7 +633,7 @@ namespace Pode
             }
         }
 
-        private void ProcessSettingsFrame(Http2Frame frame)
+        private async Task ProcessSettingsFrame(Http2Frame frame)
         {
             Console.WriteLine($"[DEBUG] ProcessSettingsFrame: Length={frame.Length}, Flags=0x{frame.Flags:X2}");
 
@@ -604,6 +665,17 @@ namespace Pode
 
                         _hpackDecoder.SetMaxHeaderTableSize(value);
                         Console.WriteLine($"[DEBUG] HPACK dynamic table size {oldSize} → {value}");
+                    }
+                    if (id == 0x5)   // SETTINGS_MAX_FRAME_SIZE
+                    {
+                        if (value < 16384 || value > 16777215)
+                        {
+                            await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
+                            return;
+                        }
+
+                        PeerMaxFrameSize = value;
+                        Console.WriteLine($"[DEBUG] Peer max frame size → {PeerMaxFrameSize}");
                     }
 
                 }
@@ -678,7 +750,6 @@ namespace Pode
         {
             // Ping frame - should send PING response with ACK flag
         }
-
         private void ProcessGoAwayFrame(Http2Frame frame)
         {
             // Connection is being closed
@@ -1071,7 +1142,7 @@ namespace Pode
                 {
                     return InputStream;
                 }
-
+                Console.WriteLine("[DEBUG] No InputStream available, trying to get NetworkStream from socket");
                 // If no InputStream, we need to access the socket through reflection or use the Context
                 // For now, let's try using the context's socket information
                 if (Context?.PodeSocket != null)
@@ -1191,30 +1262,6 @@ namespace Pode
             return await base.Receive(cancellationToken).ConfigureAwait(false);
         }
 
-        private bool IsCleanerPseudoHeader(string newValue, string existingValue)
-        {
-            // Prefer non-empty values
-            if (string.IsNullOrEmpty(existingValue) && !string.IsNullOrEmpty(newValue))
-                return true;
-            if (!string.IsNullOrEmpty(existingValue) && string.IsNullOrEmpty(newValue))
-                return false;
-
-            // Both have values, compare quality
-            int newCorruption = CountCorruptedChars(newValue);
-            int existingCorruption = CountCorruptedChars(existingValue);
-
-            // Prefer the value with fewer corrupted characters
-            if (newCorruption < existingCorruption)
-                return true;
-            if (newCorruption > existingCorruption)
-                return false;
-
-            // If corruption is equal, prefer shorter reasonable values
-            if (newValue.Length < existingValue.Length && newValue.Length > 0 && newValue.Length < 256)
-                return true;
-
-            return false;
-        }
 
         private int CountCorruptedChars(string value)
         {
@@ -1232,123 +1279,7 @@ namespace Pode
             return count;
         }
 
-        private void EnsureEssentialPseudoHeaders(List<KeyValuePair<string, string>> headers)
-        {
-            var pseudoHeaders = new Dictionary<string, string>();
 
-            // Collect existing pseudo-headers
-            foreach (var header in headers)
-            {
-                if (header.Key.StartsWith(":"))
-                {
-                    pseudoHeaders[header.Key] = header.Value;
-                }
-            }
-
-            // Add missing essential pseudo-headers
-            if (!pseudoHeaders.ContainsKey(":method"))
-            {
-                Console.WriteLine($"[WARNING] RobustHpackDecoder: No method header found, adding GET fallback");
-                headers.Insert(0, new KeyValuePair<string, string>(":method", "GET"));
-            }
-
-            if (!pseudoHeaders.ContainsKey(":scheme"))
-            {
-                Console.WriteLine($"[WARNING] RobustHpackDecoder: No scheme header found, adding https fallback");
-                headers.Insert(0, new KeyValuePair<string, string>(":scheme", "https"));
-            }
-
-            if (!pseudoHeaders.ContainsKey(":path"))
-            {
-                Console.WriteLine($"[WARNING] RobustHpackDecoder: No path header found, adding / fallback");
-                headers.Insert(0, new KeyValuePair<string, string>(":path", "/"));
-            }
-
-            if (!pseudoHeaders.ContainsKey(":authority"))
-            {
-                Console.WriteLine($"[WARNING] RobustHpackDecoder: No authority header found, adding fallback");
-                headers.Add(new KeyValuePair<string, string>(":authority", "localhost"));
-            }
-            else
-            {
-                // Check if authority value is corrupted
-                string authorityValue = pseudoHeaders[":authority"];
-                if (string.IsNullOrEmpty(authorityValue) ||
-                    authorityValue.Any(c => c < 32 || c > 126) ||
-                    authorityValue.Contains("\0") ||
-                    authorityValue.Contains("�") || // Unicode replacement character
-                    authorityValue.Length > 253) // Max domain name length
-                {
-                    Console.WriteLine($"[WARNING] RobustHpackDecoder: Authority header appears corrupted: '{authorityValue}'");
-
-                    // Replace with fallback
-                    for (int i = 0; i < headers.Count; i++)
-                    {
-                        if (headers[i].Key == ":authority")
-                        {
-                            headers[i] = new KeyValuePair<string, string>(":authority", "localhost");
-                            Console.WriteLine($"[DEBUG] RobustHpackDecoder: Replaced corrupted authority with fallback: 'localhost'");
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        private void CleanupCorruptedHeaders(List<KeyValuePair<string, string>> headers)
-        {
-            // Clean up any other corrupted headers
-            for (int i = headers.Count - 1; i >= 0; i--)
-            {
-                var header = headers[i];
-                bool isCorrupted = false;
-
-                // Check header name
-                if (string.IsNullOrEmpty(header.Key) ||
-                    header.Key.Any(c => c < 32 || c > 126) ||
-                    header.Key.Contains("�"))
-                {
-                    isCorrupted = true;
-                }
-
-                // Check header value (be more lenient, but filter out obvious corruption)
-                if (header.Value != null &&
-                    (header.Value.Contains("�") || // Unicode replacement character
-                     header.Value.Any(c => c < 9 || (c > 13 && c < 32)) || // Control characters except tab, LF, CR
-                     header.Value.Length > 8192)) // Unreasonably long header value
-                {
-                    // For non-critical headers, just clean the value
-                    if (!header.Key.StartsWith(":"))
-                    {
-                        Console.WriteLine($"[WARNING] RobustHpackDecoder: Cleaning corrupted header value for '{header.Key}'");
-                        var cleanValue = new string(header.Value.Where(c => c >= 32 && c <= 126).ToArray());
-                        if (cleanValue.Length > 0 && cleanValue.Length < header.Value.Length * 0.5)
-                        {
-                            // Too much corruption, remove the header
-                            isCorrupted = true;
-                        }
-                        else
-                        {
-                            headers[i] = new KeyValuePair<string, string>(header.Key, cleanValue);
-                        }
-                    }
-                    else
-                    {
-                        // For pseudo-headers, don't clean - they should be handled by EnsureEssentialPseudoHeaders
-                        if (CountCorruptedChars(header.Value) > header.Value.Length * 0.3)
-                        {
-                            isCorrupted = true;
-                        }
-                    }
-                }
-
-                if (isCorrupted)
-                {
-                    Console.WriteLine($"[WARNING] RobustHpackDecoder: Removing corrupted header: '{header.Key}' = '{header.Value}'");
-                    headers.RemoveAt(i);
-                }
-            }
-        }
 
     }
 
