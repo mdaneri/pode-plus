@@ -340,7 +340,13 @@ namespace Pode
                 }
                 else if (context.IsHttp) // Handle HTTP context disposal if awaiting body.
                 {
+#if !NETSTANDARD2_0
+                    // Check if it's HTTP/2 or HTTP/1.x and handle accordingly
+                    bool awaitingBody = context.IsHttp2 ? context.Http2Request.AwaitingBody : context.HttpRequest.AwaitingBody;
+                    if (awaitingBody)
+#else
                     if (context.HttpRequest.AwaitingBody)
+#endif
                     {
                         process = false;
                         context.Dispose();

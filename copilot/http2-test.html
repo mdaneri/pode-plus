@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HTTP/2 Test Page</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .status { padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        pre { background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🚀 HTTP/2 Test Page</h1>
+    <p>This page is served by Pode server to test HTTP/2 support.</p>
+
+    <div class="info">
+        <h3>📊 Connection Information</h3>
+        <p><strong>Server:</strong> Pode</p>
+        <p><strong>Time:</strong> <span id="currentTime"></span></p>
+        <p><strong>Protocol:</strong> Check your browser's Developer Tools → Network tab → Protocol column</p>
+    </div>
+
+    <div class="status">
+        <h3>🔍 How to Check Protocol</h3>
+        <ol>
+            <li>Open your browser's Developer Tools (F12)</li>
+            <li>Go to the Network tab</li>
+            <li>Refresh this page</li>
+            <li>Look for the "Protocol" column (you may need to right-click on columns to enable it)</li>
+            <li>You should see either "h2" (HTTP/2) or "http/1.1"</li>
+        </ol>
+    </div>
+
+    <div class="info">
+        <h3>🧪 Test Results</h3>
+        <p>If you see <code>h2</code> in the Protocol column, then HTTP/2 is working! 🎉</p>
+        <p>If you see <code>http/1.1</code>, then the connection fell back to HTTP/1.1.</p>
+    </div>
+
+    <script>
+        document.getElementById('currentTime').textContent = new Date().toLocaleString();
+
+        // Try to detect HTTP/2 using JavaScript (limited detection)
+        if (window.fetch) {
+            console.log('🔍 Browser supports fetch API');
+            console.log('🌐 Check Network tab for actual protocol used');
+        }
+    </script>
+</body>
+</html>
