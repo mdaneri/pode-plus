@@ -426,7 +426,8 @@ namespace Pode
             }
         }
 
-        private async Task ProcessHeadersFrame(Http2Frame frame, CancellationToken cancellationToken)
+        private async Task ProcessHeadersFrame(Http2Frame frame,
+                                        CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] ProcessHeadersFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
 
@@ -436,42 +437,57 @@ namespace Pode
 
             Console.WriteLine($"[DEBUG] EndOfHeaders={EndOfHeaders}, EndOfStream={EndOfStream}");
 
-            // Get or create stream
+            // Get-or-create stream entry (same pattern you already use)
             if (!Streams.ContainsKey(StreamId))
             {
                 Streams[StreamId] = new Http2Stream { StreamId = StreamId };
             }
-
             var stream = Streams[StreamId];
 
             // Debug: Show raw header payload
             Console.WriteLine($"[DEBUG] Raw header payload ({frame.Payload.Length} bytes): {BitConverter.ToString(frame.Payload).Replace("-", " ")}");
 
-            // Decode HPACK headers
+            // ---------- strip PADDED / PRIORITY and feed HPACK ----------
+            int offset = 0;
+            int padLen = 0;
+
+            if ((frame.Flags & FLAG_PADDED) != 0)
+            {
+                padLen = frame.Payload[offset];
+                offset += 1;
+            }
+
+            if ((frame.Flags & FLAG_PRIORITY) != 0)
+            {
+                offset += 5;            // 4-byte stream-dependency + 1-byte weight
+            }
+
+            int blockLen = frame.Payload.Length - offset - padLen;
+            if (blockLen < 0) blockLen = 0;   // safety guard
+
+            var headerListener = new ListHeaderListener();
+
             try
             {
-                var listener = new ListHeaderListener();
-                using (var ms = new MemoryStream(frame.Payload))
+                using (var ms = new MemoryStream(frame.Payload, offset, blockLen))
                 using (var br = new BinaryReader(ms, System.Text.Encoding.UTF8, leaveOpen: true))
                 {
-                    _hpackDecoder.Decode(br, listener);
+                    _hpackDecoder.Decode(br, headerListener);
                     if (EndOfHeaders)
-                    {
                         _hpackDecoder.EndHeaderBlock();
-                    }
                 }
-                Console.WriteLine($"[DEBUG] Decoded {listener.Headers.Count} headers from HPACK:");
-                foreach (var (name, value) in listener.Headers)
+
+                Console.WriteLine($"[DEBUG] Decoded {headerListener.Headers.Count} headers from HPACK:");
+                foreach (var (name, value) in headerListener.Headers)
                 {
-                    Console.WriteLine($"[DEBUG]   {name}: {value}");
                     stream.Headers[name] = value;
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG] HPACK decoding error: {ex.Message}");
-                // Try to handle as literal headers for debugging
-                Console.WriteLine("[DEBUG] Attempting basic literal header decoding...");
+                Console.WriteLine($"[DEBUG] HPACK decode failed: {ex.Message} → sending RST_STREAM");
+                await SendRstStream(frame.StreamId, 0x1);   // PROTOCOL_ERROR
+                return;                                     // stop processing this stream
             }
 
             if (EndOfHeaders)
@@ -484,6 +500,61 @@ namespace Pode
                 Console.WriteLine("[DEBUG] Headers not complete, waiting for CONTINUATION frame");
             }
         }
+
+        // ---------------------------------------------------------------
+        //  Low-level frame writer (request side)
+        //
+        //  NOTE: very similar to the version in PodeHttp2Response, but we
+        //  keep it local so the request can send RST_STREAM when needed.
+        // ---------------------------------------------------------------
+        private async Task SendFrame(byte type, byte flags, int streamId, byte[] payload)
+        {
+            var networkStream = GetNetworkStream();
+            if (networkStream == null)
+                return;
+
+            int length = payload?.Length ?? 0;
+            var header = new byte[9];
+
+            // 24-bit length
+            header[0] = (byte)((length >> 16) & 0xFF);
+            header[1] = (byte)((length >> 8) & 0xFF);
+            header[2] = (byte)(length & 0xFF);
+
+            // type & flags
+            header[3] = type;
+            header[4] = flags;
+
+            // 31-bit stream ID (R bit = 0)
+            header[5] = (byte)((streamId >> 24) & 0x7F);
+            header[6] = (byte)((streamId >> 16) & 0xFF);
+            header[7] = (byte)((streamId >> 8) & 0xFF);
+            header[8] = (byte)(streamId & 0xFF);
+
+            await networkStream.WriteAsync(header, 0, header.Length);
+            if (length > 0)
+                await networkStream.WriteAsync(payload, 0, length);
+        }
+
+        // ---------------------------------------------------------------
+        //  Convenience wrapper for RST_STREAM (errorCode = HTTP/2 code).
+        // ---------------------------------------------------------------
+        private Task SendRstStream(int streamId, int errorCode)
+        {
+            byte[] code =
+            {
+        (byte)((errorCode >> 24) & 0xFF),
+        (byte)((errorCode >> 16) & 0xFF),
+        (byte)((errorCode >> 8)  & 0xFF),
+        (byte)( errorCode        & 0xFF)
+    };
+
+            const byte FRAME_TYPE_RST_STREAM = 0x3;
+            const byte NO_FLAGS = 0x00;
+
+            return SendFrame(FRAME_TYPE_RST_STREAM, NO_FLAGS, streamId, code);
+        }
+
 
         private async Task ProcessDataFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
@@ -505,39 +576,47 @@ namespace Pode
         {
             Console.WriteLine($"[DEBUG] ProcessSettingsFrame: Length={frame.Length}, Flags=0x{frame.Flags:X2}");
 
-            // Check if this is a SETTINGS ACK frame
+            // ACK → nothing to do
             if ((frame.Flags & FLAG_ACK) != 0)
             {
                 Console.WriteLine("[DEBUG] Received SETTINGS ACK frame");
                 return;
             }
 
-            // Process settings - each setting is 6 bytes (2 bytes ID + 4 bytes value)
-            for (int i = 0; i < frame.Payload.Length; i += 6)
+            for (int i = 0; i + 5 < frame.Payload.Length; i += 6)
             {
-                if (i + 5 < frame.Payload.Length)
-                {
-                    var settingId = (frame.Payload[i] << 8) | frame.Payload[i + 1];
-                    var value = (frame.Payload[i + 2] << 24) | (frame.Payload[i + 3] << 16) |
-                               (frame.Payload[i + 4] << 8) | frame.Payload[i + 5];
+                int id = (frame.Payload[i] << 8) | frame.Payload[i + 1];
+                int value = (frame.Payload[i + 2] << 24) |
+                            (frame.Payload[i + 3] << 16) |
+                            (frame.Payload[i + 4] << 8) |
+                             frame.Payload[i + 5];
 
-                    var settingName = PodeHttp2Request.GetSettingName(settingId);
-                    if (!string.IsNullOrEmpty(settingName))
+                string name = GetSettingName(id);
+                if (name != null)
+                {
+                    Console.WriteLine($"[DEBUG] Setting: {name} = {value}");
+                    Settings[name] = value;
+
+                    if (id == 0x1)                    // SETTINGS_HEADER_TABLE_SIZE
                     {
-                        Console.WriteLine($"[DEBUG] Setting: {settingName} = {value}");
-                        Settings[settingName] = value;
+                        int oldSize = (int)Settings["SETTINGS_HEADER_TABLE_SIZE"];
+                        Settings["SETTINGS_HEADER_TABLE_SIZE"] = value;
+
+                        _hpackDecoder.SetMaxHeaderTableSize(value);
+                        Console.WriteLine($"[DEBUG] HPACK dynamic table size {oldSize} → {value}");
                     }
-                    else
-                    {
-                        Console.WriteLine($"[DEBUG] Unknown setting ID: {settingId} = {value}");
-                    }
+
+                }
+                else
+                {
+                    Console.WriteLine($"[DEBUG] Unknown setting ID {id} = {value}");
                 }
             }
 
-            // Send SETTINGS ACK frame in response
-            Console.WriteLine("[DEBUG] Sending SETTINGS ACK frame");
-            Task.Run(async () => await SendSettingsAck());
+            // Send ACK
+            _ = SendSettingsAck();
         }
+
 
         private static string GetSettingName(int settingId)
         {
@@ -562,8 +641,26 @@ namespace Pode
 
         private void ProcessPriorityFrame(Http2Frame frame)
         {
-            // Priority frame processing - for now just acknowledge
+            if (frame.Payload.Length != 5 || frame.StreamId == 0) return;
+
+            uint dependency = (uint)((frame.Payload[0] << 24) |
+                                     (frame.Payload[1] << 16) |
+                                     (frame.Payload[2] << 8) |
+                                      frame.Payload[3]);
+            bool exclusive = (dependency & 0x8000_0000) != 0;
+            dependency &= 0x7FFF_FFFF;
+
+            byte weight = frame.Payload[4];           // 0–255 represents 1–256
+
+            if (!Streams.ContainsKey(frame.StreamId))
+                Streams[frame.StreamId] = new Http2Stream { StreamId = frame.StreamId };
+
+            Streams[frame.StreamId].Dependency = dependency;
+            Streams[frame.StreamId].Weight = (byte)(weight + 1); // store 1-256
+
+            Console.WriteLine($"[DEBUG] PRIORITY: Stream={frame.StreamId} dep={dependency} excl={exclusive} weight={weight + 1}");
         }
+
 
         private void ProcessRstStreamFrame(Http2Frame frame)
         {
@@ -592,32 +689,44 @@ namespace Pode
             // Flow control - update window size
         }
 
-        private async Task ProcessContinuationFrame(Http2Frame frame, CancellationToken cancellationToken)
+        // ---------------------------------------------------------------------
+        //  Handles a CONTINUATION frame that follows HEADERS/CONTINUATION.
+        // ---------------------------------------------------------------------
+        private async Task ProcessContinuationFrame(Http2Frame frame,
+                                            CancellationToken cancellationToken)
         {
-            // Continuation of headers from previous HEADERS frame
-            if (Streams.ContainsKey(StreamId))
+            if (!Streams.ContainsKey(StreamId))
+                return;                 // protocol error; nothing to continue
+
+            var stream = Streams[StreamId];
+            var headerListener = new ListHeaderListener();
+            try
             {
-                var listener = new ListHeaderListener();
-                using (var ms = new MemoryStream(frame.Payload))
+                using (var ms = new MemoryStream(frame.Payload, 0, frame.Payload.Length))
                 using (var br = new BinaryReader(ms, System.Text.Encoding.UTF8, leaveOpen: true))
                 {
-                    _hpackDecoder.Decode(br, listener);
-                }
-
-                var stream = Streams[StreamId];
-
-                foreach (var (name, value) in listener.Headers)
-                {
-                    stream.Headers[name] = value;
-                }
-
-                if ((frame.Flags & FLAG_END_HEADERS) != 0)
-                {
-                    _hpackDecoder.EndHeaderBlock();
-                    await FinalizeHeaders(stream, cancellationToken);
+                    _hpackDecoder.Decode(br, headerListener);
                 }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG] HPACK decode failed in CONTINUATION: {ex.Message}");
+                await SendRstStream(frame.StreamId, 0x1);   // PROTOCOL_ERROR
+                return;
+            }
+            foreach (var (name, value) in headerListener.Headers)
+            {
+                stream.Headers[name] = value;
+            }
+
+            if ((frame.Flags & FLAG_END_HEADERS) != 0)
+            {
+                _hpackDecoder.EndHeaderBlock();
+                await FinalizeHeaders(stream, cancellationToken);
+            }
         }
+
+
 
         private Task FinalizeHeaders(Http2Stream stream, CancellationToken cancellationToken)
         {
@@ -779,6 +888,11 @@ namespace Pode
 
             Console.WriteLine($"[DEBUG] FinalizeHeaders complete: _isHeadersComplete={_isHeadersComplete}, ContentLength={ContentLength}, EndOfStream={EndOfStream}, AwaitingBody={AwaitingBody}");
             Console.WriteLine($"[DEBUG] FinalizeHeaders - HttpMethod='{HttpMethod}', Host='{Host}', Url='{Url}'");
+
+            if (Streams.TryGetValue(StreamId, out var s))
+            {
+                Console.WriteLine($"[DEBUG] Final PRIORITY: Stream={s.StreamId} dep={s.Dependency} weight={s.Weight}");
+            }
 
             return Task.CompletedTask;
         }
@@ -1236,7 +1350,6 @@ namespace Pode
             }
         }
 
-        // ...existing code...
     }
 
     // Supporting classes
@@ -1256,8 +1369,14 @@ namespace Pode
         public bool Reset { get; set; }
         public int ErrorCode { get; set; }
         public MemoryStream Data { get; set; }
+
+        /// <summary>Stream this one depends on (0 = root, RFC 7540 §5.3).</summary>
+        public uint Dependency { get; set; } = 0;
+
+        /// <summary>Weight expressed as 1-256 (RFC 7540 §5.3). Default 16.</summary>
+        public byte Weight { get; set; } = 16;
     }
 
-    // RFC 7541 compliant HPACK decoder
+
 }
 #endif

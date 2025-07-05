@@ -52,9 +52,16 @@ $directoryPath = $podePath
 # Start Pode server
 #Start-PodeServer -ConfigFile '..\Server.psd1' -ScriptBlock {
 Start-PodeServer -ScriptBlock {
-
+    $certPath = "$($FileBrowserPath)\mycert.pfx"
+    if (! (Test-Path -Path $certPath -PathType Leaf)) {
+        $cert = New-PodeSelfSignedCertificate -Loopback -Exportable
+        Export-PodeCertificate -Certificate $cert -Path $certPath -Format 'PFX' -CertificatePassword (ConvertTo-SecureString -String 'p@ssw0rd' -AsPlainText -Force)
+    }
+    else {
+        $cert = Import-PodeCertificate -Path $certPath -CertificatePassword (ConvertTo-SecureString -String 'p@ssw0rd' -AsPlainText -Force)
+    }
     Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http
-    Add-PodeEndpoint -Address localhost -Port 8043 -Protocol Https -Default -SelfSigned -DualMode
+    Add-PodeEndpoint -Address localhost -Port 8043 -Protocol Https -Default -X509Certificate $cert -DualMode
 
     New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
     New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
