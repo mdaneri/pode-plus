@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using System.Globalization;
 using hpack;
 
 namespace Pode
@@ -146,9 +147,22 @@ namespace Pode
             // Build HTTP/2 headers frame
             var headers = new List<KeyValuePair<string, string>>
             {
-                new KeyValuePair<string, string>(":status", StatusCode.ToString())
+                new KeyValuePair<string, string>(":status", StatusCode.ToString()),
+                new KeyValuePair<string, string>("Date", DateTime.UtcNow.ToString("r", CultureInfo.InvariantCulture)),
+                new KeyValuePair<string, string>("Server", "Pode"),
+                new KeyValuePair<string, string>("X-Pode-ContextId", _context.ID)
             };
 
+            // set the server if allowed
+            /* if (Context.Listener.ShowServerDetails)
+             {
+                 if (!Headers.ContainsKey("Server"))
+                 {
+                     Headers.Add("Server", "Pode");
+                 }
+             }*/
+
+            //
             // Add regular headers
             foreach (string key in Headers.Keys)
             {
@@ -160,9 +174,10 @@ namespace Pode
                 }
             }
 
+
             // Ensure content-type is always present
             bool hasContentType = false;
-            if (!string.IsNullOrEmpty(ContentType))
+            if (!string.IsNullOrEmpty(ContentType) && !Headers.ContainsKey("content-type"))
             {
                 headers.Add(new KeyValuePair<string, string>("content-type", ContentType));
                 Console.WriteLine($"[DEBUG] Added content-type header: {ContentType}");
@@ -187,9 +202,9 @@ namespace Pode
                 headers.Add(new KeyValuePair<string, string>("content-type", "text/html; charset=utf-8"));
                 Console.WriteLine($"[DEBUG] Added default content-type header: text/html; charset=utf-8");
             }
-
+            bool isCompressed = Headers.ContainsKey("content-encoding");
             // Add content-length if body is present
-            if (StatusCode != 204 && StatusCode != 304) // Not No Content or Not Modified
+            if (StatusCode != 204 && StatusCode != 304 && !isCompressed) // Not No Content or Not Modified
             {
                 bool hasContentLength = false;
                 foreach (var header in headers)
@@ -211,7 +226,11 @@ namespace Pode
 
             Console.WriteLine($"[DEBUG] HTTP/2 headers count: {headers.Count}");
             PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers count: {headers.Count}", _context.Listener, PodeLoggingLevel.Verbose, _context);
-
+            /*if (Headers.ContainsKey("content-encoding"))
+                       {
+                           Console.WriteLine($"[DEBUG] Response is compressed, removing content-length header if present");
+                           headers.RemoveAll(h => h.Key.Equals("content-length", StringComparison.OrdinalIgnoreCase));
+                       }*/
             // Encode headers with HPACK
             Console.WriteLine($"[DEBUG] About to encode headers with HPACK");
             //   var encodedHeaders = HpackEncoder.Encode(headers);
@@ -381,7 +400,7 @@ namespace Pode
         /// <summary>
         /// Override WriteBody to handle HTTP/2 framing properly
         /// </summary>
-        public override void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        /*public override void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             Console.WriteLine($"[DEBUG] HTTP/2 WriteBody called - StreamId: {StreamId}, bytes: {bytes?.Length ?? 0}, ranges: {ranges?.Length ?? 0}, compression: {compression}");
             PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 WriteBody called with {bytes?.Length ?? 0} bytes, StreamId: {StreamId}", _context.Listener, PodeLoggingLevel.Verbose, _context);
@@ -406,15 +425,8 @@ namespace Pode
             // Send the HTTP/2 response using the Send method
             Send().GetAwaiter().GetResult();
             Console.WriteLine($"[DEBUG] Send() method completed for HTTP/2 response");
-        }
+        }*/
 
-        /// <summary>
-        /// Override WriteBody to handle HTTP/2 framing properly
-        /// </summary>
-        public override void WriteBody(byte[] bytes, PodeCompressionType compression = PodeCompressionType.none)
-        {
-            WriteBody(bytes, null, compression);
-        }
 
         public async Task SendPingResponse(byte[] pingData)
         {
@@ -444,49 +456,6 @@ namespace Pode
             }
 
             await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload.ToArray());
-        }
-
-        private int GetSettingId(string settingName)
-        {
-            switch (settingName)
-            {
-                case "SETTINGS_HEADER_TABLE_SIZE":
-                    return 1;
-                case "SETTINGS_ENABLE_PUSH":
-                    return 2;
-                case "SETTINGS_MAX_CONCURRENT_STREAMS":
-                    return 3;
-                case "SETTINGS_INITIAL_WINDOW_SIZE":
-                    return 4;
-                case "SETTINGS_MAX_FRAME_SIZE":
-                    return 5;
-                case "SETTINGS_MAX_HEADER_LIST_SIZE":
-                    return 6;
-                default:
-                    return 0;
-            }
-        }
-
-        /// <summary>
-        /// Prevent the HTTP/1.1 headers and body from being sent in Send() method
-        /// by providing custom implementations that do nothing
-        /// </summary>
-        private Task SendHeaders(bool timeout)
-        {
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 SendHeaders is no-op, headers will be sent via frames", _context.Listener, PodeLoggingLevel.Verbose, _context);
-            // Do nothing - HTTP/2 headers are sent via HEADERS frames in SendHttp2Headers
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// Prevent the HTTP/1.1 body from being sent in Send() method
-        /// by providing a custom implementation that does nothing
-        /// </summary>
-        private Task SendBody(bool timeout)
-        {
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 SendBody is no-op, body will be sent via frames", _context.Listener, PodeLoggingLevel.Verbose, _context);
-            // Do nothing - HTTP/2 body is sent via DATA frames in SendHttp2Body
-            return Task.CompletedTask;
         }
     }
 

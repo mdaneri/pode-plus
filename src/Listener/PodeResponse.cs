@@ -36,6 +36,7 @@ namespace Pode
 
         public bool SentHeaders { get; protected set; }
         public bool SentBody { get; protected set; }
+
         public bool Sent
         {
             get => SentHeaders && SentBody;
@@ -69,7 +70,12 @@ namespace Pode
             }
             set
             {
-                if (value > 0)
+                if (SendChunked || value == 0)
+                {
+                    // Do not set Content-Length for chunked responses
+                    Headers.Remove("Content-Length");
+                }
+                else
                 {
                     Headers.Set("Content-Length", value);
                 }
@@ -89,9 +95,9 @@ namespace Pode
 #if !NETSTANDARD2_0
                 if (Request is PodeHttp2Request)
                 {
-                    // HTTP/2 doesn't use status lines in the same way as HTTP/1.x
-                    // For now, return empty string as HTTP/2 uses binary frames
-                    return string.Empty;
+                    // HTTP/2 does not use response lines like HTTP/1.1
+                    // Instead, it uses frames and headers.
+                    throw new NotSupportedException("PodeResponse does not support HTTP/2 response lines.");
                 }
 #endif
                 if (Request is PodeHttpRequest httpRequest)
@@ -629,9 +635,6 @@ namespace Pode
         /// <param name="src">
         ///     The input <see cref="Stream"/> to write. Must be readable. If compression is not used, should be seekable when possible.
         /// </param>
-        /// <param name="length">
-        ///     Optional total length of the stream. If not provided, <c>src.Length</c> is used if the stream supports seeking.
-        /// </param>
         /// <param name="ranges">
         ///     Optional list of byte ranges to write, represented as hashtables with <c>Start</c> and <c>End</c> keys.
         ///     Mutually exclusive with compression.
@@ -650,22 +653,28 @@ namespace Pode
         ///     When compression is used, the response is sent with chunked encoding and no <c>Content-Length</c>.
         ///     If neither ranges nor compression are used, the method buffers small files and streams large ones using <c>WriteLargeStream</c>.
         /// </remarks>
-        public async Task WriteStreamAsync(Stream src, long? length = null, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        public async Task WriteStreamAsync(Stream src, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
-#if DEBUG
+            if (src == null) // defensive check
+                throw new ArgumentNullException(nameof(src));
+
+            if (!src.CanRead) // must be readable
+                throw new ArgumentException("Source stream must be readable.", nameof(src));
+
+            Console.WriteLine($"[DEBUG] WriteStreamAsync called. Stream Length: {(src.CanSeek ? src.Length.ToString() : "unknown")}, Ranges: {(ranges == null ? "null" : string.Join(",", ranges))}, Compression: {compression}");
+
             // Caller must not mix ranges + compression (handled upstream)
             if (compression != PodeCompressionType.none && ranges?.Length > 0)
                 throw new InvalidOperationException("Compression with Range is not supported.");
-#endif
+
             if (compression != PodeCompressionType.none)
             {
                 // Disable Pode request timeout for long transfers
                 Context.CancelTimeout();
-                SendChunked = true;   // tells Pode not to emit Content-Length
-                ContentLength64 = 0;      // defensive; will be ignored when chunked
+                Console.WriteLine("[DEBUG] Compression enabled. Starting compression stream...");
                 try
                 {
-                    string _;         // headers set by caller
+                    string _;
                     using (var cmp = WrapCompression(OutputStream, compression, out _))
                     {
                         await src.CopyToAsync(
@@ -673,34 +682,37 @@ namespace Pode
                             MAX_FRAME_SIZE,
                             Context.Listener.CancellationToken
                         ).ConfigureAwait(false);
-                    }                 // disposing ‘cmp’ flushes the final gzip/deflate frame
-
+                    }
                 }
                 catch (Exception ex)
                 {
+                    Console.WriteLine($"[DEBUG] Exception during compression: {ex}");
                     PodeHelpers.WriteException(ex, Context.Listener);
                     throw;
                 }
                 finally
                 {
                     OutputStream.Position = 0;
-                    SendChunked = false;                 // we now know the size
+                    Console.WriteLine($"[DEBUG] OutputStream Length after compression: {OutputStream.Length}");
                     ContentLength64 = OutputStream.Length;
                 }
-                return;                   // done – no size guessing, no buffering
+                Console.WriteLine("[DEBUG] Compression complete.");
+                return;
             }
 
             // small (≤ 64 MiB) → buffer + Content-Length
-            long size = length ?? (src.CanSeek ? src.Length : -1);
-
-            if (size >= 0 && size <= MAX_IN_MEMORY_FILE_SIZE && ranges == null)
+            if (src.Length >= 0 && src.Length <= MAX_IN_MEMORY_FILE_SIZE && ranges == null)
             {
-                ContentLength64 = size;
+                Console.WriteLine("[DEBUG] Buffering small stream in memory.");
+                SendChunked = false; // no compression, so we can set Content-Length
+                ContentLength64 = src.Length;
                 await src.CopyToAsync(OutputStream).ConfigureAwait(false);
+                Console.WriteLine($"[DEBUG] OutputStream Length after buffering: {OutputStream.Length}");
                 return;
             }
             // large  (> 64 MiB) → existing streaming helper
-            await WriteLargeStream(src, size, ranges).ConfigureAwait(false);
+            Console.WriteLine("[DEBUG] Stream is large or ranges specified. Using WriteLargeStream.");
+            await WriteLargeStream(src, src.Length, ranges).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -738,33 +750,24 @@ namespace Pode
             // classic using-statement (await-using/IAsyncDisposable requires C# 8+)
             using (FileStream src = fi.OpenRead())
             {
-                await WriteStreamAsync(src, fi.Length, ranges, compression)
+                await WriteStreamAsync(src, ranges, compression)
                       .ConfigureAwait(false);
             }
         }
 
-        public async Task WriteByteAsync(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
+        public async Task WriteByteAsync(byte[] bytes, long[] ranges, PodeCompressionType compression = PodeCompressionType.none)
         {
             if (bytes == null)
                 throw new ArgumentNullException(nameof(bytes));
             using (MemoryStream ms = new MemoryStream(bytes, writable: false))
             {
-                await WriteStreamAsync(ms, bytes.Length, ranges, compression)
+                Console.WriteLine($"[DEBUG] Writing byte array to stream - Length: {bytes.Length}");
+                await WriteStreamAsync(ms, ranges, compression)
                       .ConfigureAwait(false);
             }
         }
 
-        public virtual void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
-        {
-            WriteByteAsync(bytes, ranges, compression).GetAwaiter().GetResult();
-        }
 
-
-
-        public virtual void WriteBody(byte[] bytes, PodeCompressionType compression = PodeCompressionType.none)
-        {
-            WriteByteAsync(bytes, null, compression).GetAwaiter().GetResult();
-        }
 
         /// <summary>
         /// Asynchronously writes a string response to the client, with optional encoding and compression.
@@ -775,6 +778,9 @@ namespace Pode
         /// <param name="encoding">
         ///     Optional <see cref="Encoding"/> to use when converting the string to bytes.
         ///     If not specified, the current <c>Encoding</c> property is used.
+        /// </param>
+        /// <param name="ranges">
+        ///     Optional array of byte ranges to write, represented as <c>long[]</c>.
         /// </param>
         /// <param name="compression">
         ///     Optional compression type to apply to the output (e.g., <c>Gzip</c>, <c>Brotli</c>, <c>Deflate</c>).
@@ -802,7 +808,7 @@ namespace Pode
 
             using (MemoryStream ms = new MemoryStream(bytes, writable: false))
             {
-                await WriteStreamAsync(ms, bytes.Length, ranges, compression)
+                await WriteStreamAsync(ms, ranges, compression)
                       .ConfigureAwait(false);
             }
         }
@@ -822,33 +828,16 @@ namespace Pode
             WriteStringAsync(content, encoding, ranges, compression).GetAwaiter().GetResult();
         }
 
-
-
         /// <summary>
         /// Synchronous façade for PowerShell callers that don’t use 'await'.
-        /// Just forwards to <see cref="WriteStringAsync"/> and blocks.
-        /// Writes a string response to the client, with optional encoding and compression.
-        /// This method is designed to be used in scenarios where synchronous execution is required, such as in PowerShell scripts.
-        /// It allows for writing string content directly to the response stream, optionally applying encoding and compression.
+        /// Just forwards to <see cref="WriteByteAsync"/> and blocks.
         /// </summary>
-        /// <param name="content">The string content to write.</param>
-        /// <param name="encoding">Optional encoding to use when converting the string to bytes.</param>
+        /// <param name="bytes"> The byte array to write.</param>
+        /// <param name="ranges"> Optional array of byte ranges to write.</param>
         /// <param name="compression">Optional compression type to apply to the output.</param>
-        public virtual void WriteBody(string content, Encoding encoding = null, PodeCompressionType compression = PodeCompressionType.none)
+        public virtual void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
-            WriteStringAsync(content, encoding, null, compression).GetAwaiter().GetResult();
-        }
-
-        /// <summary>
-        /// Synchronous façade for PowerShell callers that don’t use 'await'.
-        /// Just forwards to <see cref="WriteStringAsync"/> and blocks.
-        /// Writes a string response to the client, with optional compression.
-        /// </summary>
-        /// <param name="content">The string content to write.</param>
-        /// <param name="compression">Optional compression type to apply to the output.</param>
-        public virtual void WriteBody(string content, PodeCompressionType compression = PodeCompressionType.none)
-        {
-            WriteStringAsync(content, null, null, compression).GetAwaiter().GetResult();
+            WriteByteAsync(bytes, ranges, compression).GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -862,19 +851,6 @@ namespace Pode
         {
             WriteFileAsync(file, ranges, compression).GetAwaiter().GetResult();
         }
-
-        /// <summary>
-        /// Synchronous façade for PowerShell callers that don’t use 'await'.
-        /// Just forwards to <see cref="WriteFileAsync"/> and blocks.
-        /// </summary>
-        /// <param name="file">File system object representing the file.</param>
-        /// <param name="compression">Optional compression type for the file.</param>
-        public void WriteFile(FileSystemInfo file, PodeCompressionType compression = PodeCompressionType.none)
-        {
-            WriteFileAsync(file, null, compression).GetAwaiter().GetResult();
-        }
-
-
 
         /// <summary>
         /// Synchronous façade for PowerShell callers that don’t use 'await'.
@@ -1074,7 +1050,7 @@ namespace Pode
         /// Sets default headers for the HTTP response.
         /// This method ensures that the response has the necessary headers such as Content-Length, Date, Server, and X-Pode-ContextId.
         /// </summary>
-        private void SetDefaultHeaders()
+        protected void SetDefaultHeaders()
         {
             // ensure content length (remove for 1xx responses, ensure added otherwise)
             if (StatusCode < 200 || SseEnabled || SendChunked)

@@ -101,7 +101,7 @@ Nothing to report :D
     Add-PodeStaticRouteGroup -FileBrowser -Routes {
 
         Add-PodeStaticRoute -Path '/standard' -Source $using:directoryPath
-        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
+        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  
         Add-PodeStaticRoute -Path '/nodownload' -Source $using:directoryPath
         Add-PodeStaticRoute -Path '/gzip' -Source $using:directoryPath -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
         Add-PodeStaticRoute -Path '/deflate' -Source $using:directoryPath -PassThru | Add-PodeRouteCompression -Enable -Encoding deflate
