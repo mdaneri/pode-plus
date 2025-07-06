@@ -27,7 +27,6 @@ namespace Pode
         public int StreamId { get; set; }
         //  public SimpleHpackEncoder HpackEncoder { get; private set; }
         public hpack.Encoder HpackEncoder { get; }
-        private readonly PodeContext _context;
         private bool _sentHeaders = false;
         private bool _sentBody = false;
 
@@ -36,7 +35,7 @@ namespace Pode
         {
             get
             {
-                if (_context?.Request is PodeHttp2Request req)
+                if (Context?.Request is PodeHttp2Request req)
                     return req.PeerMaxFrameSize;
                 return 16384;                  // safe fallback
             }
@@ -47,7 +46,9 @@ namespace Pode
         {
             //HpackEncoder = new SimpleHpackEncoder();
             HpackEncoder = new hpack.Encoder(4096);   // headerTableSize
-            _context = context;
+            Console.WriteLine($"[DEBUG] PodeHttp2Response created with StreamId: {StreamId}, MaxFrameSize: {MaxFrameSize}");
+            PodeHelpers.WriteErrorMessage($"DEBUG: PodeHttp2Response created with StreamId: {StreamId}, MaxFrameSize: {MaxFrameSize}", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            // Initialize OutputStream if not already done
         }
 
         public PodeHttp2Response(PodeContext context, int streamId) : this(context)
@@ -72,16 +73,16 @@ namespace Pode
             if ((_sentHeaders && _sentBody) || IsDisposed || (_sentHeaders && SseEnabled))
             {
                 Console.WriteLine($"[DEBUG] HTTP/2 Send() returning early - already sent or disposed");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 Send() called but response already sent or disposed", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 Send() called but response already sent or disposed", Context.Listener, PodeLoggingLevel.Verbose, Context);
                 return;
             }
 
             Console.WriteLine($"[DEBUG] HTTP/2 Response.Send() proceeding - StreamId: {StreamId}, StatusCode: {StatusCode}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 Response.Send() called - StreamId: {StreamId}, StatusCode: {StatusCode}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 Response.Send() called - StreamId: {StreamId}, StatusCode: {StatusCode}", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             try
             {
-                Console.WriteLine($"[DEBUG] Setting SentHeaders and SentBody to true to prevent HTTP/1.1 response");
+                Console.WriteLine($"[DEBUG] Setting _sentHeaders and _sentBody to true to prevent HTTP/1.1 response");
                 // Mark headers and body as sent to prevent the base class Send() method
                 // from sending HTTP/1.1 response
                 SentHeaders = true;
@@ -102,7 +103,7 @@ namespace Pode
                 Console.WriteLine($"[DEBUG] SendHttp2Headers() completed, about to call SendHttp2Body()");
                 await SendHttp2Body(bodyData).ConfigureAwait(false);
                 Console.WriteLine($"[DEBUG] SendHttp2Body() completed successfully");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response sent successfully", Context.Listener, PodeLoggingLevel.Verbose, Context);
             }
             catch (OperationCanceledException ex)
             {
@@ -115,13 +116,13 @@ namespace Pode
             catch (AggregateException aex)
             {
                 Console.WriteLine($"[DEBUG] AggregateException in Send(): {aex.Message}");
-                PodeHelpers.HandleAggregateException(aex, _context.Listener);
+                PodeHelpers.HandleAggregateException(aex, Context.Listener);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DEBUG] Exception in Send(): {ex.GetType().Name}: {ex.Message}");
-                PodeHelpers.WriteErrorMessage($"DEBUG: Exception in HTTP/2 Send(): {ex.Message}", _context.Listener, PodeLoggingLevel.Verbose, _context);
-                PodeHelpers.WriteException(ex, _context.Listener);
+                PodeHelpers.WriteErrorMessage($"DEBUG: Exception in HTTP/2 Send(): {ex.Message}", Context.Listener, PodeLoggingLevel.Verbose, Context);
+                PodeHelpers.WriteException(ex, Context.Listener);
                 throw;
             }
             finally
@@ -142,7 +143,7 @@ namespace Pode
             }
 
             Console.WriteLine($"[DEBUG] Sending HTTP/2 headers - StreamId: {StreamId}, StatusCode: {StatusCode}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 headers - StreamId: {StreamId}, StatusCode: {StatusCode}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 headers - StreamId: {StreamId}, StatusCode: {StatusCode}", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             // Build HTTP/2 headers frame
             var headers = new List<KeyValuePair<string, string>>
@@ -150,7 +151,7 @@ namespace Pode
                 new KeyValuePair<string, string>(":status", StatusCode.ToString()),
                 new KeyValuePair<string, string>("Date", DateTime.UtcNow.ToString("r", CultureInfo.InvariantCulture)),
                 new KeyValuePair<string, string>("Server", "Pode"),
-                new KeyValuePair<string, string>("X-Pode-ContextId", _context.ID)
+                new KeyValuePair<string, string>("X-Pode-ContextId", Context.ID)
             };
 
             // set the server if allowed
@@ -176,35 +177,17 @@ namespace Pode
 
 
             // Ensure content-type is always present
-            bool hasContentType = false;
             if (!string.IsNullOrEmpty(ContentType) && !Headers.ContainsKey("content-type"))
             {
                 headers.Add(new KeyValuePair<string, string>("content-type", ContentType));
                 Console.WriteLine($"[DEBUG] Added content-type header: {ContentType}");
-                hasContentType = true;
-            }
-            else
-            {
-                // Check if content-type was added via Headers
-                foreach (var header in headers)
-                {
-                    if (header.Key.ToLower() == "content-type")
-                    {
-                        hasContentType = true;
-                        break;
-                    }
-                }
             }
 
             // Add default content-type if none specified
-            if (!hasContentType)
-            {
-                headers.Add(new KeyValuePair<string, string>("content-type", "text/html; charset=utf-8"));
-                Console.WriteLine($"[DEBUG] Added default content-type header: text/html; charset=utf-8");
-            }
+
             bool isCompressed = Headers.ContainsKey("content-encoding");
             // Add content-length if body is present
-            if (StatusCode != 204 && StatusCode != 304 && !isCompressed) // Not No Content or Not Modified
+            if (StatusCode != 204 && StatusCode != 304) // Not No Content or Not Modified
             {
                 bool hasContentLength = false;
                 foreach (var header in headers)
@@ -225,7 +208,7 @@ namespace Pode
             }
 
             Console.WriteLine($"[DEBUG] HTTP/2 headers count: {headers.Count}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers count: {headers.Count}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers count: {headers.Count}", Context.Listener, PodeLoggingLevel.Verbose, Context);
             /*if (Headers.ContainsKey("content-encoding"))
                        {
                            Console.WriteLine($"[DEBUG] Response is compressed, removing content-length header if present");
@@ -246,14 +229,14 @@ namespace Pode
                 encodedHeaders = ms.ToArray();
             }
             Console.WriteLine($"[DEBUG] Encoded headers length: {encodedHeaders.Length}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: Encoded headers length: {encodedHeaders.Length}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: Encoded headers length: {encodedHeaders.Length}", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             // Send HEADERS frame
             Console.WriteLine($"[DEBUG] About to send HEADERS frame");
             await SendFrame(FRAME_TYPE_HEADERS, FLAG_END_HEADERS, StreamId, encodedHeaders);
             Console.WriteLine($"[DEBUG] HEADERS frame sent successfully");
             _sentHeaders = true;
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 headers sent successfully", Context.Listener, PodeLoggingLevel.Verbose, Context);
         }
 
 
@@ -270,7 +253,7 @@ namespace Pode
                 return;
             }
             Console.WriteLine($"[DEBUG] Sending HTTP/2 body - StreamId: {StreamId}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 body - StreamId: {StreamId}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 body - StreamId: {StreamId}", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             byte[] data = bodyData;
             if (data == null && OutputStream != null && OutputStream.Length > 0)
@@ -322,7 +305,7 @@ namespace Pode
 
         private async Task SendFrame(byte type, byte flags, int streamId, byte[] payload)
         {
-            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 frame - Type: {type}, Flags: {flags}, StreamId: {streamId}, PayloadLength: {payload?.Length ?? 0}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: Sending HTTP/2 frame - Type: {type}, Flags: {flags}, StreamId: {streamId}, PayloadLength: {payload?.Length ?? 0}", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             var frameHeader = new byte[9];
             var length = payload?.Length ?? 0;
@@ -348,7 +331,7 @@ namespace Pode
             var networkStream = GetNetworkStream();
             if (networkStream != null)
             {
-                PodeHelpers.WriteErrorMessage($"DEBUG: Writing frame header and payload to network stream", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: Writing frame header and payload to network stream", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
                 // Send frame header
                 await networkStream.WriteAsync(frameHeader, 0, frameHeader.Length);
@@ -360,11 +343,11 @@ namespace Pode
                 }
 
                 await networkStream.FlushAsync();
-                PodeHelpers.WriteErrorMessage($"DEBUG: Frame sent successfully", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: Frame sent successfully", Context.Listener, PodeLoggingLevel.Verbose, Context);
             }
             else
             {
-                PodeHelpers.WriteErrorMessage($"DEBUG: Network stream is null - cannot send frame", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: Network stream is null - cannot send frame", Context.Listener, PodeLoggingLevel.Verbose, Context);
             }
         }
 
@@ -378,19 +361,19 @@ namespace Pode
                 // 1. For SSL/TLS connections, this is the SslStream that handles encryption
                 // 2. Creating a new NetworkStream bypasses SSL encryption
                 // 3. The client expects encrypted HTTP/2 frames
-                var stream = _context.Request?.InputStream;
+                var stream = Context.Request?.InputStream;
                 if (stream != null)
                 {
-                    PodeHelpers.WriteErrorMessage($"DEBUG: Using existing input stream type: {stream.GetType().Name}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                    PodeHelpers.WriteErrorMessage($"DEBUG: Using existing input stream type: {stream.GetType().Name}", Context.Listener, PodeLoggingLevel.Verbose, Context);
                     return stream;
                 }
 
-                PodeHelpers.WriteErrorMessage($"DEBUG: No input stream available", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: No input stream available", Context.Listener, PodeLoggingLevel.Verbose, Context);
                 return null;
             }
             catch (Exception ex)
             {
-                PodeHelpers.WriteException(ex, _context.Listener);
+                PodeHelpers.WriteException(ex, Context.Listener);
                 return null;
             }
         }
@@ -403,13 +386,13 @@ namespace Pode
         /*public override void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
         {
             Console.WriteLine($"[DEBUG] HTTP/2 WriteBody called - StreamId: {StreamId}, bytes: {bytes?.Length ?? 0}, ranges: {ranges?.Length ?? 0}, compression: {compression}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 WriteBody called with {bytes?.Length ?? 0} bytes, StreamId: {StreamId}", _context.Listener, PodeLoggingLevel.Verbose, _context);
+            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 WriteBody called with {bytes?.Length ?? 0} bytes, StreamId: {StreamId}", Context.Listener, PodeLoggingLevel.Verbose, Context);
 
             // Prevent duplicate response sending
             if (_sentHeaders && _sentBody)
             {
                 Console.WriteLine($"[DEBUG] HTTP/2 response already sent, ignoring duplicate WriteBody call");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response already sent, ignoring duplicate WriteBody call", _context.Listener, PodeLoggingLevel.Verbose, _context);
+                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response already sent, ignoring duplicate WriteBody call", Context.Listener, PodeLoggingLevel.Verbose, Context);
                 return;
             }
 

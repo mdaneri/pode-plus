@@ -25,7 +25,7 @@ namespace Pode
         public MemoryStream OutputStream { get; private set; }
         public bool IsDisposed { get; private set; }
 
-        private readonly PodeContext Context;
+        protected readonly PodeContext Context;
         private PodeRequest Request { get => Context.Request; }
 
         public PodeSseScope SseScope { get; private set; } = PodeSseScope.None;
@@ -57,36 +57,9 @@ namespace Pode
             set => _statusDesc = value;
         }
 
-        public long ContentLength64
-        {
-            get
-            {
-                if (!Headers.ContainsKey("Content-Length"))
-                {
-                    return 0;
-                }
+        public long ContentLength64 { get; set; } = 0L;
 
-                return long.Parse($"{Headers["Content-Length"]}");
-            }
-            set
-            {
-                if (SendChunked || value == 0)
-                {
-                    // Do not set Content-Length for chunked responses
-                    Headers.Remove("Content-Length");
-                }
-                else
-                {
-                    Headers.Set("Content-Length", value);
-                }
-            }
-        }
-
-        public string ContentType
-        {
-            get => $"{Headers["Content-Type"]}";
-            set => Headers.Set("Content-Type", value);
-        }
+        public string ContentType { get; set; } = string.Empty;
 
         public string HttpResponseLine
         {
@@ -260,9 +233,30 @@ namespace Pode
 
             SetDefaultHeaders();
 
+            if (ContentType != null && !Headers.ContainsKey("Content-Type"))
+            {
+                Headers.Set("Content-Type", ContentType);
+                Console.WriteLine($"[DEBUG] Added content-type header: {ContentType}");
+            }
+
+            if (StatusCode != 204 && StatusCode != 304 && (!SendChunked || ContentLength64 > 0 && !Headers.ContainsKey("Content-Length")))
+            {
+                // set Content-Length header if not chunked or if ContentLength64 is greater than 0
+                Headers.Set("Content-Length", ContentLength64.ToString(CultureInfo.InvariantCulture));
+                Console.WriteLine($"[DEBUG] Added Content-Length header: {ContentLength64}");
+            }
+
             // stream response output
             var buffer = Encoding.GetBytes(BuildHeaders(Headers));
+
+            Console.WriteLine($"[DEBUG] Sending headers: {StatusCode} {StatusDescription}, Content-Type: {ContentType}, Content-Length: {ContentLength64}");
+
+#if NETCOREAPP2_1_OR_GREATER
+            await Request.InputStream.WriteAsync(buffer.AsMemory(), Context.Listener.CancellationToken).ConfigureAwait(false);
+#else
+            // write the headers to the request input stream
             await Request.InputStream.WriteAsync(buffer, 0, buffer.Length, Context.Listener.CancellationToken).ConfigureAwait(false);
+#endif
             buffer = default;
             SentHeaders = true;
         }
