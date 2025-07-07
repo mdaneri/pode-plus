@@ -467,7 +467,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_PRIORITY:
                     Console.WriteLine("[DEBUG] Processing PRIORITY frame");
-                    ProcessPriorityFrame(frame);
+                    await ProcessPriorityFrame(frame, cancellationToken);
                     break;
                 case FRAME_TYPE_RST_STREAM:
                     Console.WriteLine("[DEBUG] Processing RST_STREAM frame");
@@ -936,9 +936,17 @@ namespace Pode
             }
         }
 
-        private void ProcessPriorityFrame(Http2Frame frame)
+        private async Task ProcessPriorityFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] ProcessPriorityFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
+
+             // RFC 7540 §6.3: StreamId == 0 is PROTOCOL_ERROR
+            if (frame.StreamId == 0)
+            {
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "PRIORITY frame on stream 0", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
             // §6.6  Priority frame payload is always 5 octets.
             //       The first 4 octets are the stream dependency, and the last octet
             //       is the weight (0-255, representing 1-256).
@@ -950,7 +958,7 @@ namespace Pode
             //       The weight is a single byte, 0-255, representing 1-256.
             //       A weight of 0 is invalid and should be treated as 1.
             //       The stream ID 0 is reserved for connection-level frames.
-            if (frame.Payload.Length != 5 || frame.StreamId == 0) return;
+            if (frame.Payload.Length != 5 ) return;
 
             uint dependency = (uint)((frame.Payload[0] << 24) |
                                      (frame.Payload[1] << 16) |
@@ -969,7 +977,7 @@ namespace Pode
 
             Console.WriteLine($"[DEBUG] PRIORITY: Stream={frame.StreamId} dep={dependency} excl={exclusive} weight={weight + 1}");
         }
- 
+
 
         private async Task ProcessRstStreamFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
