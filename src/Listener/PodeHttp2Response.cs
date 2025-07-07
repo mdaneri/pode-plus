@@ -380,36 +380,6 @@ namespace Pode
 
 
 
-        /// <summary>
-        /// Override WriteBody to handle HTTP/2 framing properly
-        /// </summary>
-        /*public override void WriteBody(byte[] bytes, long[] ranges = null, PodeCompressionType compression = PodeCompressionType.none)
-        {
-            Console.WriteLine($"[DEBUG] HTTP/2 WriteBody called - StreamId: {StreamId}, bytes: {bytes?.Length ?? 0}, ranges: {ranges?.Length ?? 0}, compression: {compression}");
-            PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 WriteBody called with {bytes?.Length ?? 0} bytes, StreamId: {StreamId}", Context.Listener, PodeLoggingLevel.Verbose, Context);
-
-            // Prevent duplicate response sending
-            if (_sentHeaders && _sentBody)
-            {
-                Console.WriteLine($"[DEBUG] HTTP/2 response already sent, ignoring duplicate WriteBody call");
-                PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response already sent, ignoring duplicate WriteBody call", Context.Listener, PodeLoggingLevel.Verbose, Context);
-                return;
-            }
-
-            Console.WriteLine($"[DEBUG] About to store {bytes?.Length ?? 0} bytes in OutputStream");
-            // Store the body data in the OutputStream
-            if (bytes != null && bytes.Length > 0)
-            {
-                OutputStream.Write(bytes, 0, bytes.Length);
-                Console.WriteLine($"[DEBUG] Stored {bytes.Length} bytes in OutputStream, new length: {OutputStream.Length}");
-            }
-
-            Console.WriteLine($"[DEBUG] About to call Send() method for HTTP/2 response");
-            // Send the HTTP/2 response using the Send method
-            Send().GetAwaiter().GetResult();
-            Console.WriteLine($"[DEBUG] Send() method completed for HTTP/2 response");
-        }*/
-
 
         public async Task SendPingResponse(byte[] pingData)
         {
@@ -418,27 +388,20 @@ namespace Pode
 
         public async Task SendGoAway(int lastStreamId, uint errorCode, byte[] debugData = null)
         {
-            var payload = new List<byte>();
+            // Build GOAWAY frame payload: 4 bytes lastStreamId, 4 bytes errorCode
+            byte[] payload = new byte[8];
+            // lastStreamId: 31 bits, high bit must be zero
+            payload[0] = (byte)((lastStreamId >> 24) & 0x7F);
+            payload[1] = (byte)((lastStreamId >> 16) & 0xFF);
+            payload[2] = (byte)((lastStreamId >> 8) & 0xFF);
+            payload[3] = (byte)(lastStreamId & 0xFF);
+            // errorCode: 4 bytes
+            payload[4] = (byte)((errorCode >> 24) & 0xFF);
+            payload[5] = (byte)((errorCode >> 16) & 0xFF);
+            payload[6] = (byte)((errorCode >> 8) & 0xFF);
+            payload[7] = (byte)(errorCode & 0xFF);
 
-            // Last Stream ID (4 bytes)
-            payload.Add((byte)((lastStreamId >> 24) & 0x7F));
-            payload.Add((byte)((lastStreamId >> 16) & 0xFF));
-            payload.Add((byte)((lastStreamId >> 8) & 0xFF));
-            payload.Add((byte)(lastStreamId & 0xFF));
-
-            // Error Code (4 bytes)
-            payload.Add((byte)((errorCode >> 24) & 0xFF));
-            payload.Add((byte)((errorCode >> 16) & 0xFF));
-            payload.Add((byte)((errorCode >> 8) & 0xFF));
-            payload.Add((byte)(errorCode & 0xFF));
-
-            // Debug data (optional)
-            if (debugData != null)
-            {
-                payload.AddRange(debugData);
-            }
-
-            await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload.ToArray());
+            await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload);
         }
     }
 

@@ -36,6 +36,7 @@ namespace Pode
         private const byte FLAG_END_HEADERS = 0x4;
         private const byte FLAG_PADDED = 0x8;
         private const byte FLAG_PRIORITY = 0x20;
+        private const int DEFAULT_WINDOW_SIZE = 65_535; // Default connection window size (RFC 7540 §6.9)
 
         // HTTP/2 Connection Preface
         private static readonly byte[] HTTP2_PREFACE = System.Text.Encoding.ASCII.GetBytes("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
@@ -61,6 +62,8 @@ namespace Pode
 
 
         // HTTP/2 Properties
+
+        private int _connectionWindowSize = DEFAULT_WINDOW_SIZE;
         public string HttpMethod { get; private set; }
         public NameValueCollection QueryString { get; private set; }
         public string Protocol { get; private set; } = "HTTP/2.0";
@@ -89,6 +92,8 @@ namespace Pode
         private bool _isHeadersComplete;
         private MemoryStream _bodyStream;
         private readonly hpack.Decoder _hpackDecoder;
+
+
 
         // Helper to collect decoded headers from hpack.Decoder
         private sealed class ListHeaderListener : hpack.IHeaderListener
@@ -173,7 +178,10 @@ namespace Pode
                 if (Context.Data.ContainsKey("Http2PrefaceData"))
                 {
                     Console.WriteLine($"[DEBUG] ValidateInput: Found stored preface data, accepting incoming {bytes.Length} bytes as HTTP/2 frames");
-                    return bytes.Length >= 9; // HTTP/2 frame header is 9 bytes
+                    if (_incompleteFrame.Count > 0)
+                        return bytes.Length > 0;   // we’re finishing a half-read frame
+                    return bytes.Length >= 9;      // fresh frame header
+
                 }
 
                 var result = bytes.Length >= HTTP2_PREFACE.Length;
@@ -182,9 +190,23 @@ namespace Pode
             }
 
             // For HTTP/2, we need at least 9 bytes for a frame header
-            var frameResult = bytes.Length >= 9;
-            Console.WriteLine($"[DEBUG] ValidateInput: checking frame length {bytes.Length} >= 9, result={frameResult}");
-            return frameResult;
+            //   var frameResult = bytes.Length >= 9;
+            //   Console.WriteLine($"[DEBUG] ValidateInput: checking frame length {bytes.Length} >= 9, result={frameResult}");
+            //   return frameResult;
+
+            // After the connection preface:
+            //   • if we’re starting a *new* frame   → need ≥9 bytes (header),
+            //   • if we already hold an incomplete header/payload in _incompleteFrame
+            //     → *any* positive length lets us finish it.
+            if (_incompleteFrame.Count > 0)
+            {
+                Console.WriteLine("[DEBUG] ValidateInput: continuing incomplete frame");
+                return bytes.Length > 0;
+            }
+
+            bool frameOk = bytes.Length >= 9;
+            Console.WriteLine($"[DEBUG] ValidateInput: checking frame length {bytes.Length} ≥ 9, result={frameOk}");
+            return frameOk;
         }
 
         public override async Task Open(CancellationToken cancellationToken)
@@ -294,14 +316,38 @@ namespace Pode
                     Console.WriteLine($"[DEBUG] Preface removed, remaining bytes: {remainingBytes.Length}");
 
                     // If we used stored preface data, also process the original bytes from this Parse call
-                    if (usingStoredPreface && bytes.Length > 0)
+                    /*   if (usingStoredPreface && bytes.Length > 0)
+                       {
+                           Console.WriteLine($"[DEBUG] Processing original {bytes.Length} bytes after handling stored preface");
+                           // Combine the original bytes with the remaining bytes after preface
+                           //    actualBytes = actualBytes.Concat(bytes.Skip(HTTP2_PREFACE.Length)).ToArray();
+
+                           var combinedBytes = new List<byte>(actualBytes);
+                           combinedBytes.AddRange(bytes);
+                           actualBytes = combinedBytes.ToArray();
+
+                           Console.WriteLine($"[DEBUG] Combined data length: {actualBytes.Length}");
+                       }*/
+                    if (usingStoredPreface)
                     {
-                        Console.WriteLine($"[DEBUG] Processing original {bytes.Length} bytes after handling stored preface");
-                        var combinedBytes = new List<byte>(actualBytes);
-                        combinedBytes.AddRange(bytes);
-                        actualBytes = combinedBytes.ToArray();
-                        Console.WriteLine($"[DEBUG] Combined data length: {actualBytes.Length}");
+                        int prefaceLen = HTTP2_PREFACE.Length;       // 24 bytes
+                        int surplusLen = bytes.Length - prefaceLen;  // >0 means extra data arrived
+
+                        if (surplusLen > 0)
+                        {
+                            var extra = new byte[surplusLen];
+                            System.Buffer.BlockCopy(bytes, prefaceLen, extra, 0, surplusLen);
+
+                            // append once, no duplicates
+                            actualBytes = actualBytes
+                                .Concat(extra)      // needs `using System.Linq;`
+                                .ToArray();
+
+                            Console.WriteLine($"[DEBUG] Appended {surplusLen} extra byte(s) that followed the preface");
+                        }
+
                     }
+
                 }
 
                 // Add any incomplete frame data from previous parsing
@@ -319,22 +365,27 @@ namespace Pode
                     if (allBytes.Count - offset < 9)
                     {
                         Console.WriteLine("[DEBUG] Not enough bytes for frame header, saving for next parse");
+                        //   _incompleteFrame.Clear(); // Clear old junk to avoid misalignment
                         // Save incomplete frame for next parse
                         _incompleteFrame.AddRange(allBytes.GetRange(offset, allBytes.Count - offset));
                         break;
                     }
                     var frameStartOffset = offset; // Store the original offset before parsing
 
-                    var frame = ParseFrame(allBytes.ToArray(), ref offset);
+                    var frame = PodeHttp2Request.ParseFrame(allBytes.ToArray(), ref offset);
                     if (frame == null)
                     {
+                        Console.WriteLine("[DEBUG] Incomplete frame detected, need more data");
                         // Incomplete frame, save for next parse - use the original frame start offset
                         var remainingBytes = allBytes.Count - frameStartOffset;
                         if (remainingBytes > 0)
                         {
+                            Console.WriteLine($"[DEBUG] Incomplete frame detected, saving {remainingBytes} bytes for next parse");
+                            //                            _incompleteFrame.AddRange(allBytes.GetRange(frameStartOffset, remainingBytes));
+                            _incompleteFrame.Clear();   // old junk would break alignment
                             _incompleteFrame.AddRange(allBytes.GetRange(frameStartOffset, remainingBytes));
                         }
-                        break;
+                        break; // Exit the loop, we need more data
                     }
 
                     Console.WriteLine($"[DEBUG] Parsed frame: Type={frame.Type}, Length={frame.Length}, StreamId={frame.StreamId}, Flags=0x{frame.Flags:X2}");
@@ -362,48 +413,36 @@ namespace Pode
             return true;
         }
 
-        private Http2Frame ParseFrame(byte[] bytes, ref int offset)
+        private static Http2Frame ParseFrame(IReadOnlyList<byte> buf, ref int offset)
         {
-            if (bytes.Length - offset < 9) return null;
+            if (buf.Count - offset < 9) return null;
 
-            // Parse frame header (9 bytes)
-            var length = (bytes[offset] << 16) | (bytes[offset + 1] << 8) | bytes[offset + 2];
-            var type = bytes[offset + 3];
-            var flags = bytes[offset + 4];
-            var streamId = ((bytes[offset + 5] & 0x7F) << 24) | (bytes[offset + 6] << 16) |
-                          (bytes[offset + 7] << 8) | bytes[offset + 8];
+            int len = (buf[offset] << 16) | (buf[offset + 1] << 8) | buf[offset + 2];
+            byte type = buf[offset + 3];
+            byte flags = buf[offset + 4];
+            int stream = ((buf[offset + 5] & 0x7F) << 24) |
+                          (buf[offset + 6] << 16) |
+                          (buf[offset + 7] << 8) |
+                           buf[offset + 8];
 
-            offset += 9;
+            if (buf.Count - (offset + 9) < len) return null;
 
-            // Check if we have enough bytes for the payload
-            if (bytes.Length - offset < length)
+            var payload = new byte[len];
+            for (int i = 0; i < len; i++) payload[i] = buf[offset + 9 + i];
+
+            offset += 9 + len;
+
+            Console.WriteLine($"[DEBUG] ParseFrame: T=0x{type:X2} F=0x{flags:X2} SID={stream} Len={len}");
+            return new Http2Frame
             {
-                offset -= 9; // Reset offset
-                return null;
-            }
-
-            // Extract payload
-            var payload = new byte[length];
-            Array.Copy(bytes, offset, payload, 0, length);
-            offset += length;
-
-            var frame = new Http2Frame
-            {
-                Length = length,
+                Length = len,
                 Type = type,
                 Flags = flags,
-                StreamId = streamId,
+                StreamId = stream,
                 Payload = payload
             };
-
-            Console.WriteLine($"[DEBUG] ParseFrame: type={type}, flags=0x{flags:X2}, streamId={streamId}, length={length}");
-            if (type == FRAME_TYPE_HEADERS && length > 0)
-            {
-                Console.WriteLine($"[DEBUG] HEADERS frame payload first 32 bytes: {BitConverter.ToString(payload, 0, Math.Min(32, length)).Replace("-", " ")}");
-            }
-
-            return frame;
         }
+
 
         private async Task ProcessFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
@@ -433,7 +472,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_PING:
                     Console.WriteLine("[DEBUG] Processing PING frame");
-                    ProcessPingFrame(frame);
+                    await ProcessPingFrame(frame, cancellationToken);
                     break;
                 case FRAME_TYPE_GOAWAY:
                     Console.WriteLine("[DEBUG] Processing GOAWAY frame");
@@ -441,7 +480,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_WINDOW_UPDATE:
                     Console.WriteLine("[DEBUG] Processing WINDOW_UPDATE frame");
-                    ProcessWindowUpdateFrame(frame);
+                    await ProcessWindowUpdateFrame(frame);
                     break;
                 case FRAME_TYPE_CONTINUATION:
                     Console.WriteLine("[DEBUG] Processing CONTINUATION frame");
@@ -467,7 +506,7 @@ namespace Pode
             // Get-or-create stream entry (same pattern you already use)
             if (!Streams.ContainsKey(StreamId))
             {
-                Streams[StreamId] = new Http2Stream { StreamId = StreamId };
+                Streams[StreamId] = new Http2Stream(StreamId, (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"]);
             }
             var stream = Streams[StreamId];
 
@@ -602,18 +641,39 @@ namespace Pode
         // ---------------------------------------------------------------
         private Task SendRstStream(int streamId, int errorCode)
         {
-            byte[] code =
-            {
-        (byte)((errorCode >> 24) & 0xFF),
-        (byte)((errorCode >> 16) & 0xFF),
-        (byte)((errorCode >> 8)  & 0xFF),
-        (byte)( errorCode        & 0xFF)
-    };
+            PodeHelpers.WriteErrorMessage($"DEBUG: About to send RST_STREAM, code {errorCode} (SID={streamId})", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            Console.WriteLine($"[DEBUG] SendRstStream: streamId={streamId}, errorCode=0x{errorCode:X8}");
+
+
+            byte[] code = {
+                (byte)((errorCode >> 24) & 0xFF),
+                (byte)((errorCode >> 16) & 0xFF),
+                (byte)((errorCode >> 8)  & 0xFF),
+                (byte)( errorCode        & 0xFF)
+            };
 
             const byte FRAME_TYPE_RST_STREAM = 0x3;
             const byte NO_FLAGS = 0x00;
 
             return SendFrame(FRAME_TYPE_RST_STREAM, NO_FLAGS, streamId, code);
+        }
+        private async Task CloseConnection()
+        {
+            try
+            {
+                var networkStream = GetNetworkStream();
+                if (networkStream != null)
+                {
+                    await networkStream.FlushAsync();
+                    networkStream.Close();      // closes underlying socket as well
+                    networkStream.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log, but don't throw—you're shutting down anyway
+                PodeHelpers.WriteErrorMessage($"DEBUG: Exception during connection close: {ex.Message}", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            }
         }
 
 
@@ -713,6 +773,18 @@ namespace Pode
 
         private void ProcessPriorityFrame(Http2Frame frame)
         {
+            Console.WriteLine($"[DEBUG] ProcessPriorityFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
+            // §6.6  Priority frame payload is always 5 octets.
+            //       The first 4 octets are the stream dependency, and the last octet
+            //       is the weight (0-255, representing 1-256).
+            //       The stream dependency is a 31-bit integer, with the high bit reserved.
+            //       If the high bit is set, the stream is exclusive.
+            //       The stream ID 0 is reserved for connection-level frames.
+            //       If the stream ID is 0, it means this is a connection-level priority
+            //       and the dependency is ignored.
+            //       The weight is a single byte, 0-255, representing 1-256.
+            //       A weight of 0 is invalid and should be treated as 1.
+            //       The stream ID 0 is reserved for connection-level frames.
             if (frame.Payload.Length != 5 || frame.StreamId == 0) return;
 
             uint dependency = (uint)((frame.Payload[0] << 24) |
@@ -725,7 +797,7 @@ namespace Pode
             byte weight = frame.Payload[4];           // 0–255 represents 1–256
 
             if (!Streams.ContainsKey(frame.StreamId))
-                Streams[frame.StreamId] = new Http2Stream { StreamId = frame.StreamId };
+                Streams[frame.StreamId] = new Http2Stream(frame.StreamId, (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"]);
 
             Streams[frame.StreamId].Dependency = dependency;
             Streams[frame.StreamId].Weight = (byte)(weight + 1); // store 1-256
@@ -746,19 +818,175 @@ namespace Pode
             }
         }
 
-        private void ProcessPingFrame(Http2Frame frame)
+        private async Task ProcessPingFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
-            // Ping frame - should send PING response with ACK flag
+            Console.WriteLine($"[DEBUG] ProcessPingFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
+
+            // RFC 7540 §6.7: PING must always use stream 0
+            if (frame.StreamId != 0)
+            {
+                // Send GOAWAY with PROTOCOL_ERROR and close the connection
+                await SendGoAway(0, (uint)Http2ErrorCode.ProtocolError, "PING on non-zero stream" , cancellationToken);
+
+                // flag this connection for closure (implementation-specific)
+                //_shouldClose = true;
+                return;
+            }
+            // §6.7  Ping payload is always 8 octets.
+            if (frame.Length != 8)
+            {
+                Console.WriteLine($"[DEBUG] Invalid PING frame length {frame.Length}, sending GOAWAY and closing connection");
+                PodeHelpers.WriteErrorMessage($"DEBUG: Invalid PING frame length {frame.Length}, sending GOAWAY and closing connection", Context.Listener, PodeLoggingLevel.Verbose, Context);
+                // Length error on the connection – send GOAWAY and close
+                await SendGoAway(0, (uint)Http2ErrorCode.FrameSizeError);
+                await CloseConnection();
+                return;
+            }
+
+            // Ignore peer’s ACKs
+            if ((frame.Flags & FLAG_ACK) != 0)
+            {
+                Console.WriteLine($"[DEBUG] Ignoring PING ACK frame from peer");
+                return;
+            }
+
+            // Send PING frame with ACK flag set, stream ID 0 (connection-level)
+            // and the same payload as received
+            // Note: Stream ID 0 is used for connection-level frames in HTTP/2
+            //       and the PING frame is always sent on stream 0.
+            //       The ACK flag indicates that this is a response to a PING request.
+            //       The payload is the same as the received frame.
+            //       This is a connection-level frame, so stream ID is always 0.
+            Console.WriteLine($"[DEBUG] Sending PING ACK frame with payload: {BitConverter.ToString(frame.Payload).Replace("-", " ")}");
+
+            await SendFrame(FRAME_TYPE_PING,
+                            FLAG_ACK,
+                            0,                   // always stream 0
+                            frame.Payload);
+            await GetNetworkStream().FlushAsync(cancellationToken);
         }
+
         private void ProcessGoAwayFrame(Http2Frame frame)
         {
             // Connection is being closed
         }
-
-        private void ProcessWindowUpdateFrame(Http2Frame frame)
+        public async Task SendGoAway(int lastStreamId, uint errorCode, string debugData = "")
         {
-            // Flow control - update window size
+            PodeHelpers.WriteErrorMessage($"DEBUG: About to send GOAWAY, code {errorCode} (SID={lastStreamId})", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            Console.WriteLine($"[DEBUG] SendGoAway: lastStreamId={lastStreamId}, errorCode={errorCode}");
+            // Build GOAWAY frame payload: 4 bytes lastStreamId, 4 bytes errorCode
+            byte[] payload = new byte[8];
+            // lastStreamId: 31 bits, high bit must be zero
+            payload[0] = (byte)((lastStreamId >> 24) & 0x7F);
+            payload[1] = (byte)((lastStreamId >> 16) & 0xFF);
+            payload[2] = (byte)((lastStreamId >> 8) & 0xFF);
+            payload[3] = (byte)(lastStreamId & 0xFF);
+            // errorCode: 4 bytes
+            payload[4] = (byte)((errorCode >> 24) & 0xFF);
+            payload[5] = (byte)((errorCode >> 16) & 0xFF);
+            payload[6] = (byte)((errorCode >> 8) & 0xFF);
+            payload[7] = (byte)(errorCode & 0xFF);
+
+            await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload);
         }
+        private async Task SendGoAway(
+            Http2ErrorCode error,
+            uint lastStreamId,
+            string debugData,
+            CancellationToken cancellationToken )
+        {
+            var payload = new List<byte>();
+
+            // 31 bits for last stream id
+            payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(lastStreamId)).Skip(1));
+
+            // 32-bit error code
+            payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)error)));
+
+            // optional debug string
+            if (!string.IsNullOrEmpty(debugData))
+                payload.AddRange(System.Text.Encoding.ASCII.GetBytes(debugData));
+
+            await SendFrame(FRAME_TYPE_GOAWAY, 0x00, 0, payload.ToArray());
+            await GetNetworkStream()?.FlushAsync(cancellationToken);
+        }
+
+
+        //-----------------------------------------------------------------
+        //  WINDOW_UPDATE – adjust flow-control windows (RFC 7540 §6.9)
+        //-----------------------------------------------------------------
+        private async Task ProcessWindowUpdateFrame(Http2Frame frame)
+        {
+            PodeHelpers.WriteErrorMessage($"DEBUG: Entered ProcessWindowUpdateFrame (SID={frame.StreamId}, Length={frame.Length})", Context.Listener, PodeLoggingLevel.Verbose, Context);
+            Console.WriteLine($"[DEBUG] ProcessWindowUpdateFrame: StreamId={frame.StreamId}, Length={frame.Length}");
+            // 1. Bad payload length = connection error
+            if (frame.Length != 4)
+            {
+                await SendGoAway(0, (uint)Http2ErrorCode.FrameSizeError);
+                await CloseConnection(); // implement this to close socket/stream
+                return;
+            }
+
+            int increment = ((frame.Payload[0] << 24) |
+                             (frame.Payload[1] << 16) |
+                             (frame.Payload[2] << 8) |
+                              frame.Payload[3]) & 0x7FFF_FFFF;
+
+            // 2. Zero increment = PROTOCOL_ERROR
+            if (increment == 0)
+            {
+                if (frame.StreamId == 0)
+                {
+                    await SendGoAway(0, (uint)Http2ErrorCode.ProtocolError);
+                    await CloseConnection();
+                }
+                else
+                {
+                    await SendRstStream(frame.StreamId, (int)Http2ErrorCode.ProtocolError);
+                }
+                return;
+            }
+
+            // 3. Window overflow = FLOW_CONTROL_ERROR
+            if (frame.StreamId == 0)
+            {
+                long newSize = (long)_connectionWindowSize + increment;
+                if (newSize > int.MaxValue)
+                {
+                    await SendGoAway(0, (uint)Http2ErrorCode.FlowControlError);
+                    await CloseConnection();
+                    return;
+                }
+                _connectionWindowSize = (int)newSize;
+                return;
+            }
+            else
+            {
+                var stream = GetOrCreateStream(frame.StreamId);
+                long newStreamSize = (long)stream.WindowSize + increment;
+                if (newStreamSize > int.MaxValue)
+                {
+                    await SendRstStream(frame.StreamId, (int)Http2ErrorCode.FlowControlError);
+                    return;
+                }
+                stream.AddWindow(increment);
+                return;
+            }
+        }
+
+        private Http2Stream GetOrCreateStream(int streamId)
+        {
+            if (!Streams.TryGetValue(streamId, out var stream))
+            {
+                // Use your constructor with window size!
+                int initialWindow = (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"];
+                stream = new Http2Stream(streamId, initialWindow);
+                Streams[streamId] = stream;
+            }
+            return stream;
+        }
+
+
 
         // ---------------------------------------------------------------------
         //  Handles a CONTINUATION frame that follows HEADERS/CONTINUATION.
@@ -814,10 +1042,10 @@ namespace Pode
                     value = "";
                 else
                 {
-                    value = SanitizeHeaderValue(value);
+                    value = PodeHttp2Request.SanitizeHeaderValue(value);
 
                     // Check for obvious corruption and provide fallbacks
-                    if (ContainsCorruptedData(value))
+                    if (PodeHttp2Request.ContainsCorruptedData(value))
                     {
                         Console.WriteLine($"[WARNING] Corrupted header value detected for '{key}': '{value}'");
 
@@ -1021,12 +1249,12 @@ namespace Pode
                 var settingsData = new List<byte>();
 
                 // Add each setting (6 bytes per setting: 2 bytes ID + 4 bytes value)
-                AddSetting(settingsData, 1, 4096);  // SETTINGS_HEADER_TABLE_SIZE
-                AddSetting(settingsData, 2, 0);     // SETTINGS_ENABLE_PUSH (disabled)
-                AddSetting(settingsData, 3, 100);   // SETTINGS_MAX_CONCURRENT_STREAMS
-                AddSetting(settingsData, 4, 65535); // SETTINGS_INITIAL_WINDOW_SIZE
-                AddSetting(settingsData, 5, 16384); // SETTINGS_MAX_FRAME_SIZE
-                AddSetting(settingsData, 6, 8192);  // SETTINGS_MAX_HEADER_LIST_SIZE
+                PodeHttp2Request.AddSetting(settingsData, 1, 4096);  // SETTINGS_HEADER_TABLE_SIZE
+                PodeHttp2Request.AddSetting(settingsData, 2, 0);     // SETTINGS_ENABLE_PUSH (disabled)
+                PodeHttp2Request.AddSetting(settingsData, 3, 100);   // SETTINGS_MAX_CONCURRENT_STREAMS
+                PodeHttp2Request.AddSetting(settingsData, 4, 65535); // SETTINGS_INITIAL_WINDOW_SIZE
+                PodeHttp2Request.AddSetting(settingsData, 5, 16384); // SETTINGS_MAX_FRAME_SIZE
+                PodeHttp2Request.AddSetting(settingsData, 6, 8192);  // SETTINGS_MAX_HEADER_LIST_SIZE
 
                 var payload = settingsData.ToArray();
                 Console.WriteLine($"[DEBUG] SETTINGS payload length: {payload.Length}");
@@ -1074,7 +1302,7 @@ namespace Pode
             }
         }
 
-        private void AddSetting(List<byte> settingsData, int settingId, int value)
+        private static void AddSetting(List<byte> settingsData, int settingId, int value)
         {
             // Setting ID (2 bytes)
             settingsData.Add((byte)((settingId >> 8) & 0xFF));
@@ -1168,7 +1396,7 @@ namespace Pode
             }
         }
 
-        private bool ContainsCorruptedData(string text)
+        private static bool ContainsCorruptedData(string text)
         {
             // Check for obvious signs of corruption
             if (string.IsNullOrEmpty(text))
@@ -1188,7 +1416,7 @@ namespace Pode
             return nonPrintableCount > (text.Length * 0.2);
         }
 
-        private string SanitizeHeaderValue(string value)
+        private static string SanitizeHeaderValue(string value)
         {
             if (string.IsNullOrEmpty(value))
                 return value;
@@ -1263,24 +1491,6 @@ namespace Pode
         }
 
 
-        private int CountCorruptedChars(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return 0;
-
-            int count = 0;
-            foreach (char c in value)
-            {
-                if (c < 32 || c > 126) // Non-printable ASCII
-                    count++;
-                if (c == '�') // Unicode replacement character
-                    count += 5; // Heavy penalty
-            }
-            return count;
-        }
-
-
-
     }
 
     // Supporting classes
@@ -1293,19 +1503,87 @@ namespace Pode
         public byte[] Payload { get; set; }
     }
 
+
+    /// <summary>
+    /// Represents an HTTP/2 stream (RFC 7540 §5.1).
+    /// An HTTP/2 stream is a bidirectional flow of bytes within an established connection,
+    /// identified by a unique StreamId.
+    /// Each stream can carry a sequence of frames, which are the fundamental units of communication in HTTP
+    /// </summary>
     public class Http2Stream
     {
-        public int StreamId { get; set; }
-        public Hashtable Headers { get; set; } = new Hashtable(StringComparer.InvariantCultureIgnoreCase);
+        /// <summary>
+        /// Unique identifier for the stream (RFC 7540 §5.1).
+        /// This is used to identify the stream within the HTTP/2 connection.
+        /// The StreamId is a 31-bit integer, with 0 reserved for the connection-level stream.
+        /// Each stream has a unique StreamId, which is used to differentiate it from
+        /// other streams in the same connection.
+        /// The StreamId is used in various HTTP/2 frames to indicate which stream the frame
+        /// belongs to, such as HEADERS, DATA, and RST_STREAM frames.
+        /// The StreamId is also used to manage flow control and prioritization of streams.
+        /// The StreamId is assigned by the client or server when the stream is created.
+        /// It is incremented by 2 for each new stream created, ensuring that odd StreamIds are used for client-initiated streams and even StreamIds for server-initiated streams.
+        /// The StreamId is a key part of the HTTP/2 protocol, allowing multiple streams
+        /// to be multiplexed over a single TCP connection.
+        /// The StreamId is used to identify the stream in various HTTP/2 frames, such as HEADERS, DATA, and RST_STREAM frames.
+        /// It is also used to manage flow control and prioritization of streams.
+        /// The StreamId is a 31-bit integer,
+        /// with 0 reserved for the connection-level stream.
+        /// Each stream has a unique StreamId, which is used to differentiate it from other streams
+        /// in the same connection.
+        /// </summary>
+        public int StreamId { get; }
+        public Hashtable Headers { get; }
+        /// <summary>
+        /// Indicates if the stream has been reset (RFC 7540 §6.4).
+        /// </summary>
         public bool Reset { get; set; }
+        /// <summary>
+        /// Error code for the stream, if reset (RFC 7540 §6.4).
+        /// This is used to indicate the reason for the stream reset.
+        /// If the stream has not been reset, this will be 0.
+        /// If the stream has been reset, this will contain the error code. 0.
+        /// </summary>
         public int ErrorCode { get; set; }
+
+        /// <summary>
+        /// Stream data, if any (RFC 7540 §6.1).
+        /// This is used to hold the body data for the stream.
+        /// If the stream has no body, this will be null.
+        /// The data is stored in a MemoryStream for efficient access.
+        /// If the stream has a body, this MemoryStream will contain the data.
+        /// If the stream has no body, this will be an empty MemoryStream.
+        /// This property is used to hold the body data for the stream.
+        /// It is initialized as an empty MemoryStream and can be used to read/write data.
+        /// If the stream has no body, this will be an empty MemoryStream.
+        /// If the stream has a body, this MemoryStream will contain the data.
+        /// </summary>
         public MemoryStream Data { get; set; }
 
+        /// <summary>Flow-control window for this stream (RFC 7540 §6.9.2).</summary>
+        public int WindowSize { get; private set; }
+
         /// <summary>Stream this one depends on (0 = root, RFC 7540 §5.3).</summary>
-        public uint Dependency { get; set; } = 0;
+        public uint Dependency { get; set; }
 
         /// <summary>Weight expressed as 1-256 (RFC 7540 §5.3). Default 16.</summary>
-        public byte Weight { get; set; } = 16;
+        public byte Weight { get; set; }
+
+
+        /// <summary>Create a new HTTP/2 stream with the correct initial window.</summary>
+        public Http2Stream(int streamId, int initialWindowSize,
+                           uint dependency = 0, byte weight = 16)
+        {
+            StreamId = streamId;
+            WindowSize = initialWindowSize;   // 65 535 by default
+            Dependency = dependency;
+            Weight = weight;
+            Data = new MemoryStream();
+            Headers = new Hashtable(StringComparer.InvariantCultureIgnoreCase);
+        }
+
+        /// <summary>Increase the window (WINDOW_UPDATE handler).</summary>
+        public void AddWindow(int delta) => WindowSize += delta;
     }
 
 
