@@ -384,7 +384,7 @@ namespace Pode
                         {
                             Console.WriteLine($"[DEBUG] Incomplete frame detected, saving {remainingBytes} bytes for next parse");
                             //                            _incompleteFrame.AddRange(allBytes.GetRange(frameStartOffset, remainingBytes));
-                   //         _incompleteFrame.Clear();   // old junk would break alignment
+                            //         _incompleteFrame.Clear();   // old junk would break alignment
                             _incompleteFrame.AddRange(allBytes.GetRange(frameStartOffset, remainingBytes));
                         }
                         break; // Exit the loop, we need more data
@@ -462,7 +462,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_SETTINGS:
                     Console.WriteLine("[DEBUG] Processing SETTINGS frame");
-                    await ProcessSettingsFrame(frame);
+                    await ProcessSettingsFrame(frame, cancellationToken);
                     break;
                 case FRAME_TYPE_PRIORITY:
                     Console.WriteLine("[DEBUG] Processing PRIORITY frame");
@@ -482,7 +482,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_WINDOW_UPDATE:
                     Console.WriteLine("[DEBUG] Processing WINDOW_UPDATE frame");
-                    await ProcessWindowUpdateFrame(frame);
+                    await ProcessWindowUpdateFrame(frame, cancellationToken);
                     break;
                 case FRAME_TYPE_CONTINUATION:
                     Console.WriteLine("[DEBUG] Processing CONTINUATION frame");
@@ -583,7 +583,29 @@ namespace Pode
                 Console.WriteLine("[DEBUG] SendFrame: network stream unavailable");
                 return;
             }
+            /*
+                        // ---------- FLOW-CONTROL for DATA frames --------------------------
+                        if (type == FRAME_TYPE_DATA && streamId != 0)
+                        {
+                            if (!Streams.TryGetValue(streamId, out var s))
+                                return;                       // unknown stream – just drop
 
+                            int allowed = Math.Min(s.WindowSize, _connectionWindowSize);
+                            if (allowed <= 0)                // nothing available yet
+                                return;
+
+                            if (payload.Length > allowed)
+                            {
+                                // send only what fits and leave END_STREAM unset
+                                payload = payload.Slice(0, allowed);
+                                flags &= unchecked((byte)~FLAG_END_STREAM);
+                            }
+
+                            // debit the windows
+                            s.AddWindow(-payload.Length);
+                            _connectionWindowSize -= payload.Length;
+                        }
+            */
             int length = payload.Length;
             if (length > 0xFFFFFF)
                 throw new ArgumentOutOfRangeException(nameof(payload), "Frame larger than 16 MB");
@@ -659,14 +681,14 @@ namespace Pode
 
             return SendFrame(FRAME_TYPE_RST_STREAM, NO_FLAGS, streamId, code);
         }
-        private async Task CloseConnection()
+        private async Task CloseConnection(CancellationToken cancellationToken)
         {
             try
             {
                 var networkStream = GetNetworkStream();
                 if (networkStream != null)
                 {
-                    await networkStream.FlushAsync();
+                    await networkStream.FlushAsync(cancellationToken);
                     networkStream.Close();      // closes underlying socket as well
                     networkStream.Dispose();
                 }
@@ -695,7 +717,8 @@ namespace Pode
             }
         }
 
-        private async Task ProcessSettingsFrame(Http2Frame frame)
+        private async Task ProcessSettingsFrame(Http2Frame frame,
+                                         CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] ProcessSettingsFrame: Length={frame.Length}, Flags=0x{frame.Flags:X2}");
 
@@ -715,41 +738,80 @@ namespace Pode
                              frame.Payload[i + 5];
 
                 string name = GetSettingName(id);
-                if (name != null)
-                {
-                    Console.WriteLine($"[DEBUG] Setting: {name} = {value}");
-                    Settings[name] = value;
-
-                    if (id == 0x1)                    // SETTINGS_HEADER_TABLE_SIZE
-                    {
-                        int oldSize = (int)Settings["SETTINGS_HEADER_TABLE_SIZE"];
-                        Settings["SETTINGS_HEADER_TABLE_SIZE"] = value;
-
-                        _hpackDecoder.SetMaxHeaderTableSize(value);
-                        Console.WriteLine($"[DEBUG] HPACK dynamic table size {oldSize} → {value}");
-                    }
-                    if (id == 0x5)   // SETTINGS_MAX_FRAME_SIZE
-                    {
-                        if (value < 16384 || value > 16777215)
-                        {
-                            await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
-                            return;
-                        }
-
-                        PeerMaxFrameSize = value;
-                        Console.WriteLine($"[DEBUG] Peer max frame size → {PeerMaxFrameSize}");
-                    }
-
-                }
-                else
+                if (name == null)
                 {
                     Console.WriteLine($"[DEBUG] Unknown setting ID {id} = {value}");
+                    continue;
+                }
+
+                Console.WriteLine($"[DEBUG] Setting: {name} = {value}");
+                Settings[name] = value;
+
+                switch (id)
+                {
+                    case 0x1:          // SETTINGS_HEADER_TABLE_SIZE
+                        {
+                            int oldSize = (int)Settings["SETTINGS_HEADER_TABLE_SIZE"];
+                            Settings["SETTINGS_HEADER_TABLE_SIZE"] = value;
+                            _hpackDecoder.SetMaxHeaderTableSize(value);
+                            Console.WriteLine($"[DEBUG] HPACK dynamic table size {oldSize} → {value}");
+                            break;
+                        }
+
+                    case 0x5:          // SETTINGS_MAX_FRAME_SIZE
+                        {
+                            if (value < 16384 || value > 16777215)
+                            {
+                                await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
+                                return;
+                            }
+                            PeerMaxFrameSize = value;
+                            Console.WriteLine($"[DEBUG] Peer max frame size → {PeerMaxFrameSize}");
+                            break;
+                        }
+
+                    case 0x4:          // SETTINGS_INITIAL_WINDOW_SIZE
+                        {
+                            uint unsignedVal = (uint)value;
+
+                            // RFC 7540 §6.9.2: must be ≤ 2^31-1
+                            if (unsignedVal > 0x7FFFFFFF)
+                            {
+                                await SendGoAwayAsync(
+                                        lastStreamId: 0,
+                                        errorCode: Http2ErrorCode.FlowControlError,
+                                        debugData: "SETTINGS_INITIAL_WINDOW_SIZE too large",
+                                        cancellationToken);
+                                return;     // caller closes socket
+                            }
+
+                            int old = (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"];
+                            int diff = value - old;   // may be negative
+
+                            Settings["SETTINGS_INITIAL_WINDOW_SIZE"] = value;
+
+                            foreach (var stream in Streams.Values)
+                            {
+                                // Make every open stream’s window grow/shrink by diff
+                                stream.AddWindow(diff);       // AddWindow already exists
+                            }
+
+                            Console.WriteLine($"[DEBUG] Updated initial window {old} → {value} " +
+                                              $"(applied diff {diff} to {Streams.Count} streams)");
+                            break;
+                        }
+                        default:
+                        {
+                            Console.WriteLine($"[DEBUG] Unknown setting ID {id} = {value}");
+                            break;
+                        }
                 }
             }
 
-            // Send ACK
-            _ = SendSettingsAck();
+            // --- Send SETTINGS-ACK back to the peer -------------------------
+            await SendSettingsAck();   // <-- make this awaitable if it isn’t
         }
+
 
 
         private static string GetSettingName(int settingId)
@@ -828,7 +890,7 @@ namespace Pode
             if (frame.StreamId != 0)
             {
                 // Send GOAWAY with PROTOCOL_ERROR and close the connection
-                await SendGoAway(0, (uint)Http2ErrorCode.ProtocolError, "PING on non-zero stream", cancellationToken);
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "PING on non-zero stream", cancellationToken);
                 await GetNetworkStream()?.FlushAsync(cancellationToken);
                 GetNetworkStream()?.Dispose();
                 // flag this connection for closure (implementation-specific)
@@ -841,8 +903,8 @@ namespace Pode
                 Console.WriteLine($"[DEBUG] Invalid PING frame length {frame.Length}, sending GOAWAY and closing connection");
                 PodeHelpers.WriteErrorMessage($"DEBUG: Invalid PING frame length {frame.Length}, sending GOAWAY and closing connection", Context.Listener, PodeLoggingLevel.Verbose, Context);
                 // Length error on the connection – send GOAWAY and close
-                await SendGoAway(0, (uint)Http2ErrorCode.FrameSizeError);
-                await CloseConnection();
+                await SendGoAwayAsync(0, Http2ErrorCode.FrameSizeError, "Invalid PING frame length", cancellationToken);
+                await CloseConnection(cancellationToken);
                 return;
             }
 
@@ -873,60 +935,99 @@ namespace Pode
         {
             // Connection is being closed
         }
-        public async Task SendGoAway(int lastStreamId, uint errorCode, string debugData = "")
+
+        internal async Task SendGoAwayAsync(uint lastStreamId, Http2ErrorCode errorCode, string debugData = null, CancellationToken cancellationToken = default(CancellationToken))
         {
-            PodeHelpers.WriteErrorMessage($"DEBUG: About to send GOAWAY, code {errorCode} (SID={lastStreamId})", Context.Listener, PodeLoggingLevel.Verbose, Context);
-            Console.WriteLine($"[DEBUG] SendGoAway: lastStreamId={lastStreamId}, errorCode={errorCode}");
-            // Build GOAWAY frame payload: 4 bytes lastStreamId, 4 bytes errorCode
-            byte[] payload = new byte[8];
-            // lastStreamId: 31 bits, high bit must be zero
+            // ---- build core 8-byte payload (big-endian) ------------------
+            int debugLen = string.IsNullOrEmpty(debugData) ? 0
+                                                           : System.Text.Encoding.ASCII.GetByteCount(debugData);
+            byte[] payload = new byte[8 + debugLen];
+
+            // 31-bit Last-Stream-ID (high bit must be 0)
             payload[0] = (byte)((lastStreamId >> 24) & 0x7F);
             payload[1] = (byte)((lastStreamId >> 16) & 0xFF);
             payload[2] = (byte)((lastStreamId >> 8) & 0xFF);
             payload[3] = (byte)(lastStreamId & 0xFF);
-            // errorCode: 4 bytes
-            payload[4] = (byte)((errorCode >> 24) & 0xFF);
-            payload[5] = (byte)((errorCode >> 16) & 0xFF);
-            payload[6] = (byte)((errorCode >> 8) & 0xFF);
-            payload[7] = (byte)(errorCode & 0xFF);
 
-            await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload);
+            // 32-bit Error Code
+            uint ec = (uint)errorCode;
+            payload[4] = (byte)((ec >> 24) & 0xFF);
+            payload[5] = (byte)((ec >> 16) & 0xFF);
+            payload[6] = (byte)((ec >> 8) & 0xFF);
+            payload[7] = (byte)(ec & 0xFF);
+
+            // optional debug string (ASCII as per RFC 7540 §7)
+            if (debugLen > 0)
+            {
+                System.Text.Encoding.ASCII.GetBytes(debugData, 0, debugData.Length, payload, 8);
+            }
+
+            // ---- transmit ------------------------------------------------
+            await SendFrame(FRAME_TYPE_GOAWAY, 0x00, 0, payload, cancellationToken)
+                .ConfigureAwait(false);
+
+            var ns = GetNetworkStream();
+            if (ns != null)
+            {
+                await ns.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
-        private async Task SendGoAway(
-            Http2ErrorCode error,
-            uint lastStreamId,
-            string debugData,
-            CancellationToken cancellationToken)
-        {
-            var payload = new List<byte>();
 
-            // 31 bits for last stream id
-            payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(lastStreamId)).Skip(1));
+        /*    public async Task SendGoAway(int lastStreamId, uint errorCode, string debugData = "")
+            {
+                PodeHelpers.WriteErrorMessage($"DEBUG: About to send GOAWAY, code {errorCode} (SID={lastStreamId})", Context.Listener, PodeLoggingLevel.Verbose, Context);
+                Console.WriteLine($"[DEBUG] SendGoAway: lastStreamId={lastStreamId}, errorCode={errorCode}");
+                // Build GOAWAY frame payload: 4 bytes lastStreamId, 4 bytes errorCode
+                byte[] payload = new byte[8];
+                // lastStreamId: 31 bits, high bit must be zero
+                payload[0] = (byte)((lastStreamId >> 24) & 0x7F);
+                payload[1] = (byte)((lastStreamId >> 16) & 0xFF);
+                payload[2] = (byte)((lastStreamId >> 8) & 0xFF);
+                payload[3] = (byte)(lastStreamId & 0xFF);
+                // errorCode: 4 bytes
+                payload[4] = (byte)((errorCode >> 24) & 0xFF);
+                payload[5] = (byte)((errorCode >> 16) & 0xFF);
+                payload[6] = (byte)((errorCode >> 8) & 0xFF);
+                payload[7] = (byte)(errorCode & 0xFF);
 
-            // 32-bit error code
-            payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)error)));
+                await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload);
+            }
+            private async Task SendGoAway(
+                Http2ErrorCode error,
+                uint lastStreamId,
+                string debugData,
+                CancellationToken cancellationToken)
+            {
+                var payload = new List<byte>();
 
-            // optional debug string
-            if (!string.IsNullOrEmpty(debugData))
-                payload.AddRange(System.Text.Encoding.ASCII.GetBytes(debugData));
+                // 31 bits for last stream id
+                payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(lastStreamId)).Skip(1));
 
-            await SendFrame(FRAME_TYPE_GOAWAY, 0x00, 0, payload.ToArray());
-            await GetNetworkStream()?.FlushAsync(cancellationToken);
-        }
+                // 32-bit error code
+                payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)error)));
+
+                // optional debug string
+                if (!string.IsNullOrEmpty(debugData))
+                    payload.AddRange(System.Text.Encoding.ASCII.GetBytes(debugData));
+
+                await SendFrame(FRAME_TYPE_GOAWAY, 0x00, 0, payload.ToArray());
+                await GetNetworkStream()?.FlushAsync(cancellationToken);
+            }*/
 
 
         //-----------------------------------------------------------------
         //  WINDOW_UPDATE – adjust flow-control windows (RFC 7540 §6.9)
         //-----------------------------------------------------------------
-        private async Task ProcessWindowUpdateFrame(Http2Frame frame)
+        private async Task ProcessWindowUpdateFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
             PodeHelpers.WriteErrorMessage($"DEBUG: Entered ProcessWindowUpdateFrame (SID={frame.StreamId}, Length={frame.Length})", Context.Listener, PodeLoggingLevel.Verbose, Context);
             Console.WriteLine($"[DEBUG] ProcessWindowUpdateFrame: StreamId={frame.StreamId}, Length={frame.Length}");
             // 1. Bad payload length = connection error
             if (frame.Length != 4)
             {
-                await SendGoAway(0, (uint)Http2ErrorCode.FrameSizeError);
-                await CloseConnection(); // implement this to close socket/stream
+                await SendGoAwayAsync(0, Http2ErrorCode.FrameSizeError, "Invalid WINDOW_UPDATE frame length", cancellationToken);
+                Console.WriteLine("[DEBUG] Invalid WINDOW_UPDATE frame length, sending GOAWAY and closing connection");
+                await CloseConnection(cancellationToken); // implement this to close socket/stream
                 return;
             }
 
@@ -940,8 +1041,9 @@ namespace Pode
             {
                 if (frame.StreamId == 0)
                 {
-                    await SendGoAway(0, (uint)Http2ErrorCode.ProtocolError);
-                    await CloseConnection();
+                    await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "Zero WINDOW_UPDATE frame increment", cancellationToken);
+                    Console.WriteLine("[DEBUG] Zero WINDOW_UPDATE increment on connection, sending GOAWAY and closing connection");
+                    await CloseConnection(cancellationToken);   // implement this to close socket/stream
                 }
                 else
                 {
@@ -956,8 +1058,9 @@ namespace Pode
                 long newSize = (long)_connectionWindowSize + increment;
                 if (newSize > int.MaxValue)
                 {
-                    await SendGoAway(0, (uint)Http2ErrorCode.FlowControlError);
-                    await CloseConnection();
+                    await SendGoAwayAsync(0, Http2ErrorCode.FlowControlError, "Connection flow control window overflow", cancellationToken);
+                    Console.WriteLine("[DEBUG] Connection flow control window overflow, sending GOAWAY and closing connection");
+                    await CloseConnection(cancellationToken); // implement this to close socket/stream
                     return;
                 }
                 _connectionWindowSize = (int)newSize;
@@ -970,6 +1073,7 @@ namespace Pode
                 if (newStreamSize > int.MaxValue)
                 {
                     await SendRstStream(frame.StreamId, (int)Http2ErrorCode.FlowControlError);
+                    Console.WriteLine("[DEBUG] Stream flow control window overflow, sending RST_STREAM");
                     return;
                 }
                 stream.AddWindow(increment);
