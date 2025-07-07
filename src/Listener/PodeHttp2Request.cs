@@ -367,7 +367,9 @@ namespace Pode
                         Console.WriteLine("[DEBUG] Not enough bytes for frame header, saving for next parse");
                         //   _incompleteFrame.Clear(); // Clear old junk to avoid misalignment
                         // Save incomplete frame for next parse
-                        _incompleteFrame.AddRange(allBytes.GetRange(offset, allBytes.Count - offset));
+                        //   _incompleteFrame.AddRange(allBytes.GetRange(offset, allBytes.Count - offset));
+                        _incompleteFrame.Clear();
+                        _incompleteFrame.AddRange(allBytes.Skip(offset));  // keep remainder
                         break;
                     }
                     var frameStartOffset = offset; // Store the original offset before parsing
@@ -382,7 +384,7 @@ namespace Pode
                         {
                             Console.WriteLine($"[DEBUG] Incomplete frame detected, saving {remainingBytes} bytes for next parse");
                             //                            _incompleteFrame.AddRange(allBytes.GetRange(frameStartOffset, remainingBytes));
-                            _incompleteFrame.Clear();   // old junk would break alignment
+                   //         _incompleteFrame.Clear();   // old junk would break alignment
                             _incompleteFrame.AddRange(allBytes.GetRange(frameStartOffset, remainingBytes));
                         }
                         break; // Exit the loop, we need more data
@@ -826,8 +828,9 @@ namespace Pode
             if (frame.StreamId != 0)
             {
                 // Send GOAWAY with PROTOCOL_ERROR and close the connection
-                await SendGoAway(0, (uint)Http2ErrorCode.ProtocolError, "PING on non-zero stream" , cancellationToken);
-
+                await SendGoAway(0, (uint)Http2ErrorCode.ProtocolError, "PING on non-zero stream", cancellationToken);
+                await GetNetworkStream()?.FlushAsync(cancellationToken);
+                GetNetworkStream()?.Dispose();
                 // flag this connection for closure (implementation-specific)
                 //_shouldClose = true;
                 return;
@@ -893,7 +896,7 @@ namespace Pode
             Http2ErrorCode error,
             uint lastStreamId,
             string debugData,
-            CancellationToken cancellationToken )
+            CancellationToken cancellationToken)
         {
             var payload = new List<byte>();
 
