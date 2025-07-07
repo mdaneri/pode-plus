@@ -41,24 +41,7 @@ namespace Pode
         // HTTP/2 Connection Preface
         private static readonly byte[] HTTP2_PREFACE = System.Text.Encoding.ASCII.GetBytes("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
-        // RFC 7540 §7 – Error codes
-        public enum Http2ErrorCode : uint
-        {
-            NoError = 0x0,
-            ProtocolError = 0x1,
-            InternalError = 0x2,
-            FlowControlError = 0x3,
-            SettingsTimeout = 0x4,
-            StreamClosed = 0x5,
-            FrameSizeError = 0x6,
-            RefusedStream = 0x7,
-            Cancel = 0x8,
-            CompressionError = 0x9,
-            ConnectError = 0xA,
-            EnhanceYourCalm = 0xB,
-            InadequateSecurity = 0xC,
-            Http11Required = 0xD
-        }
+
 
 
         // HTTP/2 Properties
@@ -93,8 +76,8 @@ namespace Pode
         private MemoryStream _bodyStream;
         private readonly hpack.Decoder _hpackDecoder;
         private readonly TaskCompletionSource<bool> _settingsTcs;
-private bool _headerBlockOpen = false;
-private int _headerBlockStreamId = 0;
+        private bool _headerBlockOpen = false;
+        private int _headerBlockStreamId = 0;
 
 
         // Helper to collect decoded headers from hpack.Decoder
@@ -296,13 +279,20 @@ private int _headerBlockStreamId = 0;
                         Console.WriteLine("[DEBUG] Connection preface check failed");
                         // If this is an HTTPS connection but no proper HTTP/2 preface,
                         // it might be HTTP/1.1 data that wasn't caught by ALPN
-                        if (Context.PodeSocket?.IsSsl == true)
-                        {
-                            PodeHelpers.WriteErrorMessage("HTTPS connection without HTTP/2 preface, this is likely HTTP/1.1 data", Context.Listener, PodeLoggingLevel.Debug, Context);
-                            throw new PodeRequestException("HTTP/1.1 request sent to HTTP/2 parser. This indicates a protocol detection issue.", 422);
-                        }
+                   //     if (Context.PodeSocket?.IsSsl == true)
+                     //   {
+                       //     PodeHelpers.WriteErrorMessage("HTTPS connection without HTTP/2 preface, this is likely HTTP/1.1 data", Context.Listener, PodeLoggingLevel.Debug, Context);
+                         //   throw new PodeRequestException("HTTP/1.1 request sent to HTTP/2 parser. This indicates a protocol detection issue.", 422);
+                       // }
 
-                        throw new PodeRequestException("Invalid HTTP/2 connection preface", 400);
+                        // New: Send GOAWAY and close before throwing/returning
+                        await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "Invalid HTTP/2 connection preface", cancellationToken);
+                        // Optionally, ensure the frame flushes to the socket/SSL stream:
+                        //  await FlushAsync(cancellationToken); // or whatever method flushes the actual output stream
+                        await Task.Delay(50); // 10–50 ms is enough for local testing
+                        await CloseConnection(cancellationToken);
+
+                        return false;//    throw new PodeRequestException("Invalid HTTP/2 connection preface", 400);
                     }
                     Console.WriteLine("[DEBUG] Connection preface validated successfully");
                     _hasReceivedPreface = true;
@@ -316,20 +306,6 @@ private int _headerBlockStreamId = 0;
                     Array.Copy(actualBytes, HTTP2_PREFACE.Length, remainingBytes, 0, remainingBytes.Length);
                     actualBytes = remainingBytes;
                     Console.WriteLine($"[DEBUG] Preface removed, remaining bytes: {remainingBytes.Length}");
-
-                    // If we used stored preface data, also process the original bytes from this Parse call
-                    /*   if (usingStoredPreface && bytes.Length > 0)
-                       {
-                           Console.WriteLine($"[DEBUG] Processing original {bytes.Length} bytes after handling stored preface");
-                           // Combine the original bytes with the remaining bytes after preface
-                           //    actualBytes = actualBytes.Concat(bytes.Skip(HTTP2_PREFACE.Length)).ToArray();
-
-                           var combinedBytes = new List<byte>(actualBytes);
-                           combinedBytes.AddRange(bytes);
-                           actualBytes = combinedBytes.ToArray();
-
-                           Console.WriteLine($"[DEBUG] Combined data length: {actualBytes.Length}");
-                       }*/
                     if (usingStoredPreface)
                     {
                         int prefaceLen = HTTP2_PREFACE.Length;       // 24 bytes
@@ -756,7 +732,7 @@ private int _headerBlockStreamId = 0;
 
             return SendFrame(FRAME_TYPE_RST_STREAM, NO_FLAGS, streamId, code);
         }
-        private async Task CloseConnection(CancellationToken cancellationToken)
+        public async Task CloseConnection(CancellationToken cancellationToken)
         {
             try
             {
@@ -779,7 +755,7 @@ private int _headerBlockStreamId = 0;
         private async Task ProcessDataFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
 
-              // DATA frames MUST have a non-zero stream id
+            // DATA frames MUST have a non-zero stream id
             if (frame.StreamId == 0)
             {
                 Console.WriteLine("[DEBUG] DATA frame on stream 0, sending GOAWAY");
@@ -910,10 +886,10 @@ private int _headerBlockStreamId = 0;
                                             $"(applied diff {diff} to {Streams.Count} streams)");
                         break;
 
-                     case 0x5:          // SETTINGS_MAX_FRAME_SIZE
+                    case 0x5:          // SETTINGS_MAX_FRAME_SIZE
                         if (value < 16384 || value > 16777215)
                         {
-                          //  await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
+                            //  await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
                             await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "SETTINGS_MAX_FRAME_SIZE out of range", cancellationToken);
                             await CloseConnection(cancellationToken);
                             return;
@@ -970,7 +946,7 @@ private int _headerBlockStreamId = 0;
         {
             Console.WriteLine($"[DEBUG] ProcessPriorityFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
 
-             // RFC 7540 §6.3: StreamId == 0 is PROTOCOL_ERROR
+            // RFC 7540 §6.3: StreamId == 0 is PROTOCOL_ERROR
             if (frame.StreamId == 0)
             {
                 await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "PRIORITY frame on stream 0", cancellationToken);
@@ -988,7 +964,7 @@ private int _headerBlockStreamId = 0;
             //       The weight is a single byte, 0-255, representing 1-256.
             //       A weight of 0 is invalid and should be treated as 1.
             //       The stream ID 0 is reserved for connection-level frames.
-            if (frame.Payload.Length != 5 ) return;
+            if (frame.Payload.Length != 5) return;
 
             uint dependency = (uint)((frame.Payload[0] << 24) |
                                      (frame.Payload[1] << 16) |

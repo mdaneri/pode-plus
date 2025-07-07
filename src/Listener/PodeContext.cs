@@ -174,9 +174,9 @@ namespace Pode
         /// </summary>
         private void NewResponse()
         {
-#if !NETSTANDARD2_0
+#if NETCOREAPP2_1_OR_GREATER
             // Create HTTP/2 response if the request is HTTP/2, otherwise use standard response
-            if (Request is PodeHttp2Request http2Request && http2Request.StreamId != 0)
+            if (Request is PodeHttp2Request http2Request)
             {
                 Console.WriteLine($"[DEBUG] Creating HTTP/2 response for stream {http2Request.StreamId} in NewResponse()");
                 PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/2 response for stream {http2Request.StreamId}", Listener, PodeLoggingLevel.Verbose, this);
@@ -197,6 +197,7 @@ namespace Pode
 #endif
         }
 
+
         /// <summary>
         /// Creates a new request object based on the socket type and incoming data.
         /// </summary>
@@ -215,17 +216,51 @@ namespace Pode
                     break;
 
                 default:
-                    // For HTTPS, we need to defer protocol detection until after SSL handshake
+#if NETCOREAPP2_1_OR_GREATER
+                    // Pseudocode for the ALPN check:
+                    string alpnProtocol = Data.ContainsKey("AlpnNegotiatedProtocol")
+                        ? Data["AlpnNegotiatedProtocol"] as string
+                        : null;
+foreach (var key in Data.Keys)
+    Console.WriteLine("[DEBUG] Data key: " + key);
+
+if (Data.ContainsKey("AlpnNegotiatedHttp2"))
+    Console.WriteLine("[DEBUG] AlpnNegotiatedHttp2: " + Data["AlpnNegotiatedHttp2"]);
+                    Console.WriteLine($"[DEBUG] ALPN negotiated protocol: {alpnProtocol}");
                     if (PodeSocket?.IsSsl == true)
                     {
-                        Console.WriteLine("[DEBUG] HTTPS detected - creating HTTP/1.1 request with HTTP/2 upgrade capability");
-                        Request = new PodeHttpRequest(Socket, PodeSocket, this);
+                        Console.WriteLine("[DEBUG] Socket is SSL/TLS, checking ALPN negotiation");
+                        // Prefer string property, but you may use your bool key as in your current logic:
+                        // var alpnIsHttp2 = false;
+                        //if (Data.ContainsKey("AlpnNegotiatedHttp2") && Data["AlpnNegotiatedHttp2"] is bool b && b)
+                        //   alpnIsHttp2 = true;
+                        bool alpnIsHttp2 = Data.ContainsKey("AlpnNegotiatedHttp2") && (bool)Data["AlpnNegotiatedHttp2"];
+
+                        Console.WriteLine($"[DEBUG] ALPN negotiated HTTP/2: {alpnIsHttp2}");
+
+                        if (alpnIsHttp2)
+                        {
+                            Console.WriteLine("[DEBUG] ALPN negotiated HTTP/2, using PodeHttp2Request");
+                            Request = new PodeHttp2Request(Socket, PodeSocket, this);
+                        }
+                        else
+                        {
+                            Console.WriteLine("[DEBUG] ALPN did NOT negotiate HTTP/2, using DetectHttpVersion");
+                            // Use DetectHttpVersion to sniff for HTTP/2 preface, even on SSL!
+                            Request = await DetectHttpVersion().ConfigureAwait(false);
+                        }
                     }
                     else
                     {
-                        // For HTTP connections, detect if it's HTTP/1.x or HTTP/2
+                        Console.WriteLine("[DEBUG] No ALPN negotiation or not SSL, using DetectHttpVersion");
+                        // Not SSL: treat as HTTP/1.1, upgrade logic may run if "Upgrade: h2c"
                         Request = await DetectHttpVersion().ConfigureAwait(false);
                     }
+#else
+                              Console.WriteLine("[DEBUG] Creating HTTP/1.1 request");
+                              Request = new PodeHttpRequest(Socket, PodeSocket, this);
+#endif
+                    Console.WriteLine($"[DEBUG] Request created: {Request.GetType().Name}");
                     break;
             }
 
@@ -247,70 +282,52 @@ namespace Pode
                     await Response.WriteLine(PodeSocket.AcknowledgeMessage, true).ConfigureAwait(false);
                 }
             }
-        }        /// <summary>
-                 /// Detects the HTTP version by checking ALPN negotiation and peeking at the incoming data.
-                 /// </summary>
-                 /// <returns>The appropriate PodeRequest object (HTTP/1.x or HTTP/2.0)</returns>
+        }
+#if NETCOREAPP2_1_OR_GREATER
+
+        /// <summary>
+        /// Detects the HTTP version by checking ALPN negotiation and peeking at the incoming data.
+        /// </summary>
+        /// <returns>The appropriate PodeRequest object (HTTP/1.x or HTTP/2.0)</returns>
         private Task<PodeRequest> DetectHttpVersion()
         {
             Console.WriteLine("[DEBUG] DetectHttpVersion() called");
             try
             {
-#if !NETSTANDARD2_0
-                Console.WriteLine("[DEBUG] HTTP/2 detection enabled (not NETSTANDARD2_0)");
-
-                // Check if this is an HTTPS connection (SSL/TLS)
                 var isSecure = PodeSocket?.IsSsl == true;
                 Console.WriteLine($"[DEBUG] IsSecure: {isSecure}");
 
-                if (isSecure)
-                {
-                    Console.WriteLine("[DEBUG] HTTPS connection - creating HTTP/1.1 request, will upgrade to HTTP/2 if ALPN negotiates h2");
-
-                    // For HTTPS connections, start with HTTP/1.1 and upgrade to HTTP/2 after SSL handshake if needed
-                    PodeHelpers.WriteErrorMessage("HTTPS connection detected, starting with HTTP/1.1 parser with HTTP/2 upgrade capability", Listener, PodeLoggingLevel.Debug, this);
-                    return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
-                }
-
-                Console.WriteLine("[DEBUG] HTTP connection - peeking for HTTP/2 preface");
-                // For HTTP connections, try to peek for HTTP/2 preface
+                // Always peek for the HTTP/2 preface
                 var buffer = new byte[24]; // HTTP/2 preface is 24 bytes
                 var bytesReceived = PeekForHttp2PrefaceNonBlocking(buffer);
-                Console.WriteLine($"[DEBUG] PeekForHttp2PrefaceNonBlocking returned {bytesReceived} bytes");
 
                 if (bytesReceived > 0)
                 {
                     var requestStart = System.Text.Encoding.ASCII.GetString(buffer, 0, Math.Min(bytesReceived, 24));
                     Console.WriteLine($"[DEBUG] Peeked data: '{requestStart}' (length: {bytesReceived})");
-                    PodeHelpers.WriteErrorMessage($"Peeked data: '{requestStart}' (length: {bytesReceived})", Listener, PodeLoggingLevel.Debug, this);
 
-                    // First check for immediate "PRI" - this is always HTTP/2
+                    // HTTP/2 detection: if first 3 bytes are "PRI", always treat as HTTP/2
                     if (requestStart.StartsWith("PRI"))
                     {
-                        Console.WriteLine("[DEBUG] HTTP/2 preface detected (starts with PRI)");
-                        PodeHelpers.WriteErrorMessage("HTTP/2 preface detected (starts with PRI)", Listener, PodeLoggingLevel.Debug, this);
+                        Console.WriteLine("[DEBUG] Detected 'PRI', using PodeHttp2Request");
                         return Task.FromResult<PodeRequest>(new PodeHttp2Request(Socket, PodeSocket, this));
                     }
 
-                    // Check for full HTTP/2 connection preface
+                    // Full HTTP/2 connection preface
                     if (bytesReceived >= 24 && IsHttp2ConnectionPreface(buffer, bytesReceived))
                     {
                         Console.WriteLine("[DEBUG] Full HTTP/2 connection preface detected");
-                        PodeHelpers.WriteErrorMessage("Full HTTP/2 connection preface detected", Listener, PodeLoggingLevel.Debug, this);
                         return Task.FromResult<PodeRequest>(new PodeHttp2Request(Socket, PodeSocket, this));
                     }
 
-                    // Check for HTTP/2 upgrade request (h2c - HTTP/2 over cleartext)
-                    if (IsHttp2UpgradeRequest(buffer, bytesReceived))
+                    // (h2c upgrade and HTTP/1.x only possible for cleartext)
+                    if (!isSecure && IsHttp2UpgradeRequest(buffer, bytesReceived))
                     {
                         Console.WriteLine("[DEBUG] HTTP/2 upgrade request detected");
-                        PodeHelpers.WriteErrorMessage("HTTP/2 upgrade request detected", Listener, PodeLoggingLevel.Debug, this);
-                        // For upgrade requests, start with HTTP/1.1 and handle upgrade later
-                        // TODO: Implement HTTP/2 upgrade handling
                         return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
                     }
 
-                    // Check for typical HTTP/1.x request methods
+                    // HTTP/1.x request detection
                     if (requestStart.StartsWith("GET ") || requestStart.StartsWith("POST ") ||
                         requestStart.StartsWith("PUT ") || requestStart.StartsWith("DELETE ") ||
                         requestStart.StartsWith("HEAD ") || requestStart.StartsWith("OPTIONS ") ||
@@ -318,36 +335,26 @@ namespace Pode
                         requestStart.StartsWith("CONNECT "))
                     {
                         Console.WriteLine("[DEBUG] HTTP/1.x request method detected");
-                        PodeHelpers.WriteErrorMessage("HTTP/1.x request method detected", Listener, PodeLoggingLevel.Debug, this);
                         return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
                     }
 
-                    // If we can't determine the protocol from the peeked data, log it for debugging
-                    Console.WriteLine($"[DEBUG] Unrecognized request start: '{requestStart}'");
-                    PodeHelpers.WriteErrorMessage($"Unrecognized request start, defaulting to HTTP/1.x: '{requestStart}'", Listener, PodeLoggingLevel.Debug, this);
+                    Console.WriteLine($"[DEBUG] Unrecognized request start: '{requestStart}', treating as HTTP/1.x for safety");
                 }
                 else
                 {
-                    Console.WriteLine("[DEBUG] No data available for protocol detection");
-                    PodeHelpers.WriteErrorMessage("No data available for protocol detection, will use HTTP/1.x with fallback detection", Listener, PodeLoggingLevel.Debug, this);
+                    Console.WriteLine("[DEBUG] No data available for protocol detection, treating as HTTP/1.x");
                 }
-#endif
 
-                // Default to HTTP/1.x with enhanced error detection
-                Console.WriteLine("[DEBUG] Creating HTTP/1.x request with enhanced HTTP/2 fallback detection");
-                PodeHelpers.WriteErrorMessage("Creating HTTP/1.x request with enhanced HTTP/2 fallback detection", Listener, PodeLoggingLevel.Debug, this);
+                // Default/fallback: HTTP/1.x request
                 return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DEBUG] Error detecting HTTP version: {ex.Message}");
-                PodeHelpers.WriteErrorMessage($"Error detecting HTTP version: {ex.Message}", Listener, PodeLoggingLevel.Warning, this);
-                // Default to HTTP/1.x on error
                 return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
             }
         }
 
-#if !NETSTANDARD2_0
         /// <summary>
         /// Attempts to peek at socket data using non-blocking approach to detect HTTP/2 preface.
         /// </summary>
@@ -690,32 +697,26 @@ namespace Pode
                 }
                 catch (PodeRequestException ex) when (ex.StatusCode == 422 && ex.Message.Contains("protocol detection issue"))
                 {
-                    PodeHelpers.WriteErrorMessage($"Protocol detection issue detected, retrying with HTTP/1.1: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
+                    PodeHelpers.WriteErrorMessage($"Protocol detection issue detected, closing with GOAWAY: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
 
-                    // Create a new HTTP/1.1 request to replace the failed HTTP/2 request
+                    // If the request is HTTP/2 (ALPN negotiated h2), send GOAWAY and close
+                    if (Data.ContainsKey("AlpnNegotiatedHttp2") && Data["AlpnNegotiatedHttp2"] is bool b && b && Request is PodeHttp2Request http2Req)
+                    {
+                        await http2Req.SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "Invalid HTTP/2 connection preface", ContextTimeoutToken.Token);
+                        await http2Req.CloseConnection(ContextTimeoutToken.Token);
+                        State = PodeContextState.Closed;
+                        return;
+                    }
+                    Console.WriteLine("[DEBUG] Fallback to HTTP/1.1 due to protocol detection issue");
+                    // If not HTTP/2, fallback to HTTP/1.1 request
+                    PodeHelpers.WriteErrorMessage($"Fallback to HTTP/1.1 due to protocol detection issue: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
+                    // Else, only fallback to HTTP/1.1 if not ALPN negotiated h2 (very rare, mostly cleartext)
                     var http11Request = new PodeHttpRequest(Socket, PodeSocket, this);
-
-                    // Transfer properties from the failed request (if any)
-                    if (Request != null)
-                    {
-                        // Dispose the old request
-                        Request.Dispose();
-                    }
-
-                    // Set the new request
+                    Request?.Dispose();
                     Request = http11Request;
-
-                    // Also create a new HTTP/1.1 response to replace the HTTP/2 response
-                    if (Response != null)
-                    {
-                        Response.Dispose();
-                    }
+                    Response?.Dispose();
                     Response = new PodeResponse(this);
-
-                    // Try opening the new request
                     await Request.Open(CancellationToken.None).ConfigureAwait(false);
-
-                    // Try receiving again with HTTP/1.1
                     var close = await Request.Receive(ContextTimeoutToken.Token).ConfigureAwait(false);
                     SetContextType();
                     await EndReceive(close).ConfigureAwait(false);

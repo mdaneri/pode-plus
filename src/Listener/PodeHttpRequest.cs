@@ -152,7 +152,7 @@ namespace Pode
             if (IsSsl && !_hasCheckedForHttp2Upgrade)
             {
                 _hasCheckedForHttp2Upgrade = true;
-                Console.WriteLine("[DEBUG] 🔄 Checking for post-SSL HTTP/2 upgrade in HTTP/1.1 parser");
+                Console.WriteLine("[DEBUG] Checking for post-SSL HTTP/2 upgrade in HTTP/1.1 parser");
 
                 // Check if ALPN negotiated HTTP/2
                 bool alpnNegotiatedHttp2 = Context.Data.ContainsKey("AlpnNegotiatedHttp2") && (bool)Context.Data["AlpnNegotiatedHttp2"];
@@ -160,7 +160,7 @@ namespace Pode
                 // Check if this looks like HTTP/2 preface
                 var isHttp2Preface = bytes.Length >= 3 &&
                     System.Text.Encoding.ASCII.GetString(bytes, 0, 3) == "PRI";
-
+                Console.WriteLine($"[DEBUG] HTTP/2 preface check: { System.Text.Encoding.ASCII.GetString(bytes, 0, 10) }");
                 Console.WriteLine($"[DEBUG] ALPN negotiated HTTP/2: {alpnNegotiatedHttp2}, Has HTTP/2 preface: {isHttp2Preface}");
 
                 if (alpnNegotiatedHttp2 && isHttp2Preface)
@@ -239,7 +239,7 @@ namespace Pode
             // Special handling for HTTP/2 connection preface that ended up in HTTP/1.1 parser
             if (HttpMethod == "PRI")
             {
-#if !NETSTANDARD2_0
+#if NETCOREAPP2_1_OR_GREATER
                 // Check if ALPN actually negotiated HTTP/2
                 if (Context.Data.ContainsKey("AlpnNegotiatedHttp2") && (bool)Context.Data["AlpnNegotiatedHttp2"])
                 {
