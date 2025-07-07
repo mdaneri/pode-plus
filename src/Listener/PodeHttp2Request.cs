@@ -479,7 +479,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_GOAWAY:
                     Console.WriteLine("[DEBUG] Processing GOAWAY frame");
-                    ProcessGoAwayFrame(frame);
+                    ProcessGoAwayFrame(frame, cancellationToken);
                     break;
                 case FRAME_TYPE_WINDOW_UPDATE:
                     Console.WriteLine("[DEBUG] Processing WINDOW_UPDATE frame");
@@ -995,9 +995,18 @@ namespace Pode
             await GetNetworkStream().FlushAsync(cancellationToken);
         }
 
-        private void ProcessGoAwayFrame(Http2Frame frame)
+        private async void ProcessGoAwayFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
-            // Connection is being closed
+            if (frame.StreamId != 0)
+            {
+                // MUST treat as connection error of type PROTOCOL_ERROR
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "GOAWAY with non-zero stream ID");
+                await CloseConnection(cancellationToken); // or use current token if available
+                return;
+            }
+
+            // Optionally: handle normal GOAWAY logic here
+            await CloseConnection(cancellationToken);
         }
 
         internal async Task SendGoAwayAsync(uint lastStreamId, Http2ErrorCode errorCode, string debugData = null, CancellationToken cancellationToken = default(CancellationToken))
