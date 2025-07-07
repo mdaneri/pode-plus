@@ -460,7 +460,7 @@ private int _headerBlockStreamId = 0;
                 await CloseConnection(cancellationToken);
                 return;
             }
-            
+
             switch (frame.Type)
             {
                 case FRAME_TYPE_HEADERS:
@@ -778,6 +778,16 @@ private int _headerBlockStreamId = 0;
 
         private async Task ProcessDataFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
+
+              // DATA frames MUST have a non-zero stream id
+            if (frame.StreamId == 0)
+            {
+                Console.WriteLine("[DEBUG] DATA frame on stream 0, sending GOAWAY");
+                // RFC 7540 §6.1: DATA frame on stream 0 is a protocol error
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "DATA frame on stream 0", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
             if (_bodyStream == null)
             {
                 _bodyStream = new MemoryStream();
