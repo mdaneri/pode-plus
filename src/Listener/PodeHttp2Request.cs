@@ -42,7 +42,7 @@ namespace Pode
         private static readonly byte[] HTTP2_PREFACE = System.Text.Encoding.ASCII.GetBytes("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
         // RFC 7540 §7 – Error codes
-        internal enum Http2ErrorCode : uint
+        public enum Http2ErrorCode : uint
         {
             NoError = 0x0,
             ProtocolError = 0x1,
@@ -92,6 +92,7 @@ namespace Pode
         private bool _isHeadersComplete;
         private MemoryStream _bodyStream;
         private readonly hpack.Decoder _hpackDecoder;
+        private readonly TaskCompletionSource<bool> _settingsTcs;
 
 
 
@@ -141,7 +142,7 @@ namespace Pode
             _hpackDecoder = new hpack.Decoder(maxHeaderSize: 8192, maxHeaderTableSize: 4096);
             _incompleteFrame = new List<byte>();
             ContentEncoding = System.Text.Encoding.UTF8;
-
+            _settingsTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             // Initialize default HTTP/2 settings
             InitializeDefaultSettings();
             Console.WriteLine("[DEBUG] PodeHttp2Request constructor completed");
@@ -575,7 +576,7 @@ namespace Pode
         //  NOTE: very similar to the version in PodeHttp2Response, but we
         //  keep it local so the request can send RST_STREAM when needed.
         // ---------------------------------------------------------------
-        private async Task SendFrame(byte type, byte flags, int streamId, ReadOnlyMemory<byte> payload, CancellationToken ct = default)
+        public async Task SendFrame(byte type, byte flags, int streamId, ReadOnlyMemory<byte> payload, CancellationToken ct = default)
         {
             var stream = GetNetworkStream();
             if (stream == null || !stream.CanWrite)
@@ -583,29 +584,9 @@ namespace Pode
                 Console.WriteLine("[DEBUG] SendFrame: network stream unavailable");
                 return;
             }
-            /*
-                        // ---------- FLOW-CONTROL for DATA frames --------------------------
-                        if (type == FRAME_TYPE_DATA && streamId != 0)
-                        {
-                            if (!Streams.TryGetValue(streamId, out var s))
-                                return;                       // unknown stream – just drop
 
-                            int allowed = Math.Min(s.WindowSize, _connectionWindowSize);
-                            if (allowed <= 0)                // nothing available yet
-                                return;
+            Console.WriteLine($"[DEBUG] SendFrame: Type=0x{type:X2}, Flags=0x{flags:X2}, StreamId={streamId}, PayloadLength={payload.Length}");
 
-                            if (payload.Length > allowed)
-                            {
-                                // send only what fits and leave END_STREAM unset
-                                payload = payload.Slice(0, allowed);
-                                flags &= unchecked((byte)~FLAG_END_STREAM);
-                            }
-
-                            // debit the windows
-                            s.AddWindow(-payload.Length);
-                            _connectionWindowSize -= payload.Length;
-                        }
-            */
             int length = payload.Length;
             if (length > 0xFFFFFF)
                 throw new ArgumentOutOfRangeException(nameof(payload), "Frame larger than 16 MB");
@@ -647,7 +628,7 @@ namespace Pode
                     }
                 }
 
-                await stream.WriteAsync(buffer, 0, 9 + length, ct).ConfigureAwait(false);
+                await stream.WriteAsync(buffer.AsMemory(0, 9 + length), ct).ConfigureAwait(false);
                 await stream.FlushAsync(ct).ConfigureAwait(false);
 
                 Console.WriteLine(
@@ -657,6 +638,80 @@ namespace Pode
             {
                 System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
+        }
+
+
+        /// <summary>Send a DATA payload respecting both flow-control windows.</summary>
+        /// returns true if at least one DATA frame was sent
+        public async Task<bool> SendDataAsync(int streamId,
+                                              byte[] data,
+                                              bool endStream,
+                                              CancellationToken cancellationToken = default)
+        {
+            bool sent = false;
+            int offset = 0;
+
+            if (!Streams.TryGetValue(streamId, out var s))
+            {
+                s = new Http2Stream(streamId,
+                                    (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"]);
+                Streams[streamId] = s;
+            }
+
+            while (offset < data.Length)
+            {
+                int allowed = Math.Min(s.WindowSize, _connectionWindowSize);
+                if (allowed <= 0)
+                {
+                    // nothing available → give up for now
+                    return sent;               // false if never wrote
+                }
+
+                int chunk = Math.Min(allowed,
+                             Math.Min(PeerMaxFrameSize,
+                                      data.Length - offset));
+
+                byte flags = 0x00;
+                bool lastChunk = (offset + chunk) == data.Length;
+                if (lastChunk && endStream)
+                    flags |= FLAG_END_STREAM;
+
+                s.AddWindow(-chunk);
+                _connectionWindowSize -= chunk;
+
+                await SendFrame(FRAME_TYPE_DATA,
+                                flags,
+                                streamId,
+                                new ReadOnlyMemory<byte>(data, offset, chunk),
+                                cancellationToken);
+
+                sent = true;
+                offset += chunk;
+            }
+            return sent;
+        }
+
+
+        private readonly TaskCompletionSource<bool> _windowTcs =
+                new TaskCompletionSource<bool>();
+
+        private void OnWindowUpdate(int sid, int increment)
+        {
+            if (sid == 0)
+                _connectionWindowSize += increment;
+            else if (Streams.TryGetValue(sid, out var st))
+                st.AddWindow(increment);
+
+            _windowTcs.TrySetResult(true);            // wake any waiter
+        }
+
+        private async Task WaitForWindowUpdateAsync(int sid, CancellationToken ct)
+        {
+            using (ct.Register(() => _windowTcs.TrySetCanceled()))
+            {
+                await _windowTcs.Task.ConfigureAwait(false);
+            }
+            _windowTcs.TrySetResult(false);           // reset
         }
 
 
@@ -795,12 +850,12 @@ namespace Pode
                                 // Make every open stream’s window grow/shrink by diff
                                 stream.AddWindow(diff);       // AddWindow already exists
                             }
-
+                            _settingsTcs.TrySetResult(true);  // wakes any waiter
                             Console.WriteLine($"[DEBUG] Updated initial window {old} → {value} " +
                                               $"(applied diff {diff} to {Streams.Count} streams)");
                             break;
                         }
-                        default:
+                    default:
                         {
                             Console.WriteLine($"[DEBUG] Unknown setting ID {id} = {value}");
                             break;
@@ -813,6 +868,15 @@ namespace Pode
         }
 
 
+        public async Task WaitForSettingsAsync(TimeSpan timeout, CancellationToken ct)
+        {
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                cts.CancelAfter(timeout);
+                try { await _settingsTcs.Task.WaitAsync(cts.Token); }
+                catch (OperationCanceledException) { /* timeout – fine */ }
+            }
+        }
 
         private static string GetSettingName(int settingId)
         {
@@ -973,46 +1037,6 @@ namespace Pode
             }
         }
 
-        /*    public async Task SendGoAway(int lastStreamId, uint errorCode, string debugData = "")
-            {
-                PodeHelpers.WriteErrorMessage($"DEBUG: About to send GOAWAY, code {errorCode} (SID={lastStreamId})", Context.Listener, PodeLoggingLevel.Verbose, Context);
-                Console.WriteLine($"[DEBUG] SendGoAway: lastStreamId={lastStreamId}, errorCode={errorCode}");
-                // Build GOAWAY frame payload: 4 bytes lastStreamId, 4 bytes errorCode
-                byte[] payload = new byte[8];
-                // lastStreamId: 31 bits, high bit must be zero
-                payload[0] = (byte)((lastStreamId >> 24) & 0x7F);
-                payload[1] = (byte)((lastStreamId >> 16) & 0xFF);
-                payload[2] = (byte)((lastStreamId >> 8) & 0xFF);
-                payload[3] = (byte)(lastStreamId & 0xFF);
-                // errorCode: 4 bytes
-                payload[4] = (byte)((errorCode >> 24) & 0xFF);
-                payload[5] = (byte)((errorCode >> 16) & 0xFF);
-                payload[6] = (byte)((errorCode >> 8) & 0xFF);
-                payload[7] = (byte)(errorCode & 0xFF);
-
-                await SendFrame(FRAME_TYPE_GOAWAY, 0, 0, payload);
-            }
-            private async Task SendGoAway(
-                Http2ErrorCode error,
-                uint lastStreamId,
-                string debugData,
-                CancellationToken cancellationToken)
-            {
-                var payload = new List<byte>();
-
-                // 31 bits for last stream id
-                payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(lastStreamId)).Skip(1));
-
-                // 32-bit error code
-                payload.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)error)));
-
-                // optional debug string
-                if (!string.IsNullOrEmpty(debugData))
-                    payload.AddRange(System.Text.Encoding.ASCII.GetBytes(debugData));
-
-                await SendFrame(FRAME_TYPE_GOAWAY, 0x00, 0, payload.ToArray());
-                await GetNetworkStream()?.FlushAsync(cancellationToken);
-            }*/
 
 
         //-----------------------------------------------------------------
@@ -1467,7 +1491,13 @@ namespace Pode
                 Console.WriteLine($"[DEBUG] Error sending SETTINGS ACK: {ex.Message}");
             }
         }
+        public async Task FlushAsync(CancellationToken cancellationToken)
+        {
+            await GetNetworkStream().FlushAsync(cancellationToken);
+        }
 
+
+        // Use the GetNetworkStream method to ensure we have the correct stream
         private Stream GetNetworkStream()
         {
             try
@@ -1598,99 +1628,6 @@ namespace Pode
         }
 
 
-    }
-
-    // Supporting classes
-    public class Http2Frame
-    {
-        public int Length { get; set; }
-        public byte Type { get; set; }
-        public byte Flags { get; set; }
-        public int StreamId { get; set; }
-        public byte[] Payload { get; set; }
-    }
-
-
-    /// <summary>
-    /// Represents an HTTP/2 stream (RFC 7540 §5.1).
-    /// An HTTP/2 stream is a bidirectional flow of bytes within an established connection,
-    /// identified by a unique StreamId.
-    /// Each stream can carry a sequence of frames, which are the fundamental units of communication in HTTP
-    /// </summary>
-    public class Http2Stream
-    {
-        /// <summary>
-        /// Unique identifier for the stream (RFC 7540 §5.1).
-        /// This is used to identify the stream within the HTTP/2 connection.
-        /// The StreamId is a 31-bit integer, with 0 reserved for the connection-level stream.
-        /// Each stream has a unique StreamId, which is used to differentiate it from
-        /// other streams in the same connection.
-        /// The StreamId is used in various HTTP/2 frames to indicate which stream the frame
-        /// belongs to, such as HEADERS, DATA, and RST_STREAM frames.
-        /// The StreamId is also used to manage flow control and prioritization of streams.
-        /// The StreamId is assigned by the client or server when the stream is created.
-        /// It is incremented by 2 for each new stream created, ensuring that odd StreamIds are used for client-initiated streams and even StreamIds for server-initiated streams.
-        /// The StreamId is a key part of the HTTP/2 protocol, allowing multiple streams
-        /// to be multiplexed over a single TCP connection.
-        /// The StreamId is used to identify the stream in various HTTP/2 frames, such as HEADERS, DATA, and RST_STREAM frames.
-        /// It is also used to manage flow control and prioritization of streams.
-        /// The StreamId is a 31-bit integer,
-        /// with 0 reserved for the connection-level stream.
-        /// Each stream has a unique StreamId, which is used to differentiate it from other streams
-        /// in the same connection.
-        /// </summary>
-        public int StreamId { get; }
-        public Hashtable Headers { get; }
-        /// <summary>
-        /// Indicates if the stream has been reset (RFC 7540 §6.4).
-        /// </summary>
-        public bool Reset { get; set; }
-        /// <summary>
-        /// Error code for the stream, if reset (RFC 7540 §6.4).
-        /// This is used to indicate the reason for the stream reset.
-        /// If the stream has not been reset, this will be 0.
-        /// If the stream has been reset, this will contain the error code. 0.
-        /// </summary>
-        public int ErrorCode { get; set; }
-
-        /// <summary>
-        /// Stream data, if any (RFC 7540 §6.1).
-        /// This is used to hold the body data for the stream.
-        /// If the stream has no body, this will be null.
-        /// The data is stored in a MemoryStream for efficient access.
-        /// If the stream has a body, this MemoryStream will contain the data.
-        /// If the stream has no body, this will be an empty MemoryStream.
-        /// This property is used to hold the body data for the stream.
-        /// It is initialized as an empty MemoryStream and can be used to read/write data.
-        /// If the stream has no body, this will be an empty MemoryStream.
-        /// If the stream has a body, this MemoryStream will contain the data.
-        /// </summary>
-        public MemoryStream Data { get; set; }
-
-        /// <summary>Flow-control window for this stream (RFC 7540 §6.9.2).</summary>
-        public int WindowSize { get; private set; }
-
-        /// <summary>Stream this one depends on (0 = root, RFC 7540 §5.3).</summary>
-        public uint Dependency { get; set; }
-
-        /// <summary>Weight expressed as 1-256 (RFC 7540 §5.3). Default 16.</summary>
-        public byte Weight { get; set; }
-
-
-        /// <summary>Create a new HTTP/2 stream with the correct initial window.</summary>
-        public Http2Stream(int streamId, int initialWindowSize,
-                           uint dependency = 0, byte weight = 16)
-        {
-            StreamId = streamId;
-            WindowSize = initialWindowSize;   // 65 535 by default
-            Dependency = dependency;
-            Weight = weight;
-            Data = new MemoryStream();
-            Headers = new Hashtable(StringComparer.InvariantCultureIgnoreCase);
-        }
-
-        /// <summary>Increase the window (WINDOW_UPDATE handler).</summary>
-        public void AddWindow(int delta) => WindowSize += delta;
     }
 
 

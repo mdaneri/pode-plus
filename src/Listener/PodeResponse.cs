@@ -83,6 +83,8 @@ namespace Pode
             }
         }
 
+      
+
         private static readonly UTF8Encoding Encoding = new UTF8Encoding();
 
         /// <summary>

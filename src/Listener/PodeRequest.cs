@@ -57,7 +57,7 @@ namespace Pode
 
         // Socket and Context associated with the request
         private Socket Socket;
-        protected PodeContext Context;
+        public PodeContext Context { get; private set; }
 
         // Encoding and buffer for handling incoming data
         protected static readonly UTF8Encoding Encoding = new UTF8Encoding();

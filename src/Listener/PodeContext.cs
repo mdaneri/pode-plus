@@ -180,9 +180,9 @@ namespace Pode
             {
                 Console.WriteLine($"[DEBUG] Creating HTTP/2 response for stream {http2Request.StreamId} in NewResponse()");
                 PodeHelpers.WriteErrorMessage($"DEBUG: Creating HTTP/2 response for stream {http2Request.StreamId}", Listener, PodeLoggingLevel.Verbose, this);
-                var http2Response = new PodeHttp2Response(this, http2Request.StreamId);
-                Response = http2Response;
-                Console.WriteLine($"[DEBUG] HTTP/2 response created successfully with StreamId: {http2Response.StreamId}, Type: {Response.GetType().Name}");
+                Response = new PodeHttp2Response(http2Request);
+
+                Console.WriteLine($"[DEBUG] HTTP/2 response created successfully with StreamId: {http2Request.StreamId}, Type: {Response.GetType().Name}");
                 PodeHelpers.WriteErrorMessage($"DEBUG: HTTP/2 response created successfully", Listener, PodeLoggingLevel.Verbose, this);
             }
             else
@@ -654,13 +654,19 @@ namespace Pode
                         Response.Dispose();
                     }
                     // Create HTTP/2 response for the HTTP/2 request
-                    var http2Response = new PodeHttp2Response(this);
                     if (Request is PodeHttp2Request http2Request)
                     {
-                        http2Response.StreamId = http2Request.StreamId;
+                        var http2Response = new PodeHttp2Response((PodeHttp2Request)Request);
                         Console.WriteLine($"[DEBUG] Created HTTP/2 response for stream {http2Request.StreamId}");
+                        Response = http2Response;
                     }
-                    Response = http2Response;
+                    else
+                    {
+                        // Fallback to standard response if not HTTP/2 request
+                        Response = new PodeResponse(this);
+                        Console.WriteLine("[DEBUG] Fallback to standard PodeResponse for HTTP/1.x request");
+                    }
+
 
                     // Try opening the new HTTP/2 request
                     Console.WriteLine("[DEBUG] About to call Request.Open() on HTTP/2 request...");
