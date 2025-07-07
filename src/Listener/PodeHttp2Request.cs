@@ -93,7 +93,8 @@ namespace Pode
         private MemoryStream _bodyStream;
         private readonly hpack.Decoder _hpackDecoder;
         private readonly TaskCompletionSource<bool> _settingsTcs;
-
+private bool _headerBlockOpen = false;
+private int _headerBlockStreamId = 0;
 
 
         // Helper to collect decoded headers from hpack.Decoder
@@ -451,6 +452,15 @@ namespace Pode
         {
             Console.WriteLine($"[DEBUG] ProcessFrame: Type={frame.Type}, StreamId={frame.StreamId}, Length={frame.Length}");
 
+            // ---- CONTINUATION/protocol enforcement logic ----
+            if (_headerBlockOpen && (frame.Type != FRAME_TYPE_CONTINUATION || frame.StreamId != _headerBlockStreamId))
+            {
+                Console.WriteLine("[DEBUG] PROTOCOL_ERROR: Non-CONTINUATION frame received while header block is open");
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "Non-CONTINUATION frame while header block open", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
+            
             switch (frame.Type)
             {
                 case FRAME_TYPE_HEADERS:
@@ -531,6 +541,16 @@ namespace Pode
                 offset += 5;            // 4-byte stream-dependency + 1-byte weight
             }
 
+            if ((frame.Flags & FLAG_END_HEADERS) == 0)
+            {
+                _headerBlockOpen = true; // we expect more CONTINUATION frames
+                _headerBlockStreamId = frame.StreamId; // remember the stream ID for CONTINUATION frames
+            }
+            else
+            {
+                _headerBlockOpen = false; // this is the last HEADERS frame for this block
+                _headerBlockStreamId = 0; // reset stream ID
+            }
             int blockLen = frame.Payload.Length - offset - padLen;
             if (blockLen < 0) blockLen = 0;   // safety guard
 
