@@ -471,7 +471,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_RST_STREAM:
                     Console.WriteLine("[DEBUG] Processing RST_STREAM frame");
-                    ProcessRstStreamFrame(frame);
+                    await ProcessRstStreamFrame(frame, cancellationToken);
                     break;
                 case FRAME_TYPE_PING:
                     Console.WriteLine("[DEBUG] Processing PING frame");
@@ -848,7 +848,7 @@ namespace Pode
                         }
                         break;
                     case 0x3:          // SETTINGS_MAX_CONCURRENT_STREAMS
-                       
+
                         break;
                     case 0x4:          // SETTINGS_INITIAL_WINDOW_SIZE
 
@@ -969,19 +969,37 @@ namespace Pode
 
             Console.WriteLine($"[DEBUG] PRIORITY: Stream={frame.StreamId} dep={dependency} excl={exclusive} weight={weight + 1}");
         }
+ 
 
-
-        private void ProcessRstStreamFrame(Http2Frame frame)
+        private async Task ProcessRstStreamFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
-            var errorCode = (frame.Payload[0] << 24) | (frame.Payload[1] << 16) |
-                           (frame.Payload[2] << 8) | frame.Payload[3];
-
-            if (Streams.ContainsKey(frame.StreamId))
+            // 1. StreamId == 0 is a protocol error (RFC 7540 §6.4)
+            if (frame.StreamId == 0)
             {
-                Streams[frame.StreamId].Reset = true;
-                Streams[frame.StreamId].ErrorCode = errorCode;
+                Console.WriteLine($"[DEBUG] RST_STREAM frame on stream 0");
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "RST_STREAM frame on stream 0", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
             }
+
+            // 2. Idle stream (never opened, ie not in Streams dictionary)
+            if (!Streams.ContainsKey(frame.StreamId))
+            {
+                Console.WriteLine($"[DEBUG] RST_STREAM frame on idle stream {frame.StreamId}");
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "RST_STREAM frame on idle stream", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
+
+            // Normal handling for valid, open stream
+            var errorCode = (frame.Payload[0] << 24) | (frame.Payload[1] << 16) |
+                            (frame.Payload[2] << 8) | frame.Payload[3];
+
+            Streams[frame.StreamId].Reset = true;
+            Streams[frame.StreamId].ErrorCode = errorCode;
+            Console.WriteLine($"[DEBUG] RST_STREAM: StreamId={frame.StreamId}, ErrorCode=0x{errorCode:X8}");
         }
+
 
         private async Task ProcessPingFrame(Http2Frame frame, CancellationToken cancellationToken)
         {
