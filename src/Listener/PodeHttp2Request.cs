@@ -781,9 +781,36 @@ namespace Pode
             if ((frame.Flags & FLAG_ACK) != 0)
             {
                 Console.WriteLine("[DEBUG] Received SETTINGS ACK frame");
+                if (frame.Length != 0)
+                {
+                    Console.WriteLine("[DEBUG] SETTINGS frame with ACK and payload, sending GOAWAY");
+                    // RFC 7540 §6.5.3: SETTINGS frame with ACK and payload
+                    await SendGoAwayAsync(0, Http2ErrorCode.FrameSizeError, "SETTINGS frame with ACK and payload", cancellationToken);
+                    await CloseConnection(cancellationToken);
+                    return;
+                }
+                // Normal ACK handling
+                return;
+            }
+            // SETTINGS with stream ID != 0
+            if (frame.StreamId != 0)
+            {
+                Console.WriteLine("[DEBUG] SETTINGS frame with non-zero stream ID, sending GOAWAY");
+                // RFC 7540 §6.5.3: SETTINGS frame with non-zero stream
+                await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "SETTINGS frame with non-zero stream ID", cancellationToken);
+                await CloseConnection(cancellationToken);
                 return;
             }
 
+            // SETTINGS frame with payload length not a multiple of 6
+            if (frame.Length % 6 != 0)
+            {
+                Console.WriteLine("[DEBUG] SETTINGS frame with invalid length, sending GOAWAY");
+                // RFC 7540 §6.5.3: SETTINGS frame with invalid length
+                await SendGoAwayAsync(0, Http2ErrorCode.FrameSizeError, "SETTINGS frame with invalid length", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
             for (int i = 0; i + 5 < frame.Payload.Length; i += 6)
             {
                 int id = (frame.Payload[i] << 8) | frame.Payload[i + 1];
@@ -805,56 +832,66 @@ namespace Pode
                 switch (id)
                 {
                     case 0x1:          // SETTINGS_HEADER_TABLE_SIZE
-                        {
-                            int oldSize = (int)Settings["SETTINGS_HEADER_TABLE_SIZE"];
-                            Settings["SETTINGS_HEADER_TABLE_SIZE"] = value;
-                            _hpackDecoder.SetMaxHeaderTableSize(value);
-                            Console.WriteLine($"[DEBUG] HPACK dynamic table size {oldSize} → {value}");
-                            break;
-                        }
+                        int oldSize = (int)Settings["SETTINGS_HEADER_TABLE_SIZE"];
+                        Settings["SETTINGS_HEADER_TABLE_SIZE"] = value;
+                        _hpackDecoder.SetMaxHeaderTableSize(value);
+                        Console.WriteLine($"[DEBUG] HPACK dynamic table size {oldSize} → {value}");
+                        break;
 
-                    case 0x5:          // SETTINGS_MAX_FRAME_SIZE
-                        {
-                            if (value < 16384 || value > 16777215)
-                            {
-                                await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
-                                return;
-                            }
-                            PeerMaxFrameSize = value;
-                            Console.WriteLine($"[DEBUG] Peer max frame size → {PeerMaxFrameSize}");
-                            break;
-                        }
 
+                    case 0x2: // SETTINGS_ENABLE_PUSH
+                        if (value != 0 && value != 1)
+                        {
+                            await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "SETTINGS_ENABLE_PUSH must be 0 or 1", cancellationToken);
+                            await CloseConnection(cancellationToken);
+                            return;
+                        }
+                        break;
+                    case 0x3:          // SETTINGS_MAX_CONCURRENT_STREAMS
+                       
+                        break;
                     case 0x4:          // SETTINGS_INITIAL_WINDOW_SIZE
+
+                        uint unsignedVal = (uint)value;
+
+                        // RFC 7540 §6.9.2: must be ≤ 2^31-1
+                        if (unsignedVal > 0x7FFFFFFF)
                         {
-                            uint unsignedVal = (uint)value;
-
-                            // RFC 7540 §6.9.2: must be ≤ 2^31-1
-                            if (unsignedVal > 0x7FFFFFFF)
-                            {
-                                await SendGoAwayAsync(
-                                        lastStreamId: 0,
-                                        errorCode: Http2ErrorCode.FlowControlError,
-                                        debugData: "SETTINGS_INITIAL_WINDOW_SIZE too large",
-                                        cancellationToken);
-                                return;     // caller closes socket
-                            }
-
-                            int old = (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"];
-                            int diff = value - old;   // may be negative
-
-                            Settings["SETTINGS_INITIAL_WINDOW_SIZE"] = value;
-
-                            foreach (var stream in Streams.Values)
-                            {
-                                // Make every open stream’s window grow/shrink by diff
-                                stream.AddWindow(diff);       // AddWindow already exists
-                            }
-                            _settingsTcs.TrySetResult(true);  // wakes any waiter
-                            Console.WriteLine($"[DEBUG] Updated initial window {old} → {value} " +
-                                              $"(applied diff {diff} to {Streams.Count} streams)");
-                            break;
+                            await SendGoAwayAsync(
+                                    lastStreamId: 0,
+                                    errorCode: Http2ErrorCode.FlowControlError,
+                                    debugData: "SETTINGS_INITIAL_WINDOW_SIZE too large",
+                                    cancellationToken);
+                            return;     // caller closes socket
                         }
+
+                        int old = (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"];
+                        int diff = value - old;   // may be negative
+
+                        Settings["SETTINGS_INITIAL_WINDOW_SIZE"] = value;
+
+                        foreach (var stream in Streams.Values)
+                        {
+                            // Make every open stream’s window grow/shrink by diff
+                            stream.AddWindow(diff);       // AddWindow already exists
+                        }
+                        _settingsTcs.TrySetResult(true);  // wakes any waiter
+                        Console.WriteLine($"[DEBUG] Updated initial window {old} → {value} " +
+                                            $"(applied diff {diff} to {Streams.Count} streams)");
+                        break;
+
+                     case 0x5:          // SETTINGS_MAX_FRAME_SIZE
+                        if (value < 16384 || value > 16777215)
+                        {
+                          //  await SendRstStream(0, 0x1);   // PROTOCOL_ERROR on the connection
+                            await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "SETTINGS_MAX_FRAME_SIZE out of range", cancellationToken);
+                            await CloseConnection(cancellationToken);
+                            return;
+                        }
+                        PeerMaxFrameSize = value;
+                        Console.WriteLine($"[DEBUG] Peer max frame size → {PeerMaxFrameSize}");
+                        break;
+
                     default:
                         {
                             Console.WriteLine($"[DEBUG] Unknown setting ID {id} = {value}");
