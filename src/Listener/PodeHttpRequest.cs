@@ -15,22 +15,22 @@ namespace Pode
 {
     public class PodeHttpRequest : PodeRequest
     {
-        public string HttpMethod { get; private set; }
-        public NameValueCollection QueryString { get; private set; }
-        public string Protocol { get; private set; }
-        public string ProtocolVersion { get; private set; }
-        public string ContentType { get; private set; }
-        public int ContentLength { get; private set; }
-        public Encoding ContentEncoding { get; private set; }
-        public string TransferEncoding { get; private set; }
-        public string UserAgent { get; private set; }
-        public string UrlReferrer { get; private set; }
-        public Uri Url { get; private set; }
-        public Hashtable Headers { get; private set; }
-        public byte[] RawBody { get; private set; }
-        public string Host { get; private set; }
-        public bool AwaitingBody { get; private set; }
-        public PodeForm Form { get; private set; }
+        public string HttpMethod { get; protected set; }
+        public NameValueCollection QueryString { get; protected set; }
+        public string Protocol { get; protected set; }
+        public string ProtocolVersion { get; protected set; }
+        public string ContentType { get; protected set; }
+        public int ContentLength { get; protected set; }
+        public Encoding ContentEncoding { get; protected set; }
+        public string TransferEncoding { get; protected set; }
+        public string UserAgent { get; protected set; }
+        public string UrlReferrer { get; protected set; }
+        public Uri Url { get; protected set; }
+        public Hashtable Headers { get; protected set; }
+        public byte[] RawBody { get; protected set; }
+        public string Host { get; protected set; }
+        public bool AwaitingBody { get; protected set; }
+        public PodeForm Form { get; protected set; }
 
         private bool IsRequestLineValid;
         private MemoryStream BodyStream;
@@ -45,16 +45,15 @@ namespace Pode
             get => !string.IsNullOrEmpty(SseClientId);
         }
 
-        private string _body = string.Empty;
+        protected string _body = string.Empty;
         public string Body
         {
             get
             {
-                if (RawBody != default(byte[]) && RawBody.Length > 0)
+                if (RawBody != null && RawBody.Length > 0)
                 {
-                    _body = Encoding.GetString(RawBody);
+                    _body = ContentEncoding != null ? ContentEncoding.GetString(RawBody) : System.Text.Encoding.UTF8.GetString(RawBody);
                 }
-
                 return _body;
             }
         }
@@ -160,7 +159,7 @@ namespace Pode
                 // Check if this looks like HTTP/2 preface
                 var isHttp2Preface = bytes.Length >= 3 &&
                     System.Text.Encoding.ASCII.GetString(bytes, 0, 3) == "PRI";
-                Console.WriteLine($"[DEBUG] HTTP/2 preface check: { System.Text.Encoding.ASCII.GetString(bytes, 0, 10) }");
+                Console.WriteLine($"[DEBUG] HTTP/2 preface check: {System.Text.Encoding.ASCII.GetString(bytes, 0, 10)}");
                 Console.WriteLine($"[DEBUG] ALPN negotiated HTTP/2: {alpnNegotiatedHttp2}, Has HTTP/2 preface: {isHttp2Preface}");
 
                 if (alpnNegotiatedHttp2 && isHttp2Preface)

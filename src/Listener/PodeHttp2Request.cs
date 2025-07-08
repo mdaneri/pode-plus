@@ -16,7 +16,7 @@ using hpack;
 
 namespace Pode
 {
-    public class PodeHttp2Request : PodeRequest
+    public class PodeHttp2Request : PodeHttpRequest
     {
         // HTTP/2 Frame Types
         private const byte FRAME_TYPE_DATA = 0x0;
@@ -47,22 +47,8 @@ namespace Pode
         // HTTP/2 Properties
 
         private int _connectionWindowSize = DEFAULT_WINDOW_SIZE;
-        public string HttpMethod { get; private set; }
-        public NameValueCollection QueryString { get; private set; }
-        public string Protocol { get; private set; } = "HTTP/2.0";
-        public string ProtocolVersion { get; private set; } = "2.0";
+
         internal int PeerMaxFrameSize { get; private set; } = 16384; // default 2^14
-        public string ContentType { get; private set; }
-        public int ContentLength { get; private set; }
-        public Encoding ContentEncoding { get; private set; }
-        public string UserAgent { get; private set; }
-        public string UrlReferrer { get; private set; }
-        public Uri Url { get; private set; }
-        public Hashtable Headers { get; private set; }
-        public byte[] RawBody { get; private set; }
-        public string Host { get; private set; }
-        public bool AwaitingBody { get; private set; }
-        public PodeForm Form { get; private set; }
 
         // HTTP/2 Specific Properties
         public int StreamId { get; private set; }
@@ -89,18 +75,6 @@ namespace Pode
         }
         private List<byte> _incompleteFrame;
 
-        private string _body = string.Empty;
-        public string Body
-        {
-            get
-            {
-                if (RawBody != null && RawBody.Length > 0)
-                {
-                    _body = ContentEncoding != null ? ContentEncoding.GetString(RawBody) : System.Text.Encoding.UTF8.GetString(RawBody);
-                }
-                return _body;
-            }
-        }
 
         public override bool CloseImmediately
         {
@@ -120,6 +94,8 @@ namespace Pode
             : base(socket, podeSocket, context)
         {
             Console.WriteLine("[DEBUG] PodeHttp2Request constructor called");
+            Protocol = "HTTP/2";
+            ProtocolVersion= "2.0";
             Type = PodeProtocolType.Http;
             Streams = new Dictionary<int, Http2Stream>();
             Settings = new Dictionary<string, object>();
@@ -279,11 +255,11 @@ namespace Pode
                         Console.WriteLine("[DEBUG] Connection preface check failed");
                         // If this is an HTTPS connection but no proper HTTP/2 preface,
                         // it might be HTTP/1.1 data that wasn't caught by ALPN
-                   //     if (Context.PodeSocket?.IsSsl == true)
-                     //   {
-                       //     PodeHelpers.WriteErrorMessage("HTTPS connection without HTTP/2 preface, this is likely HTTP/1.1 data", Context.Listener, PodeLoggingLevel.Debug, Context);
-                         //   throw new PodeRequestException("HTTP/1.1 request sent to HTTP/2 parser. This indicates a protocol detection issue.", 422);
-                       // }
+                        //     if (Context.PodeSocket?.IsSsl == true)
+                        //   {
+                        //     PodeHelpers.WriteErrorMessage("HTTPS connection without HTTP/2 preface, this is likely HTTP/1.1 data", Context.Listener, PodeLoggingLevel.Debug, Context);
+                        //   throw new PodeRequestException("HTTP/1.1 request sent to HTTP/2 parser. This indicates a protocol detection issue.", 422);
+                        // }
 
                         // New: Send GOAWAY and close before throwing/returning
                         await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "Invalid HTTP/2 connection preface", cancellationToken);
@@ -1401,7 +1377,14 @@ namespace Pode
             {
                 Console.WriteLine($"[DEBUG] Final PRIORITY: Stream={s.StreamId} dep={s.Dependency} weight={s.Weight}");
             }
-
+      /*      if (Context.Response == null)
+            {
+                 Context.EnsureHttp2Response(this);  // ensure response is created
+            }
+            else if (Context.Response is PodeHttp2Response r && r.StreamId == 0)
+            {
+                r.StreamId = StreamId;                           // late-patch just in case
+            }*/
             return Task.CompletedTask;
         }
 
@@ -1414,16 +1397,6 @@ namespace Pode
             }
         }
 
-        public void ParseFormData()
-        {
-            Form = PodeForm.Parse(RawBody, ContentType, ContentEncoding);
-        }
-
-        public bool IsHttpMethodValid()
-        {
-            return !string.IsNullOrWhiteSpace(HttpMethod) &&
-                   PodeHelpers.HTTP_METHODS.Contains(HttpMethod);
-        }
 
         protected override void Dispose(bool disposing)
         {
