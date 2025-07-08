@@ -442,6 +442,10 @@ namespace Pode
                     Console.WriteLine("[DEBUG] Processing WINDOW_UPDATE frame");
                     await ProcessWindowUpdateFrame(frame, cancellationToken);
                     break;
+                case FRAME_TYPE_PUSH_PROMISE:
+                    Console.WriteLine("[DEBUG] Received PUSH_PROMISE from client - PROTOCOL_ERROR");
+                    ProcessPushPromiseFrame(frame, cancellationToken);
+                    return;                      // stop processing frames
                 case FRAME_TYPE_CONTINUATION:
                     Console.WriteLine("[DEBUG] Processing CONTINUATION frame");
                     await ProcessContinuationFrame(frame, cancellationToken);
@@ -450,6 +454,16 @@ namespace Pode
                     Console.WriteLine($"[DEBUG] Unknown frame type: {frame.Type}");
                     break;
             }
+        }
+
+
+        private async Task ProcessPushPromiseFrame(Http2Frame frame,CancellationToken cancellationToken){
+            Console.WriteLine($"[DEBUG] ProcessPushPromiseFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
+            // §8.2: connection error, type PROTOCOL_ERROR
+            await SendGoAwayAsync(lastStreamId: 0, errorCode:Http2ErrorCode.ProtocolError,
+            debugData:"Client sent PUSH_PROMISE",cancellationToken);
+
+            await CloseConnection(cancellationToken);
         }
 
         private async Task ProcessHeadersFrame(Http2Frame frame,
