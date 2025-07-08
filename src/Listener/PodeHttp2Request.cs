@@ -470,7 +470,26 @@ namespace Pode
                                         CancellationToken cancellationToken)
         {
             Console.WriteLine($"[DEBUG] ProcessHeadersFrame: StreamId={frame.StreamId}, Length={frame.Length}, Flags=0x{frame.Flags:X2}");
+            // ------------------------------------------------------------------
+            // §6.2 – HEADERS frame MUST NOT be on stream 0.  Treat as a
+            // *connection* error (PROTOCOL_ERROR): send GOAWAY, then close.
+            // ------------------------------------------------------------------
+            if (frame.StreamId == 0)
+            {
+                Console.WriteLine("[DEBUG] HEADERS on stream 0 → PROTOCOL_ERROR, sending GOAWAY");
 
+                await SendGoAwayAsync(
+                        lastStreamId : 0,
+                        errorCode    : Http2ErrorCode.ProtocolError,
+                        debugData    : "HEADERS frame on stream 0",
+                        cancellationToken);
+
+                // Flush so peer receives the GOAWAY before we drop the TLS socket
+                await GetNetworkStream()?.FlushAsync(cancellationToken);
+
+                await CloseConnection(cancellationToken);
+                return;                     // stop further processing
+            }
             StreamId = frame.StreamId;
             EndOfHeaders = (frame.Flags & FLAG_END_HEADERS) != 0;
             EndOfStream = (frame.Flags & FLAG_END_STREAM) != 0;
