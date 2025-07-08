@@ -75,6 +75,49 @@ namespace Pode
             Type = PodeProtocolType.Http;
         }
 
+
+        /// <summary>
+        /// Copy-constructor – creates a deep(ish) clone of an existing request.
+        /// Socket, PodeSocket and Context are *shared* so the new object
+        /// still points at the same connection; everything else is copied.
+        /// </summary>
+        public PodeHttpRequest(PodeHttpRequest other)
+            : base(other)
+        {
+            if (other == null) throw new ArgumentNullException(nameof(other));
+
+            // simple value types / strings
+            HttpMethod = other.HttpMethod;
+            Protocol = other.Protocol;
+            ProtocolVersion = other.ProtocolVersion;
+            ContentType = other.ContentType;
+            ContentLength = other.ContentLength;
+            TransferEncoding = other.TransferEncoding;
+            UserAgent = other.UserAgent;
+            UrlReferrer = other.UrlReferrer;
+            Host = other.Host;
+            AwaitingBody = other.AwaitingBody;
+
+            // reference types that need a *new* instance
+            ContentEncoding = other.ContentEncoding;
+            Url = other.Url != null ? new Uri(other.Url.ToString()) : null;
+            Headers = other.Headers != null ? (Hashtable)other.Headers.Clone() : new Hashtable(StringComparer.InvariantCultureIgnoreCase);
+            QueryString = other.QueryString != null ? new NameValueCollection(other.QueryString) : null;
+            RawBody = other.RawBody != null ? (byte[])other.RawBody.Clone() : null;
+
+            // optional items – clone or share as makes sense for your code-base
+            Form = other.Form; // shallow; replace with a deep copy if PodeForm is mutable
+
+            // SSE metadata
+            SseClientId = other.SseClientId;
+            SseClientName = other.SseClientName;
+            SseClientGroup = other.SseClientGroup;
+
+            // keep-alive / TLS flags, etc.
+            IsKeepAlive = other.IsKeepAlive;
+            SslUpgraded = other.SslUpgraded;
+        }
+
         protected override bool ValidateInput(byte[] bytes)
         {
             // we need more bytes!

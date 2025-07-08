@@ -128,16 +128,27 @@ namespace Pode
                     Console.WriteLine("[DEBUG] InputStream already set, skipping NetworkStream creation");
                 }
 
-                // Upgrade to SSL if necessary
-                if (!IsSsl || TlsMode == PodeTlsMode.Explicit)
+                if (InputStream is SslStream sslStream)
                 {
-                    // If not SSL, use the main network stream
+                    Console.WriteLine("[DEBUG] InputStream is already an authenticated SSL stream, skipping SSL upgrade");
+                    SslUpgraded = true;
                     State = PodeStreamState.Open;
                     return;
                 }
+                else if (IsSsl && TlsMode != PodeTlsMode.Explicit)
+                {
+                    // If not SSL, use the main network stream
+                    State = PodeStreamState.Open;
+                    // Upgrade to SSL if necessary
+                    await UpgradeToSSL(cancellationToken).ConfigureAwait(false);
 
-                // Upgrade to SSL if necessary
-                await UpgradeToSSL(cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    Console.WriteLine("[DEBUG] InputStream is NetworkStream and no SSL required");
+                    State = PodeStreamState.Open;
+                }
+
             }
             catch (Exception ex)
             {
@@ -185,88 +196,63 @@ namespace Pode
                 {
 #if !NETSTANDARD2_0
                     // Configure ALPN protocols for HTTP/2 support
-                    try
+                    Console.WriteLine("[DEBUG] Creating SSL server authentication options with ALPN");
+                    Console.WriteLine($"[DEBUG] Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+                    Console.WriteLine($"[DEBUG] OS: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+                    Console.WriteLine($"[DEBUG] Certificate: {Certificate?.Subject}");
+                    Console.WriteLine($"[DEBUG] AllowClientCertificate: {AllowClientCertificate}");
+                    Console.WriteLine($"[DEBUG] Protocols: {Protocols}");
+                    // Create SSL server authentication options with ALPN support
+                    var serverOptions = new SslServerAuthenticationOptions
                     {
-                        Console.WriteLine("[DEBUG] Creating SSL server authentication options with ALPN");
-                        Console.WriteLine($"[DEBUG] Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
-                        Console.WriteLine($"[DEBUG] OS: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
-                        Console.WriteLine($"[DEBUG] Certificate: {Certificate?.Subject}");
-
-                        var serverOptions = new SslServerAuthenticationOptions
-                        {
-                            ServerCertificate = Certificate,
-                            ClientCertificateRequired = AllowClientCertificate,
-                            EnabledSslProtocols = Protocols,
-                            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                            ApplicationProtocols = new List<SslApplicationProtocol>
+                        ServerCertificate = Certificate,
+                        ClientCertificateRequired = AllowClientCertificate, // Set to false to avoid client certificate requirement
+                        EnabledSslProtocols = Protocols,
+                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                        ApplicationProtocols = new List<SslApplicationProtocol>
                         {
                             SslApplicationProtocol.Http2,    // HTTP/2 over TLS
                             SslApplicationProtocol.Http11    // HTTP/1.1 fallback
                         }
-                        };
+                    };
 
-                        Console.WriteLine($"[DEBUG] ALPN protocols configured: Http2, Http11");
-                        Console.WriteLine($"[DEBUG] SSL protocols enabled: {Protocols}");
-                        Console.WriteLine($"[DEBUG] Starting SSL authentication...");
+                    Console.WriteLine($"[DEBUG] ALPN protocols configured: Http2, Http11");
+                    Console.WriteLine($"[DEBUG] SSL protocols enabled: {Protocols}");
+                    Console.WriteLine($"[DEBUG] Starting SSL authentication...");
 
-                        // Authenticate the SSL stream with ALPN support
-                        await ssl.AuthenticateAsServerAsync(serverOptions, cancellationToken)
-                            .ConfigureAwait(false);
+                    // Authenticate the SSL stream with ALPN support
+                    await ssl.AuthenticateAsServerAsync(serverOptions, cancellationToken)
+                        .ConfigureAwait(false);
 
-                        Console.WriteLine("[DEBUG] SSL authentication completed successfully");
-                        Console.WriteLine($"[DEBUG] SSL Protocol: {ssl.SslProtocol}");
-                        Console.WriteLine($"[DEBUG] Cipher Algorithm: {ssl.CipherAlgorithm}");
-                        Console.WriteLine($"[DEBUG] Is Authenticated: {ssl.IsAuthenticated}");
-                        Console.WriteLine($"[DEBUG] Is Encrypted: {ssl.IsEncrypted}");
+                    Console.WriteLine("[DEBUG] SSL authentication completed successfully");
+                    Console.WriteLine($"[DEBUG] SSL Protocol: {ssl.SslProtocol}");
+                    Console.WriteLine($"[DEBUG] Cipher Algorithm: {ssl.CipherAlgorithm}");
+                    Console.WriteLine($"[DEBUG] Is Authenticated: {ssl.IsAuthenticated}");
+                    Console.WriteLine($"[DEBUG] Is Encrypted: {ssl.IsEncrypted}");
 
-                        // Check which protocol was negotiated
-                        var negotiatedProtocol = ssl.NegotiatedApplicationProtocol;
-                        Console.WriteLine($"[DEBUG] Negotiated ALPN protocol: '{negotiatedProtocol}'");
-                        Console.WriteLine($"[DEBUG] ALPN protocol bytes: {(negotiatedProtocol.Protocol.Length > 0 ? BitConverter.ToString(negotiatedProtocol.Protocol.ToArray()) : "EMPTY")}");
+                    // Check which protocol was negotiated
+                    var negotiatedProtocol = ssl.NegotiatedApplicationProtocol;
+                    Console.WriteLine($"[DEBUG] Negotiated ALPN protocol: '{negotiatedProtocol}'");
+                    Console.WriteLine($"[DEBUG] ALPN protocol bytes: {(negotiatedProtocol.Protocol.Length > 0 ? BitConverter.ToString(negotiatedProtocol.Protocol.ToArray()) : "EMPTY")}");
 
-                        if (negotiatedProtocol == SslApplicationProtocol.Http2)
-                        {
-                            Console.WriteLine("[DEBUG] ✅ HTTP/2 protocol negotiated via ALPN!");
-                            PodeHelpers.WriteErrorMessage("HTTP/2 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
-                            // Set a flag to indicate HTTP/2 was negotiated
-                            Context.Data["AlpnNegotiatedHttp2"] = true;
-                        }
-                        else if (negotiatedProtocol == SslApplicationProtocol.Http11)
-                        {
-                            Console.WriteLine("[DEBUG] ⚠️ HTTP/1.1 protocol negotiated via ALPN");
-                            PodeHelpers.WriteErrorMessage("HTTP/1.1 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
-                            Context.Data["AlpnNegotiatedHttp2"] = false;
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[DEBUG] ❌ Unexpected ALPN protocol: {negotiatedProtocol}");
-                            PodeHelpers.WriteErrorMessage($"Unexpected ALPN protocol: {negotiatedProtocol}", Context.Listener, PodeLoggingLevel.Warning, Context);
-                            Context.Data["AlpnNegotiatedHttp2"] = false;
-                        }
-                    }
-                    catch (Exception ex)
+                    if (negotiatedProtocol == SslApplicationProtocol.Http2)
                     {
-                        var level = PodeHelpers.LooksLikeTlsProbe(ex)
-                  ? PodeLoggingLevel.Verbose    // just a probe, downgrade noise
-                  : PodeLoggingLevel.Debug;     // real handshake problem
-
-                        PodeHelpers.WriteErrorMessage($"SSL auth failed: {ex.Message}", Context.Listener, level, Context);
-
-                        if (level == PodeLoggingLevel.Debug)
-                        {
-                            Console.WriteLine($"[DEBUG] ❌ SSL authentication failed: {ex.Message}");
-                            Console.WriteLine($"[DEBUG] Exception type: {ex.GetType().Name}");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[VERBOSE] SSL probe failed (likely cipher-suite test)");
-                        }
-
-                        Console.WriteLine("[DEBUG] Falling back to basic SSL without ALPN");
-
-                        // Fallback to basic SSL without ALPN
-                        await ssl.AuthenticateAsServerAsync(Certificate, AllowClientCertificate, Protocols, false)
-                            .ConfigureAwait(false); Context.Data["AlpnNegotiatedHttp2"] = false;
+                        Console.WriteLine("[DEBUG] ✅ HTTP/2 protocol negotiated via ALPN!");
+                        PodeHelpers.WriteErrorMessage("HTTP/2 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
+                        // Set a flag to indicate HTTP/2 was negotiated
+                        Context.Data["AlpnNegotiatedHttp2"] = true;
+                    }
+                    else if (negotiatedProtocol == SslApplicationProtocol.Http11)
+                    {
+                        Console.WriteLine("[DEBUG] ⚠️ HTTP/1.1 protocol negotiated via ALPN");
+                        PodeHelpers.WriteErrorMessage("HTTP/1.1 protocol negotiated via ALPN", Context.Listener, PodeLoggingLevel.Debug, Context);
+                        Context.Data["AlpnNegotiatedHttp2"] = false;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG] ❌ Unexpected ALPN protocol: {negotiatedProtocol}");
+                        PodeHelpers.WriteErrorMessage($"Unexpected ALPN protocol: {negotiatedProtocol}", Context.Listener, PodeLoggingLevel.Warning, Context);
+                        Context.Data["AlpnNegotiatedHttp2"] = false;
                     }
 #else
                     // Fallback to HTTP/1.1 only authentication for netstandard2.0

@@ -108,6 +108,36 @@ namespace Pode
             Console.WriteLine("[DEBUG] PodeHttp2Request constructor completed");
         }
 
+        /// <summary>
+        /// Promote an already-parsed HTTP/1.x request to HTTP/2.
+        /// Copies all generic request state via the base copy-ctor,
+        /// then initialises HTTP/2-specific machinery.
+        /// </summary>
+        public PodeHttp2Request(PodeHttpRequest http1)
+            : base(http1)                           // clone common state
+        {
+            // override / extend for HTTP-2
+            Protocol        = "HTTP/2";
+            ProtocolVersion = "2.0";
+            
+
+            Streams         = new Dictionary<int, Http2Stream>();
+            Settings        = new Dictionary<string, object>();
+
+            _hpackDecoder   = new hpack.Decoder(maxHeaderSize: 8192,
+                                                maxHeaderTableSize: 4096);
+            _incompleteFrame= new List<byte>();
+            if (ContentEncoding == null)
+            {
+                ContentEncoding = System.Text.Encoding.UTF8;
+            }
+            _settingsTcs    = new TaskCompletionSource<bool>(
+                                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            InitializeDefaultSettings();            // existing helper
+        }
+
+
         private void InitializeDefaultSettings()
         {
             Settings["SETTINGS_HEADER_TABLE_SIZE"] = 4096;
@@ -170,40 +200,7 @@ namespace Pode
             return frameOk;
         }
 
-        public override async Task Open(CancellationToken cancellationToken)
-        {
-            Console.WriteLine("[DEBUG] PodeHttp2Request.Open() called");
 
-            // Check if InputStream is already set (transferred from HTTP/1.1 request)
-            if (InputStream != null)
-            {
-                Console.WriteLine("[DEBUG] InputStream already set, skipping NetworkStream creation");
-
-                // If InputStream is already an SSL stream, skip SSL upgrade
-                if (InputStream is SslStream sslStream)
-                {
-                    Console.WriteLine("[DEBUG] InputStream is already an authenticated SSL stream, skipping SSL upgrade");
-                    SslUpgraded = true;
-                    State = PodeStreamState.Open;
-                    return;
-                }
-                else if (IsSsl && TlsMode != PodeTlsMode.Explicit)
-                {
-                    Console.WriteLine("[DEBUG] InputStream is NetworkStream but SSL required, upgrading to SSL");
-                    await UpgradeToSSL(cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    Console.WriteLine("[DEBUG] InputStream is NetworkStream and no SSL required");
-                    State = PodeStreamState.Open;
-                }
-                return;
-            }
-
-            // If InputStream is null, use the base implementation
-            Console.WriteLine("[DEBUG] InputStream is null, using base Open implementation");
-            await base.Open(cancellationToken).ConfigureAwait(false);
-        }
 
         protected override async Task<bool> Parse(byte[] bytes, CancellationToken cancellationToken)
         {
