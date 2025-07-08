@@ -444,7 +444,7 @@ namespace Pode
                     break;
                 case FRAME_TYPE_PUSH_PROMISE:
                     Console.WriteLine("[DEBUG] Received PUSH_PROMISE from client - PROTOCOL_ERROR");
-                    ProcessPushPromiseFrame(frame, cancellationToken);
+                    await ProcessPushPromiseFrame(frame, cancellationToken);
                     return;                      // stop processing frames
                 case FRAME_TYPE_CONTINUATION:
                     Console.WriteLine("[DEBUG] Processing CONTINUATION frame");
@@ -768,10 +768,26 @@ namespace Pode
                 await CloseConnection(cancellationToken);
                 return;
             }
+
+
+            // RFC 7540 §5.1: a DATA frame on an *idle* stream is a
+            // connection error (PROTOCOL_ERROR)
+            if (!Streams.ContainsKey(frame.StreamId))
+            {
+                await SendGoAwayAsync(
+                        lastStreamId : 0,
+                        errorCode    : Http2ErrorCode.ProtocolError,
+                        debugData    : "DATA on idle stream",
+                        cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
+
             if (_bodyStream == null)
             {
                 _bodyStream = new MemoryStream();
             }
+
 
             await _bodyStream.WriteAsync(frame.Payload, 0, frame.Payload.Length, cancellationToken);
 
@@ -1186,7 +1202,18 @@ namespace Pode
             }
             else
             {
-                var stream = GetOrCreateStream(frame.StreamId);
+                //  var stream = GetOrCreateStream(frame.StreamId);
+                // §5.1: WINDOW_UPDATE for an idle stream → PROTOCOL_ERROR
+                if (!Streams.ContainsKey(frame.StreamId))
+                {
+                    await SendGoAwayAsync(
+                            0, Http2ErrorCode.ProtocolError,
+                            "WINDOW_UPDATE on idle stream", cancellationToken);
+                    await CloseConnection(cancellationToken);
+                    return;
+                }
+
+                var stream = Streams[frame.StreamId];
                 long newStreamSize = (long)stream.WindowSize + increment;
                 if (newStreamSize > int.MaxValue)
                 {
@@ -1220,9 +1247,16 @@ namespace Pode
                                             CancellationToken cancellationToken)
         {
             if (!Streams.ContainsKey(StreamId))
-                return;                 // protocol error; nothing to continue
+            {
+                await SendGoAwayAsync(
+                        0, Http2ErrorCode.ProtocolError,
+                        "CONTINUATION on idle stream", cancellationToken);
+                await CloseConnection(cancellationToken);
+                return;
+            }
 
-            var stream = Streams[StreamId];
+            var stream = Streams[frame.StreamId];               // protocol error; nothing to continue
+
             var headerListener = new ListHeaderListener();
             try
             {
