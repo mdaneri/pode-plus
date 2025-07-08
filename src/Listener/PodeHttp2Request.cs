@@ -59,7 +59,6 @@ namespace Pode
 
         private bool _hasReceivedPreface;
         private bool _isHeadersComplete;
-        private MemoryStream _bodyStream;
         private readonly hpack.Decoder _hpackDecoder;
         private readonly TaskCompletionSource<bool> _settingsTcs;
         private bool _headerBlockOpen = false;
@@ -96,7 +95,6 @@ namespace Pode
             Console.WriteLine("[DEBUG] PodeHttp2Request constructor called");
             Protocol = "HTTP/2";
             ProtocolVersion= "2.0";
-            Type = PodeProtocolType.Http;
             Streams = new Dictionary<int, Http2Stream>();
             Settings = new Dictionary<string, object>();
             _hpackDecoder = new hpack.Decoder(maxHeaderSize: 8192, maxHeaderTableSize: 4096);
@@ -113,13 +111,13 @@ namespace Pode
         /// Copies all generic request state via the base copy-ctor,
         /// then initialises HTTP/2-specific machinery.
         /// </summary>
-        public PodeHttp2Request(PodeHttpRequest http1)
-            : base(http1)                           // clone common state
+        public PodeHttp2Request(PodeHttpRequest http)
+            : base(http)                           // clone common state
         {
             // override / extend for HTTP-2
             Protocol        = "HTTP/2";
             ProtocolVersion = "2.0";
-            
+
 
             Streams         = new Dictionary<int, Http2Stream>();
             Settings        = new Dictionary<string, object>();

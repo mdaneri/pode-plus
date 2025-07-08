@@ -73,7 +73,7 @@ namespace Pode
                     throw new NotSupportedException("PodeResponse does not support HTTP/2 response lines.");
                 }
 #endif
-                if (Request is PodeHttpRequest httpRequest)
+                if (Request is PodeHttp1xRequest httpRequest)
                 {
                     return $"{httpRequest.Protocol} {StatusCode} {StatusDescription}{PodeHelpers.NEW_LINE}";
                 }
@@ -83,7 +83,7 @@ namespace Pode
             }
         }
 
-      
+
 
         private static readonly UTF8Encoding Encoding = new UTF8Encoding();
 

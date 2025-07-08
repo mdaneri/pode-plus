@@ -73,22 +73,19 @@ namespace Pode
         public new bool IsSmtp => base.IsSmtp || (IsUnknown && PodeSocket.IsSmtp);
 
         // Determines if the context is associated with HTTP (including HTTP/2).
-        public new bool IsHttp => base.IsHttp || (IsUnknown && PodeSocket.IsHttp)
-#if !NETSTANDARD2_0
-                                || IsHttp2
-#endif
-                                ;
-
-#if !NETSTANDARD2_0
+#if NETCOREAPP2_1_OR_GREATER
+        public new bool IsHttp => base.IsHttp || (IsUnknown && PodeSocket.IsHttp)|| IsHttp2;
         // Determines if the context is associated with HTTP/2.
         public bool IsHttp2 => Request is PodeHttp2Request;
+#else
+        public new bool IsHttp => base.IsHttp || (IsUnknown && PodeSocket.IsHttp);
 #endif
 
         // Strongly typed request properties for different protocols.
         public PodeSmtpRequest SmtpRequest => (PodeSmtpRequest)Request;
-        public PodeHttpRequest HttpRequest => Request as PodeHttpRequest ??
+        public PodeHttp1xRequest HttpRequest => Request as PodeHttp1xRequest ??
             throw new InvalidOperationException("Request is not HTTP/1.x");
-#if !NETSTANDARD2_0
+#if NETCOREAPP2_1_OR_GREATER
         public PodeHttp2Request Http2Request => Request as PodeHttp2Request ??
             throw new InvalidOperationException("Request is not HTTP/2.0");
 #endif
@@ -255,7 +252,7 @@ namespace Pode
 
 #else
                     Console.WriteLine("[DEBUG] Creating HTTP/1.1 request");
-                    Request = new PodeHttpRequest(Socket, PodeSocket, this);
+                    Request = new PodeHttp1xRequest(Socket, PodeSocket, this);
 #endif
                     Console.WriteLine($"[DEBUG] Request created: {Request.GetType().Name}");
                     break;
@@ -321,7 +318,7 @@ namespace Pode
                     if (!isSecure && IsHttp2UpgradeRequest(buffer, bytesReceived))
                     {
                         Console.WriteLine("[DEBUG] HTTP/2 upgrade request detected");
-                        return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
+                        return Task.FromResult<PodeRequest>(new PodeHttp1xRequest(Socket, PodeSocket, this));
                     }
 
                     // HTTP/1.x request detection
@@ -332,7 +329,7 @@ namespace Pode
                         requestStart.StartsWith("CONNECT "))
                     {
                         Console.WriteLine("[DEBUG] HTTP/1.x request method detected");
-                        return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
+                        return Task.FromResult<PodeRequest>(new PodeHttp1xRequest(Socket, PodeSocket, this));
                     }
 
                     Console.WriteLine($"[DEBUG] Unrecognized request start: '{requestStart}', treating as HTTP/1.x for safety");
@@ -343,12 +340,12 @@ namespace Pode
                 }
 
                 // Default/fallback: HTTP/1.x request
-                return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
+                return Task.FromResult<PodeRequest>(new PodeHttp1xRequest(Socket, PodeSocket, this));
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DEBUG] Error detecting HTTP version: {ex.Message}");
-                return Task.FromResult<PodeRequest>(new PodeHttpRequest(Socket, PodeSocket, this));
+                return Task.FromResult<PodeRequest>(new PodeHttp1xRequest(Socket, PodeSocket, this));
             }
         }
 
@@ -500,7 +497,7 @@ namespace Pode
                         throw new PodeRequestException("Request is not Http", 422);
                     }
                     // Handle both HTTP/1.x and HTTP/2
-                    if (!(Request is PodeHttpRequest
+                    if (!(Request is PodeHttp1xRequest
 #if !NETSTANDARD2_0
                             || Request is PodeHttp2Request
 #endif
@@ -721,7 +718,7 @@ namespace Pode
                     // If not HTTP/2, fallback to HTTP/1.1 request
                     PodeHelpers.WriteErrorMessage($"Fallback to HTTP/1.1 due to protocol detection issue: {ex.Message}", Listener, PodeLoggingLevel.Debug, this);
                     // Else, only fallback to HTTP/1.1 if not ALPN negotiated h2 (very rare, mostly cleartext)
-                    var http11Request = new PodeHttpRequest(Socket, PodeSocket, this);
+                    var http11Request = new PodeHttp1xRequest(Socket, PodeSocket, this);
                     Request?.Dispose();
                     Request = http11Request;
                     Response?.Dispose();
@@ -883,7 +880,7 @@ namespace Pode
                     // Determine if the HTTP request is awaiting more data.
                     if (IsHttp)
                     {
-                        if (Request is PodeHttpRequest httpRequest)
+                        if (Request is PodeHttp1xRequest httpRequest)
                         {
                             _awaitingBody = httpRequest.AwaitingBody && !IsErrored && !IsTimeout;
                         }
