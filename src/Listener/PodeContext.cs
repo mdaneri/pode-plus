@@ -214,40 +214,39 @@ namespace Pode
 
                 default:
 #if NETCOREAPP2_1_OR_GREATER
+                   // Request = await DetectHttpVersion().ConfigureAwait(false);
+                    Request = new PodeHttpRequest(Socket, PodeSocket, this);
+                    await Request.Open(CancellationToken.None).ConfigureAwait(false);
+
+                    bool alpnNegotiatedHttp2 = false;
+                    Console.WriteLine("[DEBUG] Creating HTTP/1.1 request");
 
 
-                    Request = await DetectHttpVersion().ConfigureAwait(false);
+                    Console.WriteLine($"[DEBUG] ALPN negotiated protocol: {alpnNegotiatedHttp2}");
+                    if (PodeSocket?.IsSsl == true)
+                    {
+                        if (Data.ContainsKey("AlpnNegotiatedHttp2"))
+                        {
+                            Console.WriteLine("[DEBUG] ALPN negotiated HTTP/2, using PodeHttp2Request");
+                            Request = new PodeHttp2Request((PodeHttpRequest)Request);
 
-                    /*
-                       bool alpnNegotiatedHttp2 = false;
-                      Console.WriteLine("[DEBUG] Creating HTTP/1.1 request");
-                              var httpRequest = new PodeHttpRequest(Socket, PodeSocket, this);
-                              await httpRequest.Open(CancellationToken.None).ConfigureAwait(false);
+                           // await UpgradeAsync().ConfigureAwait(false);
 
-
-                              Console.WriteLine($"[DEBUG] ALPN negotiated protocol: {alpnNegotiatedHttp2}");
-                              if (PodeSocket?.IsSsl == true)
-                              {
-                                  if (Data.ContainsKey("AlpnNegotiatedHttp2"))
-                                  {
-                                      Console.WriteLine("[DEBUG] ALPN negotiated HTTP/2, using PodeHttp2Request");
-                                          Request = new PodeHttp2Request(httpRequest);
-
-                                      return;
-                                      // httpRequest.Dispose();
-                                  }
-                                  else
-                                  {
-                                       Request = httpRequest;
-                                       return;
-                                  }
-                              }
-                              else
-                              {
-                                  Console.WriteLine("[DEBUG] ALPN did NOT negotiate HTTP/2, using DetectHttpVersion");
-                                  // Use DetectHttpVersion to sniff for HTTP/2 preface, even on SSL!
-                                  Request = await DetectHttpVersion().ConfigureAwait(false);
-                              }*/
+                            return;
+                            // httpRequest.Dispose();
+                        }
+                        else
+                        {
+                             Request = new PodeHttp1xRequest((PodeHttpRequest)Request);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("[DEBUG] ALPN did NOT negotiate HTTP/2, using DetectHttpVersion");
+                        // Use DetectHttpVersion to sniff for HTTP/2 preface, even on SSL!
+                        Request = await DetectHttpVersion().ConfigureAwait(false);
+                    }
 
 
 #else
@@ -699,7 +698,7 @@ namespace Pode
                     Console.WriteLine("[DEBUG] 🔄 HTTP/2 upgrade required - switching from HTTP/1.1 to HTTP/2 parser");
                     PodeHelpers.WriteErrorMessage("HTTP/2 upgrade required, switching parser", Listener, PodeLoggingLevel.Debug, this);
                     // Upgrade to HTTP/2 parser
-                    await UpgradeAsync( ).ConfigureAwait(false);
+                    await UpgradeAsync().ConfigureAwait(false);
 
                 }
                 catch (PodeRequestException ex) when (ex.StatusCode == 422 && ex.Message.Contains("protocol detection issue"))

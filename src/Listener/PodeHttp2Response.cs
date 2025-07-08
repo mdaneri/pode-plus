@@ -64,6 +64,11 @@ namespace Pode
         /// </summary>
         public override async Task Send()
         {
+            if (StreamId == 0) {    // created too early?
+                Console.WriteLine($"[DEBUG] HTTP/2 Send() called with StreamId 0, checking request for real StreamId");
+                StreamId = _request.StreamId; // grab the real one
+            }
+
             if (StreamId == 0)
             {
                 Console.WriteLine($"[DEBUG] HTTP/2 Send() called with StreamId 0, returning early");

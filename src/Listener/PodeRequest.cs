@@ -137,6 +137,7 @@ namespace Pode
                 }
                 else if (IsSsl && TlsMode != PodeTlsMode.Explicit)
                 {
+                    Console.WriteLine("[DEBUG] InputStream is NetworkStream, upgrading to SSL/TLS");
                     // If not SSL, use the main network stream
                     State = PodeStreamState.Open;
                     // Upgrade to SSL if necessary
