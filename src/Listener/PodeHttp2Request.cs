@@ -1372,14 +1372,17 @@ namespace Pode
             {
                 Console.WriteLine($"[DEBUG] Final PRIORITY: Stream={s.StreamId} dep={s.Dependency} weight={s.Weight}");
             }
-      /*      if (Context.Response == null)
+
+            // -----------------------------------------------------------------
+            // Ensure the response that will be flushed later knows the
+            // definitive stream-id.  If the response has not been created yet
+            // (eg, early PREFACE bytes), create it now.
+            // -----------------------------------------------------------------
+            // Ensure the response carries the definitive stream-id
+            if (Context.Response is PodeHttp2Response resp && resp.StreamId == 0)
             {
-                 Context.EnsureHttp2Response(this);  // ensure response is created
+                resp.StreamId = StreamId;
             }
-            else if (Context.Response is PodeHttp2Response r && r.StreamId == 0)
-            {
-                r.StreamId = StreamId;                           // late-patch just in case
-            }*/
             return Task.CompletedTask;
         }
 
