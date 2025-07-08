@@ -944,6 +944,18 @@ namespace Pode
             bool exclusive = (dependency & 0x8000_0000) != 0;
             dependency &= 0x7FFF_FFFF;
 
+            // RFC 7540 §5.3.1 – “A stream that depends on itself is a
+            // stream-error of type PROTOCOL_ERROR.”
+            if (dependency == frame.StreamId)
+            {
+                Console.WriteLine($"[DEBUG] PRIORITY depends on itself — " +
+                                  $"sending RST_STREAM (PROTOCOL_ERROR) for SID={frame.StreamId}");
+
+                // 0x1 == PROTOCOL_ERROR  (see RFC 7540 §7)
+                await SendRstStream(frame.StreamId, 0x1);
+                return;  // Stop processing this PRIORITY frame
+            }
+
             byte weight = frame.Payload[4];           // 0–255 represents 1–256
 
             if (!Streams.ContainsKey(frame.StreamId))
