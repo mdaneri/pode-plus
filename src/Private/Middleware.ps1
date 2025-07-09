@@ -196,6 +196,9 @@ function Get-PodePublicMiddleware {
     [OutputType([hashtable])]
     param()
     return (Get-PodeInbuiltMiddleware -Name '__pode_mw_static_content__' -ScriptBlock {
+            if ([string]::IsNullOrEmpty($WebEvent.Path)) {
+                return $true
+            }
             # only find public static content here
             $pubRoute = Find-PodePublicRoute -Path $WebEvent.Path
             if ($null -eq $pubRoute) {

@@ -436,7 +436,7 @@ function Write-PodeFileResponseInternal {
                 }
                 # If the file is not being streamed (Serverless), read the file into the response body
                 if ($WebEvent.Streamed) {
-                    $WebEvent.Response.WriteFile($FileInfo, $compression)
+                    $WebEvent.Response.WriteFile($FileInfo, $null,$compression)
                 }
                 else {
                     # Read the file into the response body

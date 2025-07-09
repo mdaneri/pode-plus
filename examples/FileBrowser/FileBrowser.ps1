@@ -1,6 +1,15 @@
 <#
 .SYNOPSIS
-    PowerShell script to set up a Pode server with static file browsing and authentication.
+    PowerShell script to set Start-PodeServer -ScriptBlock {
+
+    Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http
+    Add-PodeEndpoint -Address localhost -Port 8043 -Protocol Https -Default -SelfSigned -DualMode
+
+    New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
+    New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
+    #   Set-PodeServerSetting -Compression -Enable -Encoding 'gzip'
+
+    #Set-PodeServerSetting -Cache -Enablerver with static file browsing and authentication.
 
 .DESCRIPTION
     This script sets up a Pode server that listens on port 8081. It includes static file browsing
@@ -43,8 +52,16 @@ $directoryPath = $podePath
 # Start Pode server
 #Start-PodeServer -ConfigFile '..\Server.psd1' -ScriptBlock {
 Start-PodeServer -ScriptBlock {
-
-    Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http -Default
+    $certPath = "$($FileBrowserPath)\mycert.pfx"
+    if (! (Test-Path -Path $certPath -PathType Leaf)) {
+        $cert = New-PodeSelfSignedCertificate -Loopback -Exportable
+        Export-PodeCertificate -Certificate $cert -Path $certPath -Format 'PFX' -CertificatePassword (ConvertTo-SecureString -String 'p@ssw0rd' -AsPlainText -Force)
+    }
+    else {
+        $cert = Import-PodeCertificate -Path $certPath -CertificatePassword (ConvertTo-SecureString -String 'p@ssw0rd' -AsPlainText -Force)
+    }
+    Add-PodeEndpoint -Address localhost -Port 8081 -Protocol Http
+    Add-PodeEndpoint -Address localhost -Port 8043 -Protocol Https -Default -X509Certificate $cert -DualMode
 
     New-PodeLoggingMethod -Terminal | Enable-PodeRequestLogging
     New-PodeLoggingMethod -Terminal | Enable-PodeErrorLogging
@@ -77,10 +94,14 @@ Nothing to report :D
 '@
         Write-PodeTextResponse -Value $value
     }
+
+    Add-PodeRoute -Method Get -Path '/close' -ScriptBlock {
+        Close-PodeServer
+    }
     Add-PodeStaticRouteGroup -FileBrowser -Routes {
 
         Add-PodeStaticRoute -Path '/standard' -Source $using:directoryPath
-        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
+        Add-PodeStaticRoute -Path '/download' -Source $using:directoryPath -DownloadOnly  
         Add-PodeStaticRoute -Path '/nodownload' -Source $using:directoryPath
         Add-PodeStaticRoute -Path '/gzip' -Source $using:directoryPath -PassThru | Add-PodeRouteCompression -Enable -Encoding gzip
         Add-PodeStaticRoute -Path '/deflate' -Source $using:directoryPath -PassThru | Add-PodeRouteCompression -Enable -Encoding deflate
@@ -101,7 +122,6 @@ Nothing to report :D
     }
 
     Add-PodeRoute -Method Get -Path '/encoding/transfer' -ScriptBlock {
-        write-podehost $webEvent -explode -ShowType -label 'Add-PodeRoute Response'
         $string = Get-Content -Path $using:directoryPath/pode.build.ps1 -raw
         $data = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($string))
         # write-podetextresponse -Value "This is a response with transfer encoding. The Accept-Encoding header was: $($WebEvent.AcceptEncoding)"
@@ -110,7 +130,32 @@ Nothing to report :D
 
 
     Add-PodeRoute -Method Get -Path '/'    -ScriptBlock {
-        $str = @'
+        # Determine protocol version safely across framework versions
+        $protocol = 'HTTP/1.1'  # Default
+        $requestType = $WebEvent.Request.GetType().Name
+        $debugInfo = "Request type: $requestType"
+
+        try {
+            # Try to determine if this is HTTP/2 - this will work on .NET Framework 4.6.1+ and .NET Core/.NET 5+
+            if ($WebEvent.Request.GetType().Name -eq 'PodeHttp2Request') {
+                $protocol = 'HTTP/2.0'
+                $debugInfo += ' | Detected HTTP/2'
+            }
+            else {
+                $debugInfo += ' | Detected HTTP/1.x'
+            }
+
+            # Also check the protocol from the request itself
+            if ($WebEvent.Request.Protocol) {
+                $debugInfo += " | Request.Protocol: $($WebEvent.Request.Protocol)"
+            }
+        }
+        catch {
+            # Type doesn't exist in this framework version, stick with HTTP/1.1
+            $debugInfo += " | Error: $($_.Exception.Message)"
+        }
+
+        $str = @"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -119,6 +164,7 @@ Nothing to report :D
     <style>
         body { font-family: system-ui, sans-serif; margin: 2rem; }
         h1   { margin-bottom: .5rem; }
+        .protocol { color: #0060df; font-size: 1.2em; font-weight: bold; margin-bottom: 1rem; }
         ul   { list-style: none; padding-left: 0; }
         li   { margin: .25rem 0; }
         a    { text-decoration: none; color: #0060df; }
@@ -128,6 +174,8 @@ Nothing to report :D
 </head>
 <body>
     <h1>Route Links</h1>
+    <div class="protocol">Protocol: $protocol</div>
+    <div style="font-size: 0.9em; color: #666; margin-bottom: 1rem;">Debug: $debugInfo</div>
     <ul>
         <li><a href="/standard">/standard</a></li>
 
@@ -159,7 +207,7 @@ Nothing to report :D
     </ul>
 </body>
 </html>
-'@
+"@
         Write-PodeHtmlResponse -Value $str -StatusCode 200
     }
 

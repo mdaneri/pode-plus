@@ -93,7 +93,7 @@ namespace Pode
         /// </summary>
         /// <param name="request">The original HTTP request.</param>
         /// <param name="signal">The associated PodeSignal.</param>
-        public PodeSignalRequest(PodeHttpRequest request, PodeSignal signal)
+        public PodeSignalRequest(PodeHttp1xRequest request, PodeSignal signal)
             : base(request) // Copy base request properties from the HTTP request.
         {
             Signal = signal;

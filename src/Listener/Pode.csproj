@@ -6,18 +6,22 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Kerberos.NET available for all targets -->
     <PackageReference Include="Kerberos.NET" Version="4.6.77" />
   </ItemGroup>
 
+  <!-- Add more target frameworks if SDK supports them -->
   <PropertyGroup Condition="'$(NETCoreSdkVersion)' >= '8.0'">
     <TargetFrameworks>$(TargetFrameworks);net8.0</TargetFrameworks>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(NETCoreSdkVersion)' >= '9.0'">
     <TargetFrameworks>$(TargetFrameworks);net9.0</TargetFrameworks>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(NETCoreSdkVersion)' >= '10.0'">
     <TargetFrameworks>$(TargetFrameworks);net10.0</TargetFrameworks>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+    <PackageReference Include="hpack" Version="1.4.0" />
+  </ItemGroup>
 </Project>

@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using System.Threading;
 using System.Text;
 using System.IO.Compression;
+using System.Security.Authentication;
+using System.Net.Sockets;
 
 namespace Pode
 {
@@ -310,6 +312,19 @@ namespace Pode
                 default:
                     return stream;
             }
+        }
+
+        public static bool LooksLikeTlsProbe(Exception ex)
+        {
+            if (ex is AuthenticationException authEx &&
+                authEx.InnerException is IOException ioEx &&
+                ioEx.InnerException is SocketException sockEx &&
+                sockEx.SocketErrorCode == SocketError.ConnectionReset)
+            {
+                return true;          // common probe pattern
+            }
+
+            return false;
         }
     }
 }

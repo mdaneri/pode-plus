@@ -295,7 +295,7 @@ function Write-PodeTextResponse {
                 Set-PodeHeader -Name 'Content-Encoding' -Value $compression.toString()
             }
             # write the content to the response stream
-            $WebEvent.Response.WriteBody($Bytes, $compression)
+            $WebEvent.Response.WriteBody($Bytes,$null, $compression)
         }
         catch {
             if (Test-PodeValidNetworkFailure -Exception $_.Exception) {
