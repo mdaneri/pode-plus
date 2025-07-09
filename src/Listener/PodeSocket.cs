@@ -9,7 +9,12 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using System.IO;
 using System.Net.Http;
-
+#if NET8_0_OR_GREATER
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
+using Microsoft.AspNetCore.Hosting; // Ensure this is present for extension methods
+using Microsoft.AspNetCore; // Sometimes required for extension methods
+#endif
 namespace Pode
 {
     /// <summary>
@@ -72,7 +77,7 @@ namespace Pode
         /// <param name="allowClientCertificate">Indicates whether client certificates are allowed.</param>
         /// <param name="tlsMode">The TLS mode to use.</param>
         /// <param name="dualMode">Whether to enable IPv4 and IPv6 dual mode.</param>
-        public PodeSocket(string name, IPAddress[] ipAddress, int port, SslProtocols protocols, PodeProtocolType type, X509Certificate certificate = null, bool allowClientCertificate = false, PodeTlsMode tlsMode = PodeTlsMode.Implicit, bool dualMode = false)
+        public PodeSocket(string name, IPAddress[] ipAddress, int port, SslProtocols protocols, PodeProtocolType type, X509Certificate certificate = null, bool allowClientCertificate = false, PodeTlsMode tlsMode = PodeTlsMode.Implicit, bool dualMode = false, bool kestrel = false)
             : base(type)
         {
             // Initialize properties.
@@ -87,13 +92,23 @@ namespace Pode
             AcceptConnections = new ConcurrentQueue<SocketAsyncEventArgs>();
             PendingSockets = new Dictionary<string, Socket>();
             Endpoints = new List<PodeEndpoint>();
-
-            // Create PodeEndpoint instances for each provided IP address.
-            foreach (var addr in ipAddress)
+            IPAddress = ipAddress;
+            Port = port;
+            Kestrel = kestrel;
+            if (!kestrel)
             {
-                Endpoints.Add(new PodeEndpoint(this, addr, port, dualMode));
+                // Create PodeEndpoint instances for each provided IP address.
+                foreach (var addr in ipAddress)
+                {
+                    Endpoints.Add(new PodeEndpoint(this, addr, port, dualMode));
+                }
             }
         }
+
+        public bool Kestrel { get; private set; }
+        public IPAddress[] IPAddress { get; private set; }
+        public int Port { get; private set; }
+
 
         /// <summary>
         /// Binds a PodeListener to the current socket.
@@ -104,9 +119,39 @@ namespace Pode
             Listener = listener;
         }
 
+#if NET8_0_OR_GREATER
         /// <summary>
         /// Binds the socket to all available endpoints.
         /// </summary>
+        public void Listen(KestrelServerOptions options = null)
+        {
+            if (Kestrel)
+            {
+                foreach (var ip in IPAddress)
+                {
+                    options.Listen(ip, Port, listenOpts =>
+                    {
+                        if (IsSsl)
+                        {
+                            // Ensure the Microsoft.AspNetCore.Server.Kestrel.Https package is referenced
+                            listenOpts.UseHttps(httpsOptions =>
+                            {
+                                httpsOptions.ServerCertificate = (X509Certificate2)Certificate;
+                            });
+                        }
+                    });
+                }
+            }
+            else
+            {
+                foreach (var ep in Endpoints)
+                {
+                    ep.Listen(); // Start listening on each endpoint.
+                }
+            }
+        }
+
+#else
         public void Listen()
         {
             foreach (var ep in Endpoints)
@@ -114,7 +159,7 @@ namespace Pode
                 ep.Listen(); // Start listening on each endpoint.
             }
         }
-
+#endif
         /// <summary>
         /// Starts listening for connections on all endpoints.
         /// </summary>

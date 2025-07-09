@@ -7,17 +7,30 @@
 
   <ItemGroup>
     <PackageReference Include="Kerberos.NET" Version="4.6.77" />
+
   </ItemGroup>
 
-  <PropertyGroup Condition="'$(NETCoreSdkVersion)' >= '8.0'">
+  <PropertyGroup Condition="'$(NETCoreSdkVersion)' &gt;= '8.0'">
     <TargetFrameworks>$(TargetFrameworks);net8.0</TargetFrameworks>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(NETCoreSdkVersion)' >= '9.0'">
+  <PropertyGroup Condition="'$(NETCoreSdkVersion)' &gt;= '9.0'">
     <TargetFrameworks>$(TargetFrameworks);net9.0</TargetFrameworks>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(NETCoreSdkVersion)' >= '10.0'">
+  <PropertyGroup Condition="'$(NETCoreSdkVersion)' &gt;= '10.0'">
     <TargetFrameworks>$(TargetFrameworks);net10.0</TargetFrameworks>
   </PropertyGroup>
+
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+    <PackageReference Include="Microsoft.AspNetCore.Hosting" Version="2.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Routing" Version="2.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Server.Kestrel.Core" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0' or '$(TargetFramework)' == 'net9.0' or '$(TargetFramework)' == 'net10.0'">
+    <FrameworkReference Include="Microsoft.AspNetCore.App" /> 
+  </ItemGroup>
+
 </Project>

@@ -6,7 +6,9 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
-
+#if NET8_0_OR_GREATER
+using Microsoft.AspNetCore.Http;
+#endif
 namespace Pode
 {
     /// <summary>
@@ -19,7 +21,9 @@ namespace Pode
 
         // Represents the incoming request.
         public PodeRequest Request { get; private set; }
-
+#if NET8_0_OR_GREATER
+        private HttpContext Context { get; set; }
+#endif
         // Represents the outgoing response.
         public PodeResponse Response { get; private set; }
 
@@ -43,6 +47,8 @@ namespace Pode
 
         // Object used for thread-safety.
         private object _lockable = new object();
+
+
 
         // State of the context.
         private PodeContextState _state;
@@ -93,6 +99,7 @@ namespace Pode
         public CancellationTokenSource ContextTimeoutToken { get; private set; }
         private Timer TimeoutTimer;
 
+
         /// <summary>
         /// Initializes a new PodeContext with the given socket, PodeSocket, and listener.
         /// </summary>
@@ -111,7 +118,79 @@ namespace Pode
             Type = PodeProtocolType.Unknown;
             State = PodeContextState.New;
         }
+#if NET8_0_OR_GREATER
 
+        private Task ContextTask;
+         private CancellationTokenSource ContextCancellationToken;
+
+          public PodeContext(HttpContext context,  PodeKestrelListener listener)
+        {
+            ID = PodeHelpers.NewGuid();
+                Context = context;
+            Listener = listener;
+            Timestamp = DateTime.UtcNow;
+            Data = new Hashtable(StringComparer.InvariantCultureIgnoreCase);
+
+            Type = PodeProtocolType.Unknown;
+            State = PodeContextState.New;
+
+            // build req/resp mappers
+            Request = new PodeRequest(context.Request, this);
+            Response = new PodeResponse(context.Response, this);
+
+            // is the body too big?
+            if (Request.ContentLength > Listener.RequestBodySize)
+            {
+                Response.StatusCode = 413;
+                Request.Error = new HttpRequestException("Payload too large");
+                Request.Error.Data.Add("PodeStatusCode", 413);
+            }
+
+            // check hostname
+            PodeSocket = Listener.FindSocket(Request.LocalEndpoint);
+            if (PodeSocket != default(PodeSocket) && !PodeSocket.CheckHostname(Request.Host))
+            {
+                Request.Error = new HttpRequestException($"Invalid request Host: {Request.Host}");
+            }
+
+            // configure req timeout
+            if (ContextCancellationToken != default(CancellationTokenSource))
+            {
+                ContextCancellationToken.Dispose();
+            }
+
+            ContextCancellationToken = new CancellationTokenSource();
+
+            if (ContextTask != default(Task))
+            {
+                ContextTask.Dispose();
+            }
+
+            ContextTask = new Task(() => {
+                try
+                {
+                    var _task = Task.Delay(Listener.RequestTimeout * 1000, ContextCancellationToken.Token);
+                    _task.Wait();
+
+                    Response.StatusCode = 408;
+                    Request.Error = new HttpRequestException("Request timeout");
+                    Request.Error.Data.Add("PodeStatusCode", 408);
+
+                    this.Dispose();
+                }
+                catch {}
+            });
+        }
+
+          public Task Start()
+        {
+            ContextTask.Start();
+            ContextTask.GetAwaiter();
+            return ContextTask;
+        }
+
+
+#endif
         /// <summary>
         /// Initializes the request and response for the context.
         /// </summary>
@@ -402,6 +481,10 @@ namespace Pode
         public void Dispose()
         {
             Dispose(Request.Error != default(PodeRequestException));
+#if NET8_0_OR_GREATER
+                   Response.Close();
+            ContextCancellationToken.Cancel();
+#endif
             GC.SuppressFinalize(this);
         }
 

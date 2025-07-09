@@ -45,7 +45,7 @@ try {
     }
 
     # you will require the Pode.Kestrel module for this example
-    Import-Module Pode.Kestrel -Force -ErrorAction Stop
+    #Import-Module Pode.Kestrel -Force -ErrorAction Stop
 }
 catch { throw }
 

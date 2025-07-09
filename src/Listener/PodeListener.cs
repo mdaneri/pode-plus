@@ -12,7 +12,7 @@ namespace Pode
 
         public IDictionary<string, PodeSignal> Signals { get; private set; }
         public IDictionary<string, IDictionary<string, PodeServerEvent>> ServerEvents { get; private set; }
-        public PodeItemQueue<PodeContext> Contexts { get; private set; }
+        public PodeItemQueue<PodeContext> Contexts { get; protected set; }
         public PodeItemQueue<PodeServerSignal> ServerSignals { get; private set; }
         public PodeItemQueue<PodeClientSignal> ClientSignals { get; private set; }
 
