@@ -64,6 +64,8 @@ namespace Pode
         private bool _headerBlockOpen = false;
         private int _headerBlockStreamId = 0;
 
+         private int _largestClientStreamId = 0;   // highest client-opened (odd) stream we have seen
+
 
         // Helper to collect decoded headers from hpack.Decoder
         private sealed class ListHeaderListener : hpack.IHeaderListener
@@ -501,6 +503,11 @@ namespace Pode
             {
                 Streams[StreamId] = new Http2Stream(StreamId, (int)Settings["SETTINGS_INITIAL_WINDOW_SIZE"]);
             }
+
+            // remember the highest *client* stream (client streams are odd-numbered)
+            if ((StreamId & 1) == 1 && StreamId > _largestClientStreamId)
+                _largestClientStreamId = StreamId;
+
             var stream = Streams[StreamId];
 
             // Debug: Show raw header payload
@@ -1031,7 +1038,15 @@ namespace Pode
             // 2. Idle stream (never opened, ie not in Streams dictionary)
             if (!Streams.ContainsKey(frame.StreamId))
             {
-                Console.WriteLine($"[DEBUG] RST_STREAM frame on idle stream {frame.StreamId}");
+                // Closed stream - just ignore (§5.1)
+                if (frame.StreamId <= _largestClientStreamId)
+                {
+                    Console.WriteLine($"[DEBUG] Ignoring RST_STREAM on already-closed stream {frame.StreamId}");
+                    return;   // keep the connection alive
+                }
+
+                // Idle stream - connection error (§6.4)
+                Console.WriteLine($"[DEBUG] RST_STREAM on idle stream {frame.StreamId}");
                 await SendGoAwayAsync(0, Http2ErrorCode.ProtocolError, "RST_STREAM frame on idle stream", cancellationToken);
                 await CloseConnection(cancellationToken);
                 return;
